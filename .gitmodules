@@ -1,0 +1,3 @@
+[submodule "native/deps/geometry-central"]
+	path = native/deps/geometry-central
+	url = https://github.com/nmwsharp/geometry-central.git

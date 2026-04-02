@@ -1,45 +1,46 @@
 cmake_minimum_required(VERSION 3.20)
-project(bioctree_addon LANGUAGES CXX)
+project(cortical_compute LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# --- Dependencies (uncomment when ready to build) ---
+# ── geometry-central (submodule) ──────────────────────────────
+# This also downloads/finds Eigen3 automatically
+add_subdirectory(deps/geometry-central)
 
-# geometry-central (git submodule in deps/)
-# add_subdirectory(deps/geometry-central)
+# ── Spectra (header-only) ────────────────────────────────────
+# Spectra needs Eigen3, but geometry-central already provides it.
+# Use FetchContent to get Spectra source, but skip its CMake
+# (which tries find_package(Eigen3) independently).
+# Instead, just add Spectra's include directory.
+include(FetchContent)
+FetchContent_Declare(
+  spectra
+  GIT_REPOSITORY https://github.com/yixuan/spectra.git
+  GIT_TAG        v1.0.1
+  GIT_SHALLOW    TRUE
+)
+FetchContent_Populate(spectra)
+# Don't call FetchContent_MakeAvailable — skip Spectra's CMakeLists.txt
+# Just use its headers directly
 
-# Eigen 3.4+ (via vcpkg or system)
-# find_package(Eigen3 3.4 REQUIRED)
+# ── Compute library (static, no Node.js dependency) ──────────
+add_library(cortical_compute STATIC
+  src/mesh_operators.cpp
+  src/eigensolver.cpp
+  src/normalize.cpp
+)
 
-# SuiteSparse / CHOLMOD (via vcpkg)
-# find_package(SuiteSparse REQUIRED)
+target_include_directories(cortical_compute PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${spectra_SOURCE_DIR}/include
+)
 
-# Spectra 1.0+ (header-only, in deps/spectra/include)
-# include_directories(deps/spectra/include)
+target_link_libraries(cortical_compute PUBLIC
+  geometry-central
+)
 
-# Node.js N-API (via cmake-js)
-# include_directories(${CMAKE_JS_INC})
-
-# --- Sources ---
-# set(ADDON_SOURCES
-#   src/addon.cpp
-#   src/mesh_quantities.cpp
-#   src/eigensolver.cpp
-#   src/normalize.cpp
-#   src/flow_solver.cpp
-#   src/dec_operators.cpp
-#   src/helmholtz.cpp
-#   src/synthetic_generators.cpp
-# )
-
-# add_library(bioctree_addon SHARED ${ADDON_SOURCES})
-# set_target_properties(bioctree_addon PROPERTIES PREFIX "" SUFFIX ".node")
-# target_include_directories(bioctree_addon PRIVATE include ${CMAKE_JS_INC})
-# target_link_libraries(bioctree_addon
-#   geometry-central
-#   Eigen3::Eigen
-#   ${SUITESPARSE_LIBRARIES}
-#   ${CMAKE_JS_LIB}
-# )
+# ── Test executable ───────────────────────────────────────────
+add_executable(test_eigen test/test_eigen.cpp)
+target_link_libraries(test_eigen PRIVATE cortical_compute)
