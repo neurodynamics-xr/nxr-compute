@@ -30,6 +30,9 @@ add_library(cortical_compute STATIC
   src/mesh_operators.cpp
   src/eigensolver.cpp
   src/normalize.cpp
+  src/poisson_solver.cpp
+  src/geodesic.cpp
+  src/hodge.cpp
 )
 
 target_include_directories(cortical_compute PUBLIC
