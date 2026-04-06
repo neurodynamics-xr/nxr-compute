@@ -6,14 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # ── geometry-central (submodule) ──────────────────────────────
-# This also downloads/finds Eigen3 automatically
 add_subdirectory(deps/geometry-central)
 
 # ── Spectra (header-only) ────────────────────────────────────
-# Spectra needs Eigen3, but geometry-central already provides it.
-# Use FetchContent to get Spectra source, but skip its CMake
-# (which tries find_package(Eigen3) independently).
-# Instead, just add Spectra's include directory.
 include(FetchContent)
 FetchContent_Declare(
   spectra
@@ -22,8 +17,6 @@ FetchContent_Declare(
   GIT_SHALLOW    TRUE
 )
 FetchContent_Populate(spectra)
-# Don't call FetchContent_MakeAvailable — skip Spectra's CMakeLists.txt
-# Just use its headers directly
 
 # ── Compute library (static, no Node.js dependency) ──────────
 add_library(cortical_compute STATIC
@@ -44,6 +37,35 @@ target_link_libraries(cortical_compute PUBLIC
   geometry-central
 )
 
-# ── Test executable ───────────────────────────────────────────
+# ── Test executable (standalone, no Node.js) ─────────────────
 add_executable(test_eigen test/test_eigen.cpp)
 target_link_libraries(test_eigen PRIVATE cortical_compute)
+
+# ── N-API Addon (bioctree_addon.node) ────────────────────────
+# Build only when invoked through cmake-js (which sets CMAKE_JS_INC)
+if(DEFINED CMAKE_JS_INC)
+    add_library(bioctree_addon SHARED
+        src/addon.cpp
+        ${CMAKE_JS_SRC}
+    )
+    set_target_properties(bioctree_addon PROPERTIES
+        PREFIX ""
+        SUFFIX ".node"
+    )
+    target_include_directories(bioctree_addon PRIVATE
+        ${CMAKE_JS_INC}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../node_modules/node-addon-api
+    )
+    target_link_libraries(bioctree_addon PRIVATE
+        cortical_compute
+        ${CMAKE_JS_LIB}
+    )
+    # Disable C++ exceptions in N-API (use NAPI C exceptions)
+    target_compile_definitions(bioctree_addon PRIVATE
+        NAPI_VERSION=9
+        NAPI_CPP_EXCEPTIONS
+    )
+    if(MSVC)
+        target_compile_options(bioctree_addon PRIVATE /EHsc)
+    endif()
+endif()
