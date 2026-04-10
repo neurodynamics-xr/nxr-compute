@@ -26,6 +26,11 @@ add_library(cortical_compute STATIC
   src/poisson_solver.cpp
   src/geodesic.cpp
   src/hodge.cpp
+  src/curvatures.cpp
+  src/normals.cpp
+  src/vector_field.cpp
+  src/isolines.cpp
+  src/direction_field.cpp
 )
 
 target_include_directories(cortical_compute PUBLIC
