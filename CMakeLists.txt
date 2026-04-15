@@ -31,6 +31,7 @@ add_library(cortical_compute STATIC
   src/vector_field.cpp
   src/isolines.cpp
   src/direction_field.cpp
+  src/freesurfer_io.cpp
 )
 
 target_include_directories(cortical_compute PUBLIC
