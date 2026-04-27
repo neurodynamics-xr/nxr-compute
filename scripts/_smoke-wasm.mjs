@@ -1,0 +1,211 @@
+// Smoke test for the cxf WASM binding. Loads native/build_wasm/cxf.js,
+// builds the same icosahedron fixture used by the native C++ tests,
+// runs the precompute pipeline, and asserts shapes / values match the
+// expected results. Verifies the entire pipeline:
+//   JS → WASM heap → Embind → cxf C++ → Eigen → return → JS
+//
+// Usage (from repo root):
+//   node scripts/_smoke-wasm.mjs
+
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const repoRoot  = path.resolve(__dirname, '..')
+
+const wasmJsPath = path.join(repoRoot, 'native', 'build_wasm', 'cxf.js')
+const moduleUrl  = pathToFileURL(wasmJsPath).href
+
+console.log(`[smoke] loading ${wasmJsPath}`)
+const { default: createCxfModule } = await import(moduleUrl)
+const cxf = await createCxfModule()
+console.log(`[smoke] module ready — version: ${cxf.version()}`)
+
+// ── Icosahedron fixture (matches test_eigen.cpp) ──────────────
+const t = (1 + Math.sqrt(5)) / 2
+const raw = [
+  -1, t, 0,   1, t, 0,  -1, -t, 0,   1, -t, 0,
+   0, -1, t,  0, 1, t,   0, -1, -t,  0, 1, -t,
+   t, 0, -1,  t, 0, 1,  -t, 0, -1,  -t, 0, 1,
+]
+const verts = new Float64Array(36)
+for (let i = 0; i < 36; i += 3) {
+  const len = Math.hypot(raw[i], raw[i + 1], raw[i + 2])
+  verts[i]     = raw[i]     / len
+  verts[i + 1] = raw[i + 1] / len
+  verts[i + 2] = raw[i + 2] / len
+}
+const faces = new Int32Array([
+  0,11, 5,  0, 5, 1,  0, 1, 7,  0, 7,10,  0,10,11,
+  1, 5, 9,  5,11, 4, 11,10, 2, 10, 7, 6,  7, 1, 8,
+  3, 9, 4,  3, 4, 2,  3, 2, 6,  3, 6, 8,  3, 8, 9,
+  4, 9, 5,  2, 4,11,  6, 2,10,  8, 6, 7,  9, 8, 1,
+])
+
+// ── Test 1: ComputeContext + accessors ───────────────────────
+const ctx = new cxf.ComputeContext(verts, faces)
+const nV = ctx.nV(), nF = ctx.nF(), nE = ctx.nE()
+console.log(`[smoke] context: nV=${nV}, nF=${nF}, nE=${nE}`)
+
+function require(cond, msg) {
+  if (!cond) {
+    console.error('FAIL:', msg)
+    process.exit(1)
+  }
+}
+require(nV === 12, 'icosahedron has 12 vertices')
+require(nF === 20, 'icosahedron has 20 faces')
+require(nE === 30, 'icosahedron has 30 edges')
+
+// ── Test 2: precompute (the visualization-defaults pack) ──────
+const t0 = performance.now()
+const data = ctx.precompute(6, -1e-8)  // k=6 modes
+const elapsedPrecompute = (performance.now() - t0).toFixed(2)
+console.log(`[smoke] precompute({k: 6}): ${elapsedPrecompute} ms`)
+
+// Operators
+require(data.operators.nV === 12, 'operators.nV')
+require(Math.abs(data.operators.totalArea - 9.5745) < 1e-3,
+  `unit-sphere icosahedron area should be ≈ 9.5745, got ${data.operators.totalArea}`)
+require(data.operators.normals instanceof Float64Array, 'normals is Float64Array')
+require(data.operators.normals.length === 12 * 3, 'normals length nV*3')
+require(data.operators.stiffness.rows === 12, 'stiffness rows = nV')
+require(data.operators.stiffness.cols === 12, 'stiffness cols = nV')
+require(data.operators.stiffness.row instanceof Int32Array, 'stiffness COO.row Int32Array')
+console.log(`  operators ✓ (totalArea=${data.operators.totalArea.toFixed(4)}, ` +
+            `stiffness nnz=${data.operators.stiffness.nnz})`)
+
+// DEC
+require(data.dec.d0.rows === 30, 'd0 rows = nE')
+require(data.dec.d0.cols === 12, 'd0 cols = nV')
+require(data.dec.d1.rows === 20, 'd1 rows = nF')
+require(data.dec.d1.cols === 30, 'd1 cols = nE')
+console.log(`  DEC ✓ (d0 ${data.dec.d0.rows}×${data.dec.d0.cols}, ` +
+            `d1 ${data.dec.d1.rows}×${data.dec.d1.cols})`)
+
+// Eigenmodes — after removeDC, k should be 5 (one DC mode dropped)
+require(data.eigenmodes.k === 5, `expected k=5 (post-removeDC), got ${data.eigenmodes.k}`)
+require(data.eigenmodes.eigenvalues instanceof Float64Array, 'eigenvalues Float64Array')
+require(data.eigenmodes.eigenvalues.length === 5, 'eigenvalues length')
+require(data.eigenmodes.eigenvectors.length === 12 * 5, 'eigenvectors length nV*K')
+const evals = Array.from(data.eigenmodes.eigenvalues)
+console.log(`  eigenmodes ✓ k=${data.eigenmodes.k}, λ=[${evals.map(v => v.toFixed(4)).join(', ')}]`)
+
+// Icosahedron canonical spectrum: triplet at λ=2, doublet at λ≈4.34
+require(Math.abs(evals[0] - 2.0) < 1e-6,
+  `expected λ_0 ≈ 2.0 on icosahedron, got ${evals[0]}`)
+require(Math.abs(evals[3] - 4.34164) < 1e-3,
+  `expected λ_3 ≈ 4.34, got ${evals[3]}`)
+
+// Face frames
+require(data.faceFrames.e1.length      === 20 * 3, 'face frames e1 [F*3]')
+require(data.faceFrames.e2.length      === 20 * 3, 'face frames e2 [F*3]')
+require(data.faceFrames.normals.length === 20 * 3, 'face frames normals [F*3]')
+
+// Verify orthonormality: e1·e2 ≈ 0, |e1| ≈ 1, e1×e2 ≈ n
+let maxOrth = 0, maxNorm = 0
+for (let f = 0; f < 20; f++) {
+  const e1x = data.faceFrames.e1[f*3], e1y = data.faceFrames.e1[f*3+1], e1z = data.faceFrames.e1[f*3+2]
+  const e2x = data.faceFrames.e2[f*3], e2y = data.faceFrames.e2[f*3+1], e2z = data.faceFrames.e2[f*3+2]
+  maxOrth = Math.max(maxOrth, Math.abs(e1x*e2x + e1y*e2y + e1z*e2z))
+  maxNorm = Math.max(maxNorm, Math.abs(Math.hypot(e1x, e1y, e1z) - 1))
+}
+require(maxOrth < 1e-12, `face frames orthogonal (max|e1·e2|=${maxOrth})`)
+require(maxNorm < 1e-12, `face frames unit-length (max|‖e1‖−1|=${maxNorm})`)
+console.log(`  faceFrames ✓ (orthonormal to ${maxOrth.toExponential(2)})`)
+
+// ── Test 3: M-orthonormality of eigenvectors ──────────────────
+//
+// U' M U should be ≈ identity. Eigenvectors are flat column-major
+// V×K — column k (mode k) is at offset k*nV. Mass is diagonal here
+// so we just extract the diagonal into a flat Float64.
+const evecs = data.eigenmodes.eigenvectors  // [V*K] column-major
+const K = data.eigenmodes.k
+const massCOO = data.operators.mass
+
+const massDiag = new Float64Array(nV)
+for (let i = 0; i < massCOO.row.length; i++) {
+  if (massCOO.row[i] === massCOO.col[i]) {
+    massDiag[massCOO.row[i]] = massCOO.data[i]
+  }
+}
+
+// Verify subarray() actually extracts a contiguous mode (the whole
+// point of column-major output).
+const mode0 = evecs.subarray(0,      nV)   // first mode
+const mode1 = evecs.subarray(nV,     2*nV) // second mode
+require(mode0.length === nV && mode1.length === nV,
+    'eigenmode subarray slicing produces nV contiguous values')
+
+let maxOffDiag = 0
+let maxDiagErr = 0
+for (let j = 0; j < K; j++) {
+  const u_j = evecs.subarray(j * nV, (j + 1) * nV)
+  for (let k = 0; k < K; k++) {
+    const u_k = evecs.subarray(k * nV, (k + 1) * nV)
+    let dot = 0
+    for (let v = 0; v < nV; v++) {
+      dot += u_j[v] * massDiag[v] * u_k[v]
+    }
+    if (j === k) maxDiagErr  = Math.max(maxDiagErr,  Math.abs(dot - 1))
+    else         maxOffDiag  = Math.max(maxOffDiag,  Math.abs(dot))
+  }
+}
+require(maxOffDiag < 1e-10, `M-orth: max|U'MU|_off = ${maxOffDiag}`)
+require(maxDiagErr < 1e-10, `M-orth: max|U'MU - I|_diag = ${maxDiagErr}`)
+console.log(`  M-orthonormality ✓ (off-diag max=${maxOffDiag.toExponential(2)}, ` +
+            `diag err max=${maxDiagErr.toExponential(2)})`)
+
+// ── Test 4: face-centered scalar gradient ─────────────────────
+const u_t = new Float64Array(nV).fill(0)
+u_t[0] = 1.0       // delta at vertex 0
+const grad = ctx.scalarGradient(u_t)
+require(grad.length === nF * 3, 'gradient length nF*3')
+let maxGradMag = 0
+for (let f = 0; f < nF; f++) {
+  const m = Math.hypot(grad[f*3], grad[f*3+1], grad[f*3+2])
+  maxGradMag = Math.max(maxGradMag, m)
+}
+require(maxGradMag > 0, 'gradient nontrivial')
+console.log(`  scalarGradient ✓ (max |∇u| = ${maxGradMag.toFixed(4)})`)
+
+// ── Test 5: geodesic distance from a vertex ───────────────────
+const dists = ctx.computeGeodesicDistance(new Int32Array([0]))
+require(dists.length === nV, 'geodesic distances length nV')
+require(Math.abs(dists[0]) < 1e-9, `distance at source = 0, got ${dists[0]}`)
+let maxDist = 0
+for (const d of dists) if (d > maxDist) maxDist = d
+console.log(`  geodesicDistance ✓ (max d = ${maxDist.toFixed(4)})`)
+
+// ── Test 6: geodesic path between antipodes ───────────────────
+const path0 = ctx.tracePath(0, 3)
+require(path0.nPoints >= 2, 'path has at least 2 points')
+require(path0.positions.length === path0.nPoints * 3, 'path positions [N*3]')
+let pathLen = 0
+for (let i = 0; i + 1 < path0.nPoints; i++) {
+  const dx = path0.positions[(i+1)*3]   - path0.positions[i*3]
+  const dy = path0.positions[(i+1)*3+1] - path0.positions[i*3+1]
+  const dz = path0.positions[(i+1)*3+2] - path0.positions[i*3+2]
+  pathLen += Math.hypot(dx, dy, dz)
+}
+require(pathLen > 2.0 && pathLen < Math.PI,
+  `discrete antipode path in (chord=2.0, sphere-arc=π), got ${pathLen}`)
+console.log(`  tracePath ✓ (antipode path length ${pathLen.toFixed(4)})`)
+
+// ── Test 7: heat diffusion (spectral generator) ───────────────
+const ts = Float64Array.from({ length: 5 }, (_, i) => i * 0.1)
+const heat = ctx.generateHeatDiffusion(
+  new Int32Array([0]),
+  new Float64Array([1.0]),
+  ts,
+  /* alpha = */ 1.0,
+)
+require(heat.T  === 5, `heat T=5, got ${heat.T}`)
+require(heat.nV === 12, `heat nV=12, got ${heat.nV}`)
+require(heat.data instanceof Float32Array, 'heat data Float32Array')
+require(heat.data.length === 5 * 12, 'heat data length T*V')
+console.log(`  generateHeatDiffusion ✓ (T=${heat.T}, nV=${heat.nV})`)
+
+// ── Cleanup ───────────────────────────────────────────────────
+ctx.delete()
+console.log('[smoke] all assertions passed ✓')

@@ -1,0 +1,232 @@
+// TypeScript declarations for the cxf WASM binding.
+// See docs/cxf/three-js-integration.md and docs/cxf/visualization-recipes.md
+// for usage patterns.
+
+/** Sparse matrix in COO triplet form. Always real double. */
+export interface SparseMatrixCOO {
+  row:  Int32Array
+  col:  Int32Array
+  data: Float64Array
+  rows: number
+  cols: number
+  nnz:  number
+}
+
+export interface MeshOperators {
+  /** Cotangent Laplacian (PSD, symmetrized), V×V sparse */
+  stiffness:   SparseMatrixCOO
+  /** Voronoi mass matrix (SPD, diagonal), V×V sparse */
+  mass:        SparseMatrixCOO
+  /** Per-vertex dual area, V */
+  vertexAreas: Float64Array
+  /** Per-vertex normals, V*3 row-major */
+  normals:     Float64Array
+  totalArea:   number
+  nV:          number
+  nE:          number
+  nF:          number
+}
+
+export interface DECOperators {
+  /** Vertex → edge gradient, E×V sparse */
+  d0:            SparseMatrixCOO
+  /** Edge → face curl,     F×E sparse */
+  d1:            SparseMatrixCOO
+  hodge0:        SparseMatrixCOO
+  hodge1:        SparseMatrixCOO
+  hodge2:        SparseMatrixCOO
+  hodge1Inverse: SparseMatrixCOO
+}
+
+export interface EigenResult {
+  /** Eigenvectors stored row-major as V*K floats. Column k starts at offset k*nV in this flat buffer. */
+  eigenvectors: Float64Array
+  /** Eigenvalues, length K, sorted ascending. */
+  eigenvalues:  Float64Array
+  k:            number
+  nConverged:   number
+}
+
+export interface FaceFrames {
+  /** First per-face tangent vector, F*3 row-major */
+  e1:      Float64Array
+  /** Second per-face tangent vector (n × e1), F*3 row-major */
+  e2:      Float64Array
+  /** Per-face normal, F*3 row-major */
+  normals: Float64Array
+}
+
+export interface PrecomputeResult {
+  operators:  MeshOperators
+  dec:        DECOperators
+  eigenmodes: EigenResult
+  faceFrames: FaceFrames
+}
+
+export interface HodgeResult {
+  /** Per-vertex exact (gradient) potential α */
+  exactPotential:    Float64Array
+  /** Per-vertex co-exact (curl) potential β (averaged from face) */
+  coExactPotentialV: Float64Array
+  combinedPotential: Float64Array
+  /** Per-edge dα 1-form */
+  dAlpha:            Float64Array
+  /** Per-edge δβ 1-form */
+  deltaBeta:         Float64Array
+  /** Per-edge harmonic γ 1-form */
+  gamma:             Float64Array
+  /** Face-centered 3D vector fields, each F*3 row-major */
+  omegaVectors:      Float64Array
+  dAlphaVectors:     Float64Array
+  deltaBetaVectors:  Float64Array
+  gammaVectors:      Float64Array
+}
+
+export interface CurvatureResult {
+  gaussian:     Float64Array
+  mean:         Float64Array
+  kMin:         Float64Array
+  kMax:         Float64Array
+  /** Per-vertex max-curvature direction, V*3 row-major */
+  principalDir: Float64Array
+}
+
+export interface PolylineResult {
+  /** N*3 row-major points */
+  positions: Float64Array
+  nPoints:   number
+}
+
+export interface SegmentsResult {
+  /** (2*segmentCount)*3 row-major endpoint pairs */
+  positions:    Float64Array
+  segmentCount: number
+}
+
+export interface DirectionFieldResult {
+  /** Per-edge connection 1-form */
+  connections:          Float64Array
+  /** F*3 per-face direction vectors */
+  directionVectors:     Float64Array
+  /** F*3 per-face 90°-rotated direction vectors */
+  orthogonalVectors:    Float64Array
+  eulerCharacteristic:  number
+  gaussBonnetSatisfied: boolean
+}
+
+export interface TimeSeriesField {
+  /** T*nV row-major frames; frame ti starts at offset ti*nV */
+  data: Float32Array
+  T:    number
+  nV:   number
+}
+
+/** Vertex-normal estimator selection. */
+export enum NormalType {
+  AngleWeighted   = 0,
+  AreaWeighted    = 1,
+  EqualWeighted   = 2,
+  SphereInscribed = 3,
+  MeanCurvature   = 4,
+  GaussCurvature  = 5,
+}
+
+/**
+ * Stateful compute context for one mesh. Holds the cxf::ComputeContext
+ * in WASM linear memory plus cached operators / Cholesky factors /
+ * eigenmodes. Call `delete()` when finished.
+ */
+export interface ComputeContext {
+  nV(): number
+  nE(): number
+  nF(): number
+
+  // Operators / geometry
+  assembleMeshOperators(): MeshOperators
+  assembleDECOperators():  DECOperators
+  computeFaceFrames():     FaceFrames
+  computeVertexNormals(type?: NormalType): Float64Array
+
+  // Spectral
+  solveEigenmodes(k: number, sigma?: number): EigenResult
+  normalizeEigenmodes(U: Float64Array, rows: number, cols: number): Float64Array
+  removeDC(eig: EigenResult): EigenResult
+
+  /**
+   * One-shot precompute: returns the visualization-defaults pack
+   * (operators + DEC + eigenmodes + face frames) in one call.
+   * Cheaper than calling the four steps separately.
+   */
+  precompute(options?: { k?: number; sigma?: number }): PrecomputeResult
+
+  // Solvers
+  solvePoisson(sourceVerts: Int32Array | number[], sourceValues: Float64Array | number[]): Float64Array
+  computeGeodesicDistance(sourceVerts: Int32Array | number[]): Float64Array
+  tracePath(vStart: number, vEnd: number): PolylineResult
+  hodgeDecompose(omega: Float64Array): HodgeResult
+
+  // Geometric
+  computeCurvatures(): CurvatureResult
+  /** Throws if the mesh has no boundary (BFF requires open mesh). */
+  computeUVCoordinates(): Float64Array
+  computeIsolines(scalars: Float64Array, numLevels: number, minVal?: number, maxVal?: number): SegmentsResult
+  computeDirectionField(
+    singVerts:  Int32Array  | number[],
+    singValues: Float64Array | number[],
+  ): DirectionFieldResult
+  traceStreamlines(
+    faceField: Float64Array,
+    numSeeds?: number,
+    stepCoef?: number,
+    maxSteps?: number,
+  ): SegmentsResult
+
+  // Vector field
+  whitneyInterpolate(oneForm: Float64Array): Float64Array
+  scalarGradient(scalar: Float64Array): Float64Array
+
+  // Time-varying generators (require eigenmodes computed first)
+  generateHeatDiffusion(
+    sources:      Int32Array  | number[],
+    sourceValues: Float64Array | number[],
+    timesteps:    Float64Array | number[],
+    alpha?: number,
+  ): TimeSeriesField
+  generateDampedWave(
+    modeIndices: Int32Array  | number[],
+    amplitudes:  Float64Array | number[],
+    dampings:    Float64Array | number[],
+    phases:      Float64Array | number[],
+    timesteps:   Float64Array | number[],
+  ): TimeSeriesField
+  generateRandomDecomposed1Form(
+    alphaStrength: number,
+    betaStrength:  number,
+    gammaStrength: number,
+    seed?: number,
+  ): Float64Array
+
+  /** Release WASM heap memory; the context is invalid after delete(). */
+  delete(): void
+}
+
+export interface Cxf {
+  version(): string
+  createContext(
+    vertices: Float64Array | number[],
+    faces:    Int32Array  | number[],
+  ): ComputeContext
+}
+
+export interface InitOptions {
+  /** Custom locator for cxf.wasm. */
+  locateFile?: (filename: string) => string
+}
+
+/**
+ * Load the cxf WASM module. Idempotent. The promise resolves to a
+ * Cxf object exposing the public API.
+ */
+export function initCxf(options?: InitOptions): Promise<Cxf>
+
+export default initCxf
