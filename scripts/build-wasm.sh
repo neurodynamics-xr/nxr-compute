@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Build the cxf WASM binding via Emscripten.
+# Build the nxr-compute WASM binding via Emscripten.
 #
 # Outputs:
-#   native/build_wasm/cxf.js   — ES-module factory function (createCxfModule)
-#   native/build_wasm/cxf.wasm — WebAssembly binary
+#   native/build_wasm/nxr_compute.js   — ES-module factory function (createNxrComputeModule)
+#   native/build_wasm/nxr_compute.wasm — WebAssembly binary
 #
 # Prerequisites:
 #   - emsdk installed and activated (see https://emscripten.org/docs/getting_started/downloads.html)
@@ -50,7 +50,7 @@ VS_NINJA_DIR="/c/Program Files/Microsoft Visual Studio/18/Community/Common7/IDE/
 if [ -d "$VS_CMAKE_DIR" ]; then export PATH="$VS_CMAKE_DIR:$PATH"; fi
 if [ -d "$VS_NINJA_DIR" ]; then export PATH="$VS_NINJA_DIR:$PATH"; fi
 
-echo "Building cxf WASM (config: $CONFIG)..."
+echo "Building nxr-compute WASM (config: $CONFIG)..."
 echo "  Project: $PROJECT_ROOT"
 echo "  Build:   $BUILD_DIR"
 "$EMCC_BIN" --version | head -1
@@ -68,11 +68,11 @@ fi
 "$EMMAKE_BIN" cmake --build "$BUILD_DIR" --config "$CONFIG"
 
 # Sanity check the outputs
-if [ -f "$BUILD_DIR/cxf.js" ] && [ -f "$BUILD_DIR/cxf.wasm" ]; then
+if [ -f "$BUILD_DIR/nxr_compute.js" ] && [ -f "$BUILD_DIR/nxr_compute.wasm" ]; then
     echo ""
-    echo "✓ Built cxf.js   ($(du -h "$BUILD_DIR/cxf.js"   | cut -f1))"
-    echo "✓ Built cxf.wasm ($(du -h "$BUILD_DIR/cxf.wasm" | cut -f1))"
+    echo "✓ Built nxr_compute.js   ($(du -h "$BUILD_DIR/nxr_compute.js"   | cut -f1))"
+    echo "✓ Built nxr_compute.wasm ($(du -h "$BUILD_DIR/nxr_compute.wasm" | cut -f1))"
 else
-    echo "✗ cxf.js / cxf.wasm not produced"
+    echo "✗ nxr_compute.js / nxr_compute.wasm not produced"
     exit 1
 fi

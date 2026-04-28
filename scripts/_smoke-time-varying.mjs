@@ -1,6 +1,6 @@
 // One-off smoke test for the time-varying field generators.
 //
-// Loads cxf_addon.node directly (no Electron), builds a small
+// Loads nxr_compute_addon.node directly (no Electron), builds a small
 // icosahedron mesh, solves eigenmodes, then exercises both new
 // N-API bindings end-to-end. Verifies output shapes, sanity-checks
 // values, and prints timing.
@@ -16,7 +16,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, '..')
 const require = createRequire(import.meta.url)
 
-const addon = require(path.join(repoRoot, 'cxf_addon.node'))
+const addon = require(path.join(repoRoot, 'nxr_compute_addon.node'))
 
 // ── Icosahedron mesh (matches test_eigen.cpp / test_factor_cache.cpp) ──
 const t = (1 + Math.sqrt(5)) / 2

@@ -1,10 +1,10 @@
 /**
- * cxf_wasm.cpp — Embind bindings exposing cxf to JavaScript via WebAssembly.
+ * nxr_compute_wasm.cpp — Embind bindings exposing nxr-compute to JavaScript via WebAssembly.
  *
  * Mirrors the N-API addon's surface — same compute methods, same stateful
  * ComputeContext pattern, same data shapes — but built around Embind's
  * idioms instead of N-API. Designed for browser apps (three.js, plain JS,
- * frameworks) that consume cxf as a portable compute backend.
+ * frameworks) that consume nxr-compute as a portable compute backend.
  *
  * Conventions:
  *   • Inputs:  JS typed arrays cross the boundary as `emscripten::val`,
@@ -23,7 +23,7 @@
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
 
-#include "cxf/cxf.h"
+#include "nxr/compute.h"
 
 #include <atomic>
 #include <cstdint>
@@ -63,7 +63,7 @@ val eigenMatrixToVal(const Eigen::MatrixXd& m) {
         static_cast<std::size_t>(rowMajor.rows()) * rowMajor.cols());
 }
 
-// Per cxf.h's hard layout rule (vMajor for eigenvectors), all
+// Per nxr-compute.h's hard layout rule (vMajor for eigenvectors), all
 // V×K matrices flatten row-major into JS just like V×3 / F×3.
 // Use eigenMatrixToVal above. The previous column-major helper
 // was removed in Phase A — the Zarr schema and renderer both
@@ -141,7 +141,7 @@ public:
         int nV = static_cast<int>(verts_.size() / 3);
         int nF = static_cast<int>(faces_.size() / 3);
 
-        // cxf::ComputeContext takes int32_t* for faces; copy into the
+        // nxr::compute::ComputeContext takes int32_t* for faces; copy into the
         // canonical type since convertJSArrayToNumberVector<int> may
         // produce a different underlying integer width on some platforms.
         faces32_.resize(faces_.size());
@@ -149,9 +149,9 @@ public:
             faces32_[i] = static_cast<int32_t>(faces_[i]);
         }
 
-        ctx_ = std::make_unique<cxf::ComputeContext>(
+        ctx_ = std::make_unique<nxr::compute::ComputeContext>(
             verts_.data(), nV, faces32_.data(), nF);
-        cache_ = std::make_unique<cxf::CholeskyCache>();
+        cache_ = std::make_unique<nxr::compute::CholeskyCache>();
     }
 
     int nV() const { return ctx_->nV(); }
@@ -171,7 +171,7 @@ public:
     }
 
     val computeFaceFrames() {
-        auto frames = cxf::computeFaceFrames(*ctx_);
+        auto frames = nxr::compute::computeFaceFrames(*ctx_);
         val obj = val::object();
         obj.set("e1",      eigenMatrixToVal(frames.e1));
         obj.set("e2",      eigenMatrixToVal(frames.e2));
@@ -180,8 +180,8 @@ public:
     }
 
     val computeVertexNormals(int type) {
-        cxf::NormalType nt = static_cast<cxf::NormalType>(type);
-        Eigen::MatrixXd N = cxf::computeVertexNormals(*ctx_, nt);
+        nxr::compute::NormalType nt = static_cast<nxr::compute::NormalType>(type);
+        Eigen::MatrixXd N = nxr::compute::computeVertexNormals(*ctx_, nt);
         return eigenMatrixToVal(N);
     }
 
@@ -197,7 +197,7 @@ public:
     //     to opt out. Layout: [iteration, totalIterations, residual×1e6].
     //
     // Errors land in JS as Error objects whose .message starts with
-    // "[CODE] " (where CODE is the cxf::ErrorCode name, e.g. CANCELLED).
+    // "[CODE] " (where CODE is the nxr::compute::ErrorCode name, e.g. CANCELLED).
     // A small parseError helper on the JS side recovers .code from the
     // message prefix; richer per-binding error mapping can land in a
     // future phase.
@@ -207,11 +207,11 @@ public:
                         int progressLen) {
         ensureOps();
 
-        cxf::CancellationToken cancel = cancelAddr
-            ? cxf::CancellationToken(reinterpret_cast<const std::atomic<int32_t>*>(cancelAddr))
-            : cxf::CancellationToken{};
+        nxr::compute::CancellationToken cancel = cancelAddr
+            ? nxr::compute::CancellationToken(reinterpret_cast<const std::atomic<int32_t>*>(cancelAddr))
+            : nxr::compute::CancellationToken{};
 
-        cxf::ProgressObserver progress;
+        nxr::compute::ProgressObserver progress;
         if (progressAddr && progressLen >= 3) {
             auto* base = reinterpret_cast<std::atomic<int32_t>*>(progressAddr);
             progress.iteration       = &base[0];
@@ -220,14 +220,14 @@ public:
         }
 
         try {
-            cxf::EigenResult r = cxf::solveEigenmodes(
+            nxr::compute::EigenResult r = nxr::compute::solveEigenmodes(
                 ops_->stiffness, ops_->mass, k, sigma, cancel, progress);
             return eigenResultToVal(r);
-        } catch (const cxf::CxfError& e) {
+        } catch (const nxr::compute::Error& e) {
             // Prefix the message with the code so JS consumers can
             // pattern-match without losing the human-readable text.
             std::string msg = "[";
-            msg += cxf::errorCodeName(e.code());
+            msg += nxr::compute::errorCodeName(e.code());
             msg += "] ";
             msg += e.what();
             if (!e.hint().empty()) {
@@ -251,30 +251,30 @@ public:
                 U(r, c) = vec[r * cols + c];
             }
         }
-        Eigen::MatrixXd Un = cxf::normalizeEigenmodes(U, ops_->mass);
+        Eigen::MatrixXd Un = nxr::compute::normalizeEigenmodes(U, ops_->mass);
         return eigenMatrixToVal(Un);
     }
 
     val removeDC(val eigStruct) {
-        cxf::EigenResult r = valToEigenResult(eigStruct);
-        cxf::EigenResult t = cxf::removeDC(r);
+        nxr::compute::EigenResult r = valToEigenResult(eigStruct);
+        nxr::compute::EigenResult t = nxr::compute::removeDC(r);
         return eigenResultToVal(t);
     }
 
     /** One-shot precompute: assemble + DEC + eigensolve + normalize +
      *  removeDC + face frames, returned as a single struct. The
-     *  visualization-defaults pack from docs/cxf/architecture.md. */
+     *  visualization-defaults pack from docs/nxr-compute/architecture.md. */
     val precompute(int k, double sigma) {
         ensureOps();
         ensureDec();
 
-        cxf::EigenResult eig = cxf::solveEigenmodes(
+        nxr::compute::EigenResult eig = nxr::compute::solveEigenmodes(
             ops_->stiffness, ops_->mass, k, sigma);
-        eig.eigenvectors = cxf::normalizeEigenmodes(eig.eigenvectors, ops_->mass);
-        eig = cxf::removeDC(eig);
-        eigCache_ = std::make_unique<cxf::EigenResult>(eig);
+        eig.eigenvectors = nxr::compute::normalizeEigenmodes(eig.eigenvectors, ops_->mass);
+        eig = nxr::compute::removeDC(eig);
+        eigCache_ = std::make_unique<nxr::compute::EigenResult>(eig);
 
-        auto frames = cxf::computeFaceFrames(*ctx_);
+        auto frames = nxr::compute::computeFaceFrames(*ctx_);
 
         val out = val::object();
         out.set("operators",  meshOpsToVal());
@@ -299,18 +299,18 @@ public:
         }
         std::map<int, double> srcMap;
         for (std::size_t i = 0; i < verts.size(); i++) srcMap[verts[i]] = vals[i];
-        Eigen::VectorXd phi = cxf::solvePoisson(*ops_, *cache_, srcMap);
+        Eigen::VectorXd phi = nxr::compute::solvePoisson(*ops_, *cache_, srcMap);
         return eigenVectorToVal(phi);
     }
 
     val computeGeodesicDistance(val sourceVertsArr) {
         auto sources = emscripten::convertJSArrayToNumberVector<int>(sourceVertsArr);
-        Eigen::VectorXd d = cxf::computeGeodesicDistance(*ctx_, sources);
+        Eigen::VectorXd d = nxr::compute::computeGeodesicDistance(*ctx_, sources);
         return eigenVectorToVal(d);
     }
 
     val tracePath(int vStart, int vEnd) {
-        Eigen::MatrixXd path = cxf::tracePath(*ctx_, vStart, vEnd);
+        Eigen::MatrixXd path = nxr::compute::tracePath(*ctx_, vStart, vEnd);
         val out = val::object();
         out.set("positions", eigenMatrixToVal(path));
         out.set("nPoints",   static_cast<int>(path.rows()));
@@ -320,7 +320,7 @@ public:
     val hodgeDecompose(val omegaArr) {
         ensureDec();
         Eigen::VectorXd omega = valToEigenVector(omegaArr);
-        cxf::HodgeResult h = cxf::hodgeDecompose(*ctx_, *dec_, *cache_, omega);
+        nxr::compute::HodgeResult h = nxr::compute::hodgeDecompose(*ctx_, *dec_, *cache_, omega);
         val o = val::object();
         o.set("exactPotential",     eigenVectorToVal(h.exactPotential));
         o.set("coExactPotentialV",  eigenVectorToVal(h.coExactPotentialV));
@@ -336,7 +336,7 @@ public:
     }
 
     val computeCurvatures() {
-        cxf::CurvatureResult c = cxf::computeCurvatures(*ctx_);
+        nxr::compute::CurvatureResult c = nxr::compute::computeCurvatures(*ctx_);
         val o = val::object();
         o.set("gaussian",     eigenVectorToVal(c.gaussian));
         o.set("mean",         eigenVectorToVal(c.mean));
@@ -347,13 +347,13 @@ public:
     }
 
     val computeUVCoordinates() {
-        Eigen::MatrixXd uvs = cxf::computeUVCoordinates(*ctx_);
+        Eigen::MatrixXd uvs = nxr::compute::computeUVCoordinates(*ctx_);
         return eigenMatrixToVal(uvs);
     }
 
     val computeIsolines(val scalarsArr, int numLevels, double minVal, double maxVal) {
         Eigen::VectorXd scalars = valToEigenVector(scalarsArr);
-        cxf::IsolineResult r = cxf::computeIsolines(*ctx_, scalars, numLevels, minVal, maxVal);
+        nxr::compute::IsolineResult r = nxr::compute::computeIsolines(*ctx_, scalars, numLevels, minVal, maxVal);
         val out = val::object();
         out.set("positions",    eigenMatrixToVal(r.positions));
         out.set("segmentCount", r.segmentCount);
@@ -366,7 +366,7 @@ public:
         auto vals  = emscripten::convertJSArrayToNumberVector<double>(singValuesArr);
         std::map<int, double> singMap;
         for (std::size_t i = 0; i < verts.size(); i++) singMap[verts[i]] = vals[i];
-        cxf::DirectionFieldResult r = cxf::computeDirectionField(*ctx_, *dec_, *cache_, singMap);
+        nxr::compute::DirectionFieldResult r = nxr::compute::computeDirectionField(*ctx_, *dec_, *cache_, singMap);
         val o = val::object();
         o.set("connections",         eigenVectorToVal(r.connections));
         o.set("directionVectors",    eigenMatrixToVal(r.directionVectors));
@@ -388,7 +388,7 @@ public:
             faceField(i, 1) = vec[i * 3 + 1];
             faceField(i, 2) = vec[i * 3 + 2];
         }
-        cxf::StreamlineResult r = cxf::traceStreamlines(*ctx_, faceField, numSeeds, stepCoef, maxSteps);
+        nxr::compute::StreamlineResult r = nxr::compute::traceStreamlines(*ctx_, faceField, numSeeds, stepCoef, maxSteps);
         val o = val::object();
         o.set("positions",    eigenMatrixToVal(r.positions));
         o.set("segmentCount", r.segmentCount);
@@ -400,13 +400,13 @@ public:
     val whitneyInterpolate(val oneFormArr) {
         ensureDec();
         Eigen::VectorXd omega = valToEigenVector(oneFormArr);
-        Eigen::MatrixXd faceVecs = cxf::whitneyInterpolate(*ctx_, *dec_, omega);
+        Eigen::MatrixXd faceVecs = nxr::compute::whitneyInterpolate(*ctx_, *dec_, omega);
         return eigenMatrixToVal(faceVecs);
     }
 
     val scalarGradient(val scalarArr) {
         Eigen::VectorXd s = valToEigenVector(scalarArr);
-        Eigen::MatrixXd grad = cxf::scalarGradient(*ctx_, s);
+        Eigen::MatrixXd grad = nxr::compute::scalarGradient(*ctx_, s);
         return eigenMatrixToVal(grad);
     }
 
@@ -424,9 +424,9 @@ public:
         auto vals  = emscripten::convertJSArrayToNumberVector<double>(sourceValuesArr);
         std::map<int, double> sources;
         for (std::size_t i = 0; i < verts.size(); i++) sources[verts[i]] = vals[i];
-        Eigen::VectorXd u0 = cxf::generateDelta(ctx_->nV(), sources);
+        Eigen::VectorXd u0 = nxr::compute::generateDelta(ctx_->nV(), sources);
         std::vector<double> ts = valToDoubleVector(timestepsArr);
-        Eigen::MatrixXf field = cxf::generateHeatDiffusion(
+        Eigen::MatrixXf field = nxr::compute::generateHeatDiffusion(
             *ops_, *eigCache_, u0, ts, alpha);
         val out = val::object();
         out.set("data", eigenMatrixFloat32ToVal(field));
@@ -448,7 +448,7 @@ public:
         auto da  = valToDoubleVector(dampingsArr);
         auto ph  = valToDoubleVector(phasesArr);
         auto ts  = valToDoubleVector(timestepsArr);
-        Eigen::MatrixXf field = cxf::generateDampedWave(
+        Eigen::MatrixXf field = nxr::compute::generateDampedWave(
             *eigCache_, mi, am, da, ph, ts);
         val out = val::object();
         out.set("data", eigenMatrixFloat32ToVal(field));
@@ -460,7 +460,7 @@ public:
     val generateRandomDecomposed1Form(double alphaStrength, double betaStrength,
                                       double gammaStrength, int seed) {
         ensureDec();
-        Eigen::VectorXd omega = cxf::generateRandomDecomposed1Form(
+        Eigen::VectorXd omega = nxr::compute::generateRandomDecomposed1Form(
             *dec_, ctx_->nV(), ctx_->nE(), ctx_->nF(),
             alphaStrength, betaStrength, gammaStrength,
             static_cast<unsigned int>(seed));
@@ -470,12 +470,12 @@ public:
 private:
     // Lazy state (matches the addon's ContextHolder caching).
     void ensureOps() {
-        if (!ops_) ops_ = std::make_unique<cxf::MeshOperators>(
-            cxf::assembleMeshOperators(*ctx_));
+        if (!ops_) ops_ = std::make_unique<nxr::compute::MeshOperators>(
+            nxr::compute::assembleMeshOperators(*ctx_));
     }
     void ensureDec() {
-        if (!dec_) dec_ = std::make_unique<cxf::DECOperators>(
-            cxf::assembleDECOperators(*ctx_));
+        if (!dec_) dec_ = std::make_unique<nxr::compute::DECOperators>(
+            nxr::compute::assembleDECOperators(*ctx_));
     }
 
     val meshOpsToVal() {
@@ -504,7 +504,7 @@ private:
         return o;
     }
 
-    val eigenResultToVal(const cxf::EigenResult& r) {
+    val eigenResultToVal(const nxr::compute::EigenResult& r) {
         val o = val::object();
         // vMajor row-major: U[v*K + k]. Matches the cortical-flow
         // Zarr schema (manifold/eigenmodes/eigenvectors stored as
@@ -516,8 +516,8 @@ private:
         return o;
     }
 
-    cxf::EigenResult valToEigenResult(const val& s) {
-        cxf::EigenResult r;
+    nxr::compute::EigenResult valToEigenResult(const val& s) {
+        nxr::compute::EigenResult r;
         val uField = s["eigenvectors"];
         val lField = s["eigenvalues"];
         auto uVec = emscripten::convertJSArrayToNumberVector<double>(uField);
@@ -538,11 +538,11 @@ private:
         return r;
     }
 
-    std::unique_ptr<cxf::ComputeContext>   ctx_;
-    std::unique_ptr<cxf::MeshOperators>    ops_;
-    std::unique_ptr<cxf::DECOperators>     dec_;
-    std::unique_ptr<cxf::CholeskyCache>    cache_;
-    std::unique_ptr<cxf::EigenResult>      eigCache_;
+    std::unique_ptr<nxr::compute::ComputeContext>   ctx_;
+    std::unique_ptr<nxr::compute::MeshOperators>    ops_;
+    std::unique_ptr<nxr::compute::DECOperators>     dec_;
+    std::unique_ptr<nxr::compute::CholeskyCache>    cache_;
+    std::unique_ptr<nxr::compute::EigenResult>      eigCache_;
     std::vector<double>  verts_;
     std::vector<int>     faces_;
     std::vector<int32_t> faces32_;
@@ -551,12 +551,12 @@ private:
 // ── Free functions ───────────────────────────────────────────
 
 std::string getVersion() {
-    return "cxf 0.1.0";
+    return "nxr-compute 0.1.0";
 }
 
 // ── Embind module bindings ───────────────────────────────────
 
-EMSCRIPTEN_BINDINGS(cxf_wasm) {
+EMSCRIPTEN_BINDINGS(nxr_compute_wasm) {
     emscripten::class_<ContextWrapper>("ComputeContext")
         .constructor<val, val>()
         // Accessors
