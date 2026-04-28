@@ -23,7 +23,6 @@ if(DEFINED CMAKE_JS_INC)
     )
     target_link_libraries(nxr_compute_addon PRIVATE
         nxr_compute
-        cxf-io
         ${CMAKE_JS_LIB}
     )
     # Disable C++ exceptions in N-API (use NAPI C++ exception bridge).

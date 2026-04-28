@@ -12,7 +12,6 @@
 
 #include <napi.h>
 #include "nxr/compute.h"
-#include "cxf-io/freesurfer.h"
 
 #include <cstring>
 #include <memory>
@@ -598,76 +597,6 @@ Napi::Value TraceStreamlines(const Napi::CallbackInfo& info) {
     return obj;
 }
 
-// ─── readFreesurferSurface(path) → { vertices, faces, comment, nV, nF } ──
-// Parses a FreeSurfer triangle-format surface file (lh.pial, etc.) and
-// returns raw geometry. No mesh validation or operator assembly — pure I/O.
-
-Napi::Value ReadFreesurferSurface(const Napi::CallbackInfo& info) {
-    Napi::Env env = info.Env();
-
-    if (info.Length() < 1 || !info[0].IsString()) {
-        Napi::TypeError::New(env, "readFreesurferSurface(path: string)").ThrowAsJavaScriptException();
-        return env.Null();
-    }
-
-    std::string path = info[0].As<Napi::String>().Utf8Value();
-
-    try {
-        auto surface = cxf_io::freesurfer::readSurface(path);
-
-        // Vertices as Float32Array [nV * 3] — matches bct.manifold@2 dtype
-        auto vertsArr = Napi::Float32Array::New(env, surface.vertices.size());
-        std::memcpy(vertsArr.Data(), surface.vertices.data(),
-                    surface.vertices.size() * sizeof(float));
-
-        // Faces as Int32Array [nF * 3]
-        auto facesArr = Napi::Int32Array::New(env, surface.faces.size());
-        std::memcpy(facesArr.Data(), surface.faces.data(),
-                    surface.faces.size() * sizeof(int32_t));
-
-        auto result = Napi::Object::New(env);
-        result.Set("vertices", vertsArr);
-        result.Set("faces", facesArr);
-        result.Set("comment", Napi::String::New(env, surface.comment));
-        result.Set("nV", Napi::Number::New(env, surface.nV));
-        result.Set("nF", Napi::Number::New(env, surface.nF));
-        return result;
-    } catch (const std::exception& e) {
-        Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
-        return env.Null();
-    }
-}
-
-// ─── readFreesurferCurv(path) → { values, nV, nF } ──────────
-
-Napi::Value ReadFreesurferCurv(const Napi::CallbackInfo& info) {
-    Napi::Env env = info.Env();
-
-    if (info.Length() < 1 || !info[0].IsString()) {
-        Napi::TypeError::New(env, "readFreesurferCurv(path: string)").ThrowAsJavaScriptException();
-        return env.Null();
-    }
-
-    std::string path = info[0].As<Napi::String>().Utf8Value();
-
-    try {
-        auto curv = cxf_io::freesurfer::readCurv(path);
-
-        auto valuesArr = Napi::Float32Array::New(env, curv.values.size());
-        std::memcpy(valuesArr.Data(), curv.values.data(),
-                    curv.values.size() * sizeof(float));
-
-        auto result = Napi::Object::New(env);
-        result.Set("values", valuesArr);
-        result.Set("nV", Napi::Number::New(env, curv.nV));
-        result.Set("nF", Napi::Number::New(env, curv.nF));
-        return result;
-    } catch (const std::exception& e) {
-        Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
-        return env.Null();
-    }
-}
-
 // ─── generateHeatDiffusion(ctx, {sources, timesteps, alpha}) ────
 //
 // Returns a [T*nV] Float32Array (row-major frame-major) plus T and
@@ -790,8 +719,6 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("traceStreamlines", Napi::Function::New(env, TraceStreamlines));
     exports.Set("generateHeatDiffusion", Napi::Function::New(env, GenerateHeatDiffusion));
     exports.Set("generateDampedWave", Napi::Function::New(env, GenerateDampedWave));
-    exports.Set("readFreesurferSurface", Napi::Function::New(env, ReadFreesurferSurface));
-    exports.Set("readFreesurferCurv", Napi::Function::New(env, ReadFreesurferCurv));
     return exports;
 }
 
