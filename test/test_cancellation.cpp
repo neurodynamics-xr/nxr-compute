@@ -1,5 +1,5 @@
 /**
- * test_cancellation.cpp — Cancellation contract for cxf solvers.
+ * test_cancellation.cpp — Cancellation contract for nxr-compute solvers.
  *
  * Validates that:
  *   1. CancellationToken::requested() reads the atomic flag.
@@ -224,7 +224,7 @@ void test_SolveSucceedsWithIdleToken() {
 
 int main() {
     std::cout << "==========================================" << std::endl;
-    std::cout << "  cxf cancellation contract" << std::endl;
+    std::cout << "  nxr-compute cancellation contract" << std::endl;
     std::cout << "==========================================" << std::endl;
 
     test_DefaultTokenIsNotCancelled();

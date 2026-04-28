@@ -1,10 +1,10 @@
 /**
- * cxf_wasm.cpp — Embind bindings exposing cxf to JavaScript via WebAssembly.
+ * nxr_compute_wasm.cpp — Embind bindings exposing nxr-compute to JavaScript via WebAssembly.
  *
  * Mirrors the N-API addon's surface — same compute methods, same stateful
  * ComputeContext pattern, same data shapes — but built around Embind's
  * idioms instead of N-API. Designed for browser apps (three.js, plain JS,
- * frameworks) that consume cxf as a portable compute backend.
+ * frameworks) that consume nxr-compute as a portable compute backend.
  *
  * Conventions:
  *   • Inputs:  JS typed arrays cross the boundary as `emscripten::val`,
@@ -63,7 +63,7 @@ val eigenMatrixToVal(const Eigen::MatrixXd& m) {
         static_cast<std::size_t>(rowMajor.rows()) * rowMajor.cols());
 }
 
-// Per cxf.h's hard layout rule (vMajor for eigenvectors), all
+// Per nxr-compute.h's hard layout rule (vMajor for eigenvectors), all
 // V×K matrices flatten row-major into JS just like V×3 / F×3.
 // Use eigenMatrixToVal above. The previous column-major helper
 // was removed in Phase A — the Zarr schema and renderer both
@@ -263,7 +263,7 @@ public:
 
     /** One-shot precompute: assemble + DEC + eigensolve + normalize +
      *  removeDC + face frames, returned as a single struct. The
-     *  visualization-defaults pack from docs/cxf/architecture.md. */
+     *  visualization-defaults pack from docs/nxr-compute/architecture.md. */
     val precompute(int k, double sigma) {
         ensureOps();
         ensureDec();
@@ -551,12 +551,12 @@ private:
 // ── Free functions ───────────────────────────────────────────
 
 std::string getVersion() {
-    return "cxf 0.1.0";
+    return "nxr-compute 0.1.0";
 }
 
 // ── Embind module bindings ───────────────────────────────────
 
-EMSCRIPTEN_BINDINGS(cxf_wasm) {
+EMSCRIPTEN_BINDINGS(nxr_compute_wasm) {
     emscripten::class_<ContextWrapper>("ComputeContext")
         .constructor<val, val>()
         // Accessors

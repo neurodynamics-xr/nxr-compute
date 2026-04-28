@@ -1,5 +1,5 @@
-// TypeScript declarations for the cxf WASM binding.
-// See docs/cxf/three-js-integration.md and docs/cxf/visualization-recipes.md
+// TypeScript declarations for the nxr-compute WASM binding.
+// See docs/nxr-compute/three-js-integration.md and docs/nxr-compute/visualization-recipes.md
 // for usage patterns.
 
 /** Sparse matrix in COO triplet form. Always real double. */
@@ -132,7 +132,7 @@ export enum NormalType {
 }
 
 /**
- * Stateful compute context for one mesh. Holds the cxf::ComputeContext
+ * Stateful compute context for one mesh. Holds the nxr::compute::ComputeContext
  * in WASM linear memory plus cached operators / Cholesky factors /
  * eigenmodes. Call `delete()` when finished.
  */
@@ -210,7 +210,7 @@ export interface ComputeContext {
   delete(): void
 }
 
-export interface Cxf {
+export interface NxrCompute {
   version(): string
   createContext(
     vertices: Float64Array | number[],
@@ -219,14 +219,14 @@ export interface Cxf {
 }
 
 export interface InitOptions {
-  /** Custom locator for cxf.wasm. */
+  /** Custom locator for nxr_compute.wasm. */
   locateFile?: (filename: string) => string
 }
 
 /**
- * Load the cxf WASM module. Idempotent. The promise resolves to a
- * Cxf object exposing the public API.
+ * Load the nxr-compute WASM module. Idempotent. The promise resolves to a
+ * NxrCompute object exposing the public API.
  */
-export function initCxf(options?: InitOptions): Promise<Cxf>
+export function initNxrCompute(options?: InitOptions): Promise<NxrCompute>
 
-export default initCxf
+export default initNxrCompute

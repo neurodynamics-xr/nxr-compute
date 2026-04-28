@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the native C++ addon (cxf_addon.node)
+# Build the native C++ addon (nxr_compute_addon.node)
 #
 # Prerequisites:
 #   - Visual Studio 2026 (or later) with C++ workload
@@ -30,12 +30,12 @@ cd "$NATIVE_DIR"
     --config "$CONFIG"
 
 # Copy the .node file to project root for easy require()
-ADDON_PATH="$NATIVE_DIR/build_node/$CONFIG/cxf_addon.node"
+ADDON_PATH="$NATIVE_DIR/build_node/$CONFIG/nxr_compute_addon.node"
 if [ -f "$ADDON_PATH" ]; then
-    cp "$ADDON_PATH" "$PROJECT_ROOT/cxf_addon.node"
-    echo "✓ Copied cxf_addon.node to project root"
-    echo "  Size: $(du -h "$PROJECT_ROOT/cxf_addon.node" | cut -f1)"
+    cp "$ADDON_PATH" "$PROJECT_ROOT/nxr_compute_addon.node"
+    echo "✓ Copied nxr_compute_addon.node to project root"
+    echo "  Size: $(du -h "$PROJECT_ROOT/nxr_compute_addon.node" | cut -f1)"
 else
-    echo "✗ cxf_addon.node not found at $ADDON_PATH"
+    echo "✗ nxr_compute_addon.node not found at $ADDON_PATH"
     exit 1
 fi

@@ -2,7 +2,7 @@
 
 // ── nxr::compute::CancellationToken — binding-agnostic cancel signal ──
 //
-// Long-running cxf operations accept an optional CancellationToken.
+// Long-running nxr-compute operations accept an optional CancellationToken.
 // The solver polls token.requested() at well-defined points (e.g.
 // once per Spectra perform_op call inside the eigensolver) and
 // throws Error(ErrorCode::Cancelled, ...) when it sees true.

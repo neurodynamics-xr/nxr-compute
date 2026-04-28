@@ -1,11 +1,11 @@
 /**
- * cxf — command-line interface around the cxf compute library.
+ * nxr-compute — command-line interface around the nxr-compute compute library.
  *
  * v0 closes the offline-precompute gap: take a cortical surface
  * mesh, assemble operators, solve eigenmodes, write a Zarr store
  * the renderer can load directly.
  *
- *   cxf precompute --input <FS-surface.pial> --output <session.zarr> [--k 300]
+ *   nxr-compute precompute --input <FS-surface.pial> --output <session.zarr> [--k 300]
  *
  * Single-hemisphere only in v0; bilateral support comes later.
  */
@@ -28,7 +28,7 @@ namespace {
 // ── SIGINT (Ctrl-C) → cancellation token ─────────────────────
 //
 // One process-wide atomic flag, flipped by the SIGINT handler.
-// cxf solvers wrap a CancellationToken around it via ctrl_c_token().
+// nxr-compute solvers wrap a CancellationToken around it via ctrl_c_token().
 // The handler is async-signal-safe (only writes to the atomic).
 std::atomic<int32_t> g_sigintFlag{0};
 
@@ -40,11 +40,11 @@ nxr::compute::CancellationToken ctrl_c_token() {
     return nxr::compute::CancellationToken(&g_sigintFlag);
 }
 
-constexpr const char* kVersion = "cxf 0.1.0";
+constexpr const char* kVersion = "nxr-compute 0.1.0";
 
 void printUsage() {
     std::cout
-        << "Usage: cxf <command> [options]\n"
+        << "Usage: nxr-compute <command> [options]\n"
         << "\n"
         << "Commands:\n"
         << "  precompute   Assemble operators + solve eigenmodes for a surface,\n"
@@ -54,12 +54,12 @@ void printUsage() {
         << "  -h, --help      Print this help and exit.\n"
         << "  -v, --version   Print version and exit.\n"
         << "\n"
-        << "Run `cxf <command> --help` for command-specific options.\n";
+        << "Run `nxr-compute <command> --help` for command-specific options.\n";
 }
 
 void printPrecomputeUsage() {
     std::cout
-        << "Usage: cxf precompute --input <path> --output <path> [--k <N>]\n"
+        << "Usage: nxr-compute precompute --input <path> --output <path> [--k <N>]\n"
         << "\n"
         << "Required:\n"
         << "  --input  <path>   FreeSurfer surface file (e.g. lh.pial).\n"
@@ -92,33 +92,33 @@ int cmdPrecompute(int argc, char** argv) {
             printPrecomputeUsage();
             return 0;
         } else {
-            std::cerr << "cxf precompute: unknown argument \"" << arg << "\"\n";
+            std::cerr << "nxr-compute precompute: unknown argument \"" << arg << "\"\n";
             printPrecomputeUsage();
             return 2;
         }
     }
 
     if (inputPath.empty() || outputPath.empty()) {
-        std::cerr << "cxf precompute: --input and --output are required\n";
+        std::cerr << "nxr-compute precompute: --input and --output are required\n";
         printPrecomputeUsage();
         return 2;
     }
     if (k <= 0) {
-        std::cerr << "cxf precompute: --k must be positive (got " << k << ")\n";
+        std::cerr << "nxr-compute precompute: --k must be positive (got " << k << ")\n";
         return 2;
     }
 
     // ── 1. Read FreeSurfer surface ────────────────────────
-    std::cout << "[cxf] reading " << inputPath << std::endl;
+    std::cout << "[nxr-compute] reading " << inputPath << std::endl;
     auto t0 = std::chrono::steady_clock::now();
     cxf_io::freesurfer::Surface surf;
     try {
         surf = cxf_io::freesurfer::readSurface(inputPath);
     } catch (const std::exception& e) {
-        std::cerr << "cxf precompute: failed to read surface: " << e.what() << "\n";
+        std::cerr << "nxr-compute precompute: failed to read surface: " << e.what() << "\n";
         return 1;
     }
-    std::cout << "[cxf]   nV=" << surf.nV << "  nF=" << surf.nF
+    std::cout << "[nxr-compute]   nV=" << surf.nV << "  nF=" << surf.nF
               << "  (" << elapsedMs(t0) << " ms)" << std::endl;
 
     // ── 2. ComputeContext (needs double-precision vertices) ──
@@ -131,11 +131,11 @@ int cmdPrecompute(int argc, char** argv) {
     // ── 3. Mesh operators (Laplacian, mass, normals, areas) ──
     t0 = std::chrono::steady_clock::now();
     auto ops = nxr::compute::assembleMeshOperators(ctx);
-    std::cout << "[cxf] assembled mesh operators (" << elapsedMs(t0) << " ms)" << std::endl;
+    std::cout << "[nxr-compute] assembled mesh operators (" << elapsedMs(t0) << " ms)" << std::endl;
 
     // ── 4. Eigensolve → normalize → removeDC ──────────────
     if (k >= surf.nV) {
-        std::cerr << "cxf precompute: requested k=" << k
+        std::cerr << "nxr-compute precompute: requested k=" << k
                   << " but the mesh only has " << surf.nV << " vertices.\n";
         return 1;
     }
@@ -143,7 +143,7 @@ int cmdPrecompute(int argc, char** argv) {
     auto eig = nxr::compute::solveEigenmodes(ops.stiffness, ops.mass, k, -1e-8, ctrl_c_token());
     eig.eigenvectors = nxr::compute::normalizeEigenmodes(eig.eigenvectors, ops.mass);
     eig = nxr::compute::removeDC(eig);
-    std::cout << "[cxf] eigensolve k=" << eig.k
+    std::cout << "[nxr-compute] eigensolve k=" << eig.k
               << " (" << elapsedMs(t0) << " ms)" << std::endl;
 
     // ── 5. Write Zarr ────────────────────────────────────
@@ -156,12 +156,12 @@ int cmdPrecompute(int argc, char** argv) {
 
     // Top-level store metadata.
     cxf_io::zarr::writeAttrs(outputPath, "",
-        "{\"schema\":\"cxf.session@0.1\",\"format\":\"zarr\",\"zarr_version\":2}");
+        "{\"schema\":\"nxr-compute.session@0.1\",\"format\":\"zarr\",\"zarr_version\":2}");
 
     // manifold/.zattrs — describes the geometry block.
     {
         std::string a = "{";
-        a += "\"schema\":\"cxf.manifold@0.1\",";
+        a += "\"schema\":\"nxr-compute.manifold@0.1\",";
         a += "\"numVertices\":" + std::to_string(surf.nV) + ",";
         a += "\"numFaces\":"    + std::to_string(surf.nF) + ",";
         a += "\"source\":\""    + inputPath + "\"";
@@ -188,7 +188,7 @@ int cmdPrecompute(int argc, char** argv) {
     // Eigenmodes block.
     {
         std::string a = "{";
-        a += "\"schema\":\"cxf.eigen@0.1\",";
+        a += "\"schema\":\"nxr-compute.eigen@0.1\",";
         a += "\"numModes\":"    + std::to_string(eig.k) + ",";
         a += "\"numVertices\":" + std::to_string(surf.nV) + ",";
         a += "\"removedDC\":true,";
@@ -216,18 +216,18 @@ int cmdPrecompute(int argc, char** argv) {
         {static_cast<int>(eig.eigenvalues.size()), 1},
         eig.eigenvalues.data());
 
-    std::cout << "[cxf] wrote Zarr store " << outputPath
+    std::cout << "[nxr-compute] wrote Zarr store " << outputPath
               << " (" << elapsedMs(t0) << " ms)" << std::endl;
-    std::cout << "[cxf] done." << std::endl;
+    std::cout << "[nxr-compute] done." << std::endl;
     return 0;
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
-    // Wire Ctrl-C → cancel on cxf solvers. The default action would be
+    // Wire Ctrl-C → cancel on nxr-compute solvers. The default action would be
     // immediate process termination; the handler instead just sets the
-    // flag so cxf throws Error(Cancelled) and we exit cleanly,
+    // flag so nxr-compute throws Error(Cancelled) and we exit cleanly,
     // closing files and surfacing a useful exit code.
     std::signal(SIGINT, onSigint);
 
@@ -250,7 +250,7 @@ int main(int argc, char** argv) {
         try {
             return cmdPrecompute(argc - 2, argv + 2);
         } catch (const nxr::compute::Error& e) {
-            std::cerr << "cxf precompute: ["
+            std::cerr << "nxr-compute precompute: ["
                       << nxr::compute::errorCodeName(e.code()) << "] " << e.what() << "\n";
             if (!e.hint().empty()) {
                 std::cerr << "  hint: " << e.hint() << "\n";
@@ -259,12 +259,12 @@ int main(int argc, char** argv) {
             // convention) from other failures (1).
             return e.code() == nxr::compute::ErrorCode::Cancelled ? 130 : 1;
         } catch (const std::exception& e) {
-            std::cerr << "cxf precompute: " << e.what() << "\n";
+            std::cerr << "nxr-compute precompute: " << e.what() << "\n";
             return 1;
         }
     }
 
-    std::cerr << "cxf: unknown command \"" << cmd << "\"\n";
+    std::cerr << "nxr: unknown command \"" << cmd << "\"\n";
     printUsage();
     return 2;
 }

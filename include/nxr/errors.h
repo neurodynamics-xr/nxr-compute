@@ -2,11 +2,11 @@
 
 // ── nxr::compute::Error — structured exception type ────────────────
 //
-// Every failure raised by cxf is a Error carrying a stable
+// Every failure raised by nxr-compute is a Error carrying a stable
 // machine-readable ErrorCode plus a human-readable message and
 // optional hint. Bindings translate code() to:
 //   • JS:    error.code === 'NON_MANIFOLD'  (string-named enumerator)
-//   • MATLAB: MException identifier 'cxf:nonManifold'
+//   • MATLAB: MException identifier 'nxr:nonManifold'
 //   • CLI:   exit code (failure path)
 //
 // The `what()` string is diagnostic-only — not a stable contract.

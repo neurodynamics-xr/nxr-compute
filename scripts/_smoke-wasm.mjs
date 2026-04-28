@@ -1,8 +1,8 @@
-// Smoke test for the cxf WASM binding. Loads native/build_wasm/cxf.js,
+// Smoke test for the nxr-compute WASM binding. Loads native/build_wasm/nxr_compute.js,
 // builds the same icosahedron fixture used by the native C++ tests,
 // runs the precompute pipeline, and asserts shapes / values match the
 // expected results. Verifies the entire pipeline:
-//   JS → WASM heap → Embind → cxf C++ → Eigen → return → JS
+//   JS → WASM heap → Embind → nxr-compute C++ → Eigen → return → JS
 //
 // Usage (from repo root):
 //   node scripts/_smoke-wasm.mjs
@@ -13,13 +13,13 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot  = path.resolve(__dirname, '..')
 
-const wasmJsPath = path.join(repoRoot, 'native', 'build_wasm', 'cxf.js')
+const wasmJsPath = path.join(repoRoot, 'native', 'build_wasm', 'nxr_compute.js')
 const moduleUrl  = pathToFileURL(wasmJsPath).href
 
 console.log(`[smoke] loading ${wasmJsPath}`)
-const { default: createCxfModule } = await import(moduleUrl)
-const cxf = await createCxfModule()
-console.log(`[smoke] module ready — version: ${cxf.version()}`)
+const { default: createNxrComputeModule } = await import(moduleUrl)
+const nxrCompute = await createNxrComputeModule()
+console.log(`[smoke] module ready — version: ${nxrCompute.version()}`)
 
 // ── Icosahedron fixture (matches test_eigen.cpp) ──────────────
 const t = (1 + Math.sqrt(5)) / 2
@@ -43,7 +43,7 @@ const faces = new Int32Array([
 ])
 
 // ── Test 1: ComputeContext + accessors ───────────────────────
-const ctx = new cxf.ComputeContext(verts, faces)
+const ctx = new nxrCompute.ComputeContext(verts, faces)
 const nV = ctx.nV(), nF = ctx.nF(), nE = ctx.nE()
 console.log(`[smoke] context: nV=${nV}, nF=${nF}, nE=${nE}`)
 

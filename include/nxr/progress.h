@@ -2,7 +2,7 @@
 
 // ── nxr::compute::ProgressObserver — lock-free progress slots ─────────
 //
-// Long-running cxf operations accept an optional ProgressObserver.
+// Long-running nxr-compute operations accept an optional ProgressObserver.
 // The struct holds three pointers to atomic<int32_t> slots; the
 // solver writes them as it makes progress. Default-constructed
 // (all pointers null) means "discard progress" — used as the

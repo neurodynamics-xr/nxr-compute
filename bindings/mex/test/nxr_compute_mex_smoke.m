@@ -1,27 +1,27 @@
-% cxf_mex_smoke.m — verifies cxf.mexw64 against the same icosahedron
+% nxr_compute_mex_smoke.m — verifies nxr_compute.mexw64 against the same icosahedron
 % fixture used by the C++ test_eigen.exe. Mirrors the gpjs MATLAB
 % bindings smoke pattern: build a known mesh, exercise each command,
 % assert outputs are sensible.
 %
 % Run from MATLAB (or via the matlab MCP tool):
 %   cd <repo>/native/mex/test
-%   cxf_mex_smoke
+%   nxr_compute_mex_smoke
 
 clear; clc;
-fprintf('[cxf_mex] starting smoke test\n');
+fprintf('[nxr_compute_mex] starting smoke test\n');
 
 % Locate the freshly-built MEX (relative to this script).
 thisDir = fileparts(mfilename('fullpath'));
 mexDir  = fullfile(thisDir, '..', '..', 'build_node', 'Release');
 addpath(mexDir);
 
-assert(exist(fullfile(mexDir, 'cxf.mexw64'), 'file') == 3, ...
-    'cxf.mexw64 not found in %s', mexDir);
+assert(exist(fullfile(mexDir, 'nxr_compute.mexw64'), 'file') == 3, ...
+    'nxr_compute.mexw64 not found in %s', mexDir);
 
 % ── Sanity: version string ───────────────────────────────────
-v = cxf('version');
+v = nxr_compute('version');
 fprintf('  version: %s\n', v);
-assert(startsWith(v, 'cxf '), 'version() should return a version string');
+assert(startsWith(v, 'nxr-compute '), 'version() should return a version string');
 
 % ── Build the same icosahedron fixture as test_eigen.cpp ─────
 t = (1 + sqrt(5)) / 2;
@@ -38,7 +38,7 @@ nF = size(F, 1);
 fprintf('  mesh: nV=%d nF=%d\n', nV, nF);
 
 % ── 1. assembleMeshOperators ─────────────────────────────────
-ops = cxf('assembleMeshOperators', V, F);
+ops = nxr_compute('assembleMeshOperators', V, F);
 fprintf('  [1] assembleMeshOperators ✓\n');
 assert(ops.nV == 12 && ops.nF == 20, 'unexpected vertex / face count');
 assert(issparse(ops.stiffness), 'stiffness must be sparse');
@@ -58,7 +58,7 @@ assert(abs(sum(massDiag) - ops.totalArea) < 1e-9, 'mass diagonal sum vs totalAre
 
 % ── 2. solveEigenmodes ───────────────────────────────────────
 K = 6;
-result = cxf('solveEigenmodes', ops.stiffness, ops.mass, K);
+result = nxr_compute('solveEigenmodes', ops.stiffness, ops.mass, K);
 fprintf('  [2] solveEigenmodes ✓ (k=%d, nConverged=%d)\n', ...
     result.k, result.nConverged);
 assert(result.k == K, 'wrong k returned');
@@ -74,7 +74,7 @@ assert(abs(result.eigenvalues(2) - 2.0) < 1e-6, ...
     'expected λ_1 ≈ 2 on icosahedron, got %g', result.eigenvalues(2));
 
 % ── 3. normalizeEigenmodes ───────────────────────────────────
-Un = cxf('normalizeEigenmodes', result.eigenvectors, ops.mass);
+Un = nxr_compute('normalizeEigenmodes', result.eigenvectors, ops.mass);
 fprintf('  [3] normalizeEigenmodes ✓\n');
 assert(isequal(size(Un), [nV K]), 'normalized U shape');
 
@@ -86,14 +86,14 @@ assert(deviation < 1e-12, 'M-orthonormality violated');
 
 % ── 4. removeDC ──────────────────────────────────────────────
 result.eigenvectors = Un;
-trimmed = cxf('removeDC', result);
+trimmed = nxr_compute('removeDC', result);
 fprintf('  [4] removeDC ✓ (k=%d → %d)\n', result.k, trimmed.k);
 assert(trimmed.k == result.k - 1, 'removeDC should drop one mode');
 assert(size(trimmed.eigenvectors, 2) == trimmed.k, 'trimmed eigenvectors width');
 assert(numel(trimmed.eigenvalues) == trimmed.k, 'trimmed eigenvalues length');
 
 % ── 5. precompute (one-shot pipeline) ────────────────────────
-oneShot = cxf('precompute', V, F, K);
+oneShot = nxr_compute('precompute', V, F, K);
 fprintf('  [5] precompute (one-shot) ✓ (k=%d)\n', oneShot.k);
 assert(oneShot.k == trimmed.k, ...
     'one-shot pipeline should match step-by-step (k mismatch)');
@@ -104,4 +104,4 @@ fprintf('       max|Δλ| step-by-step vs one-shot = %.3e\n', deltaLambda);
 assert(deltaLambda < 1e-10, ...
     'one-shot eigenvalues differ from step-by-step by %g', deltaLambda);
 
-fprintf('[cxf_mex] all assertions passed ✓\n');
+fprintf('[nxr_compute_mex] all assertions passed ✓\n');

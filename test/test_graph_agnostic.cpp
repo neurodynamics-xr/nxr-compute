@@ -1,5 +1,5 @@
 /**
- * test_graph_agnostic.cpp — verify cxf's spectral + Poisson + heat
+ * test_graph_agnostic.cpp — verify nxr-compute's spectral + Poisson + heat
  * pipeline operates correctly on a non-mesh input.
  *
  * Builds a synthetic graph Laplacian (50-node path graph) and feeds
@@ -77,7 +77,7 @@ PathGraph makePathGraph(int n) {
 
 int main() {
     std::cout << "==========================================" << std::endl;
-    std::cout << "  cxf graph-agnostic spectral pipeline" << std::endl;
+    std::cout << "  nxr-compute graph-agnostic spectral pipeline" << std::endl;
     std::cout << "==========================================" << std::endl;
 
     const int n = 50;

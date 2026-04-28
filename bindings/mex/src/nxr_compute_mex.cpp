@@ -1,24 +1,24 @@
 /**
- * cxf_mex.cpp — MATLAB MEX dispatcher around the cxf library.
+ * nxr_compute_mex.cpp — MATLAB MEX dispatcher around the nxr-compute library.
  *
  * Single mexFunction with command dispatch (gpjs / libigl-matlab
- * style). One artifact (cxf.mexw64) consumed by Brainstorm, SPM,
+ * style). One artifact (nxr_compute.mexw64) consumed by Brainstorm, SPM,
  * or any MATLAB analysis pipeline.
  *
  * Usage from MATLAB:
- *   ops    = cxf('assembleMeshOperators', V, F);
- *   eig    = cxf('solveEigenmodes', ops.stiffness, ops.mass, k);
- *   eig.eigenvectors = cxf('normalizeEigenmodes', eig.eigenvectors, ops.mass);
- *   eig    = cxf('removeDC', eig);
- *   result = cxf('precompute', V, F, k);   % shorthand for the whole pipeline
+ *   ops    = nxr_compute('assembleMeshOperators', V, F);
+ *   eig    = nxr_compute('solveEigenmodes', ops.stiffness, ops.mass, k);
+ *   eig.eigenvectors = nxr_compute('normalizeEigenmodes', eig.eigenvectors, ops.mass);
+ *   eig    = nxr_compute('removeDC', eig);
+ *   result = nxr_compute('precompute', V, F, k);   % shorthand for the whole pipeline
  *
  * V is Vx3 double; F is Fx3 (double / int32 / uint32) with 1-based
  * indices (MATLAB convention). All sparse outputs are CSC double.
  *
  * Cancellation: long-running commands (solveEigenmodes, precompute)
  * honour Ctrl-C in MATLAB via libut's utIsInterruptPending — the
- * cancellation token polls it from inside cxf's solver and throws
- * Error(Cancelled), which surfaces as MException 'cxf:cancelled'.
+ * cancellation token polls it from inside nxr-compute's solver and throws
+ * Error(Cancelled), which surfaces as MException 'nxr:cancelled'.
  */
 
 #include "nxr/compute.h"
@@ -52,7 +52,7 @@ nxr::compute::CancellationToken makeCtrlCToken() {
 }
 
 // Lowercase first letter of an error-code name for MATLAB identifier
-// convention: 'cxf:nonManifold' rather than 'cxf:NON_MANIFOLD'.
+// convention: 'nxr:nonManifold' rather than 'nxr:NON_MANIFOLD'.
 // MATLAB's MException identifier rules require a lowercase first
 // letter on each colon-segment.
 std::string toMatlabIdentifier(nxr::compute::ErrorCode code) {
@@ -84,7 +84,7 @@ void cmdAssembleMeshOperators(int /*nlhs*/, mxArray** plhs,
                               int nrhs, const mxArray** prhs) {
     if (nrhs != 3) {
         throw std::invalid_argument(
-            "cxf('assembleMeshOperators', V, F) takes exactly 2 arguments");
+            "nxr_compute('assembleMeshOperators', V, F) takes exactly 2 arguments");
     }
     int nV = 0, nF = 0;
     auto verts = mxToVertexBuffer(prhs[1], nV);
@@ -101,13 +101,13 @@ void cmdSolveEigenmodes(int /*nlhs*/, mxArray** plhs,
                         int nrhs, const mxArray** prhs) {
     if (nrhs != 4) {
         throw std::invalid_argument(
-            "cxf('solveEigenmodes', K, M, k) takes exactly 3 arguments");
+            "nxr_compute('solveEigenmodes', K, M, k) takes exactly 3 arguments");
     }
     auto K = mxToEigenSparse(prhs[1]);
     auto M = mxToEigenSparse(prhs[2]);
     int k = getIntArg(prhs[3]);
 
-    // Ctrl-C polling lives entirely in the token; cxf doesn't know about MATLAB.
+    // Ctrl-C polling lives entirely in the token; nxr-compute doesn't know about MATLAB.
     auto result = nxr::compute::solveEigenmodes(K, M, k, -1e-8, makeCtrlCToken());
     plhs[0] = eigenResultToStruct(result);
 }
@@ -118,7 +118,7 @@ void cmdNormalizeEigenmodes(int /*nlhs*/, mxArray** plhs,
                             int nrhs, const mxArray** prhs) {
     if (nrhs != 3) {
         throw std::invalid_argument(
-            "cxf('normalizeEigenmodes', U, M) takes exactly 2 arguments");
+            "nxr_compute('normalizeEigenmodes', U, M) takes exactly 2 arguments");
     }
     auto U = mxToEigenMatrix(prhs[1]);
     auto M = mxToEigenSparse(prhs[2]);
@@ -133,7 +133,7 @@ void cmdRemoveDC(int /*nlhs*/, mxArray** plhs,
                  int nrhs, const mxArray** prhs) {
     if (nrhs != 2) {
         throw std::invalid_argument(
-            "cxf('removeDC', eig) takes exactly 1 argument");
+            "nxr_compute('removeDC', eig) takes exactly 1 argument");
     }
     auto eig = mxToEigenResult(prhs[1]);
     auto trimmed = nxr::compute::removeDC(eig);
@@ -150,7 +150,7 @@ void cmdPrecompute(int /*nlhs*/, mxArray** plhs,
                    int nrhs, const mxArray** prhs) {
     if (nrhs != 4) {
         throw std::invalid_argument(
-            "cxf('precompute', V, F, k) takes exactly 3 arguments");
+            "nxr_compute('precompute', V, F, k) takes exactly 3 arguments");
     }
     int nV = 0, nF = 0;
     auto verts = mxToVertexBuffer(prhs[1], nV);
@@ -170,7 +170,7 @@ void cmdPrecompute(int /*nlhs*/, mxArray** plhs,
 
 void cmdVersion(int /*nlhs*/, mxArray** plhs,
                 int /*nrhs*/, const mxArray** /*prhs*/) {
-    plhs[0] = mxCreateString("cxf 0.1.0");
+    plhs[0] = mxCreateString("nxr-compute 0.1.0");
 }
 
 } // namespace
@@ -179,15 +179,15 @@ void cmdVersion(int /*nlhs*/, mxArray** plhs,
 
 void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
     if (nrhs < 1 || !mxIsChar(prhs[0])) {
-        mexErrMsgIdAndTxt("cxf:nrhs",
-            "First argument must be a command string. Try cxf('version').");
+        mexErrMsgIdAndTxt("nxr:nrhs",
+            "First argument must be a command string. Try nxr_compute('version').");
     }
 
     std::string cmd;
     try {
         cmd = getStringArg(prhs[0]);
     } catch (const std::exception& e) {
-        mexErrMsgIdAndTxt("cxf:badCommand", "%s", e.what());
+        mexErrMsgIdAndTxt("nxr:badCommand", "%s", e.what());
         return;
     }
 
@@ -199,23 +199,23 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "precompute")            cmdPrecompute(nlhs, plhs, nrhs, prhs);
         else if (cmd == "version")               cmdVersion(nlhs, plhs, nrhs, prhs);
         else {
-            mexErrMsgIdAndTxt("cxf:unknownCommand",
+            mexErrMsgIdAndTxt("nxr:unknownCommand",
                 "Unknown command: \"%s\". Available: assembleMeshOperators, "
                 "solveEigenmodes, normalizeEigenmodes, removeDC, precompute, version.",
                 cmd.c_str());
         }
     } catch (const nxr::compute::Error& e) {
-        // Route structured cxf errors to MException identifiers MATLAB
-        // can pattern-match (e.g. ME.identifier == "cxf:cancelled").
-        std::string id = "cxf:" + toMatlabIdentifier(e.code());
+        // Route structured nxr-compute errors to MException identifiers MATLAB
+        // can pattern-match (e.g. ME.identifier == "nxr:cancelled").
+        std::string id = "nxr:" + toMatlabIdentifier(e.code());
         if (e.hint().empty()) {
-            mexErrMsgIdAndTxt(id.c_str(), "cxf('%s'): %s", cmd.c_str(), e.what());
+            mexErrMsgIdAndTxt(id.c_str(), "nxr_compute('%s'): %s", cmd.c_str(), e.what());
         } else {
             std::string hint(e.hint());
-            mexErrMsgIdAndTxt(id.c_str(), "cxf('%s'): %s\n  hint: %s",
+            mexErrMsgIdAndTxt(id.c_str(), "nxr_compute('%s'): %s\n  hint: %s",
                               cmd.c_str(), e.what(), hint.c_str());
         }
     } catch (const std::exception& e) {
-        mexErrMsgIdAndTxt("cxf:error", "cxf('%s') failed: %s", cmd.c_str(), e.what());
+        mexErrMsgIdAndTxt("nxr:error", "nxr_compute('%s') failed: %s", cmd.c_str(), e.what());
     }
 }

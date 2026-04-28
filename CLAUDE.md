@@ -1,4 +1,4 @@
-# CLAUDE.md — Native C++ Addon (cxf_addon.node)
+# CLAUDE.md — Native C++ Addon (nxr_compute_addon.node)
 
 Read the root `CLAUDE.md` first. This file contains C++-specific
 instructions for the native addon.
@@ -7,9 +7,9 @@ instructions for the native addon.
 
 ## Overview
 
-The native addon (`cxf_addon.node`) is a thin N-API wrapper around
-the `cortical_compute` static library. The library lives in
-`native/src/` and `native/include/cortical_compute.h`; the N-API
+The native addon (`nxr_compute_addon.node`) is a thin N-API wrapper around
+the `nxr_compute` static library. The library lives in
+`native/src/` and `native/include/nxr/compute.h`; the N-API
 bindings live in `native/src/addon.cpp`. Build with CMake via cmake-js.
 
 The addon is **context-based**: each mesh is bound once via
@@ -45,7 +45,7 @@ When implementing or debugging, consult these files:
 ## C++ API Surface
 
 The compute library API (callable from `addon.cpp` and from CLI) is
-declared in `native/include/cortical_compute.h`. Highlights:
+declared in `native/include/nxr/compute.h`. Highlights:
 
 ```cpp
 // Per-mesh state
@@ -130,7 +130,7 @@ GPU triangular back-substitution via TSL for hot per-frame paths.
 
 **Not on the table:** CHOLMOD / SuiteSparse / MKL / PARDISO. They
 would give a 3–10× win on x86 native but break the WASM and MEX
-targets (`cortical_compute` must compile from the same source for all
+targets (`nxr_compute` must compile from the same source for all
 three). The build saying "Building without SuiteSparse" is the desired
 state, not a missed optimization.
 
@@ -162,11 +162,11 @@ state, not a missed optimization.
 
 5. **Remove DC mode** after solving — see `removeDC.m` reference.
 
-6. **Error handling**: cxf throws `cxf::CxfError` (carrying an
+6. **Error handling**: nxr-compute throws `nxr::compute::Error` (carrying an
    `ErrorCode` enum + message + optional hint) on every failure path.
-   `CxfError` derives from `std::runtime_error` so existing
+   `Error` derives from `std::runtime_error` so existing
    `catch (const std::exception&)` keeps working, but new code should
-   catch `CxfError` and switch on `code()`. Bindings translate
+   catch `Error` and switch on `code()`. Bindings translate
    `code()` per their idiom — see §11 below.  Don't catch and silently
    zero out — failing loud is the contract.
 
@@ -183,9 +183,9 @@ state, not a missed optimization.
 ```sh
 bash scripts/build-native.sh Release
 # Outputs (cmake-js flat layout):
-#   native/build_node/Release/cxf_addon.node          (copied to project root)
-#   native/build_node/Release/cxf.exe                 (CLI)
-#   native/build_node/Release/cxf.mexw64              (MATLAB MEX)
+#   native/build_node/Release/nxr_compute_addon.node          (copied to project root)
+#   native/build_node/Release/nxr_compute.exe                 (CLI)
+#   native/build_node/Release/nxr_compute.mexw64              (MATLAB MEX)
 #   native/build_node/Release/test_eigen.exe          (end-to-end smoke)
 #   native/build_node/Release/test_cholesky_cache.exe (cache contract)
 #   native/build_node/Release/test_field_generators.exe
@@ -198,7 +198,7 @@ WASM build (separate toolchain):
 
 ```sh
 emcmake cmake -B native/build_wasm -S native -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build native/build_wasm --target cxf_wasm
+cmake --build native/build_wasm --target nxr_compute_wasm
 node scripts/_smoke-wasm.mjs   # Embind round-trip, ~10 ms on icosahedron
 ```
 
@@ -246,7 +246,7 @@ rowMajor = m;` in `eigenMatrixToVal`).
 
 ## §12 Cancellation and progress contract
 
-Long-running cxf operations accept two optional parameters:
+Long-running nxr-compute operations accept two optional parameters:
 
 ```cpp
 EigenResult solveEigenmodes(
@@ -254,11 +254,11 @@ EigenResult solveEigenmodes(
     const Eigen::SparseMatrix<double>& M,
     int k,
     double sigma                          = -1e-8,
-    const cxf::CancellationToken& cancel  = {},   // never cancelled
-    const cxf::ProgressObserver& progress = {});  // discard updates
+    const nxr::compute::CancellationToken& cancel  = {},   // never cancelled
+    const nxr::compute::ProgressObserver& progress = {});  // discard updates
 ```
 
-cxf is binding-agnostic: every shell builds `CancellationToken` from
+nxr-compute is binding-agnostic: every shell builds `CancellationToken` from
 its own native cancel mechanism, but the solver sees one type.
 
 | Binding | CancellationToken construction | ProgressObserver wiring |
@@ -268,19 +268,19 @@ its own native cancel mechanism, but the solver sees one type.
 | **MEX** | `CancellationToken([](){ return utIsInterruptPending(); })` — bridges MATLAB Ctrl-C. | Deferred to Phase B (synchronous MATLAB has no natural progress UI surface). |
 | **CLI** | `CancellationToken(&g_sigintFlag)` — flipped by a `SIGINT` handler. | Not wired (no UI surface). |
 
-Bindings translate `CxfError` per their idiom:
+Bindings translate `Error` per their idiom:
 
 | Binding | Error surface |
 |---|---|
 | N-API addon | JS `Error` with `.code` (string-named enumerator, e.g. `"CANCELLED"`) and `.hint`. |
 | WASM | JS `Error` whose `.message` is `"[CODE_NAME] message [\| hint: ...]"`. Phase B will add a richer mapping via Embind exception registration. |
-| MEX | `MException` with identifier `cxf:cancelled`, `cxf:nonManifold`, etc. (`toMatlabIdentifier` turns the enumerator name into camelCase). |
+| MEX | `MException` with identifier `nxr-compute:cancelled`, `nxr-compute:nonManifold`, etc. (`toMatlabIdentifier` turns the enumerator name into camelCase). |
 | CLI | Exit code: `130` for `Cancelled` (POSIX 128+SIGINT), `1` otherwise. |
 
-The cancellation poll point inside cxf is once per Spectra
+The cancellation poll point inside nxr-compute is once per Spectra
 `perform_op` call, giving sub-second cancel latency on
 cortical-sized meshes. The wrapper that drives this is
-`CancelProgressOp` in `cxf/src/eigensolver.cpp`.
+`CancelProgressOp` in `nxr-compute/src/eigensolver.cpp`.
 
 ---
 

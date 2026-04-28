@@ -1,43 +1,43 @@
-// cxf — WebAssembly compute backend for cortical surface analysis.
+// nxr-compute — WebAssembly compute backend for cortical surface analysis.
 //
 // Public ES-module API. Wraps the Emscripten-generated factory
-// (createCxfModule) so consumers don't need to know about WASM
-// initialisation. Re-exports a friendly `initCxf` that returns
+// (createNxrComputeModule) so consumers don't need to know about WASM
+// initialisation. Re-exports a friendly `initNxrCompute` that returns
 // the loaded module.
 //
 // Usage:
-//   import { initCxf } from '@cxf/wasm'
-//   const cxf = await initCxf()
-//   const ctx = cxf.createContext(verticesFloat64, facesInt32)
+//   import { initNxrCompute } from '@nxr-compute/wasm'
+//   const nxrCompute = await initNxrCompute()
+//   const ctx = nxrCompute.createContext(verticesFloat64, facesInt32)
 //   const data = ctx.precompute({ k: 300 })
 //   // … use data.operators, data.dec, data.eigenmodes, data.faceFrames
 //   ctx.delete()  // when done with this mesh
 
-import createCxfModule from '../../build_wasm/cxf.js'
+import createNxrComputeModule from '../../build_wasm/nxr_compute.js'
 
 let _modulePromise = null
 
 /**
- * Load the cxf WASM module. Idempotent — subsequent calls return the
+ * Load the nxr-compute WASM module. Idempotent — subsequent calls return the
  * same module instance.
  *
  * @param {object} [options]
  * @param {(filename: string) => string} [options.locateFile] —
- *   Custom resolver for cxf.wasm. By default the loader looks for
- *   cxf.wasm alongside cxf.js. Use this to override the location
+ *   Custom resolver for nxr_compute.wasm. By default the loader looks for
+ *   nxr_compute.wasm alongside nxr_compute.js. Use this to override the location
  *   (e.g. when serving WASM from a CDN).
- * @returns {Promise<Cxf>}
+ * @returns {Promise<NxrCompute>}
  */
-export async function initCxf(options = {}) {
+export async function initNxrCompute(options = {}) {
   if (_modulePromise) return _modulePromise
-  _modulePromise = createCxfModule(options).then(wrap)
+  _modulePromise = createNxrComputeModule(options).then(wrap)
   return _modulePromise
 }
 
 /** Builds the public surface from the raw Embind module. */
 function wrap(mod) {
   return {
-    /** @returns {string} the cxf version string, e.g. "cxf 0.1.0" */
+    /** @returns {string} the nxr-compute version string, e.g. "nxr-compute 0.1.0" */
     version: () => mod.version(),
 
     /**
@@ -53,8 +53,8 @@ function wrap(mod) {
     createContext(vertices, faces) {
       const v = vertices instanceof Float64Array ? vertices : new Float64Array(vertices)
       const f = faces    instanceof Int32Array   ? faces    : new Int32Array(faces)
-      if (v.length % 3 !== 0) throw new Error('cxf: vertices length must be a multiple of 3')
-      if (f.length % 3 !== 0) throw new Error('cxf: faces length must be a multiple of 3')
+      if (v.length % 3 !== 0) throw new Error('nxr: vertices length must be a multiple of 3')
+      if (f.length % 3 !== 0) throw new Error('nxr: faces length must be a multiple of 3')
       // The Embind constructor accepts JS arrays via val; pass typed arrays directly.
       const raw = new mod.ComputeContext(v, f)
       return makeContextWrapper(raw)
@@ -155,4 +155,4 @@ function makeContextWrapper(raw) {
   }
 }
 
-export default initCxf
+export default initNxrCompute

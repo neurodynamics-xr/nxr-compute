@@ -132,7 +132,7 @@ EigenResult solveEigenmodes(
     // of a full SpMV (O(nnz)).
 
     // SymShiftInvert factors (K - σM) using Eigen's SimplicialLLT.
-    // Per CLAUDE.md §10, cxf is constrained to Eigen + Spectra +
+    // Per CLAUDE.md §10, nxr-compute is constrained to Eigen + Spectra +
     // geometry-central; CHOLMOD's supernodal factorization would
     // be 3-10× faster on x86 but breaks the WASM and MEX targets,
     // so we don't pull it in.

@@ -1,19 +1,19 @@
 #pragma once
 
-// ── cxf/mex/marshal — mxArray ↔ Eigen converters ─────────────
+// ── nxr-compute/mex/marshal — mxArray ↔ Eigen converters ─────────────
 //
-// Stateless helpers used by the MEX dispatcher in cxf_mex.cpp.
+// Stateless helpers used by the MEX dispatcher in nxr_compute_mex.cpp.
 // MATLAB and Eigen both default to column-major dense storage,
 // so most dense conversions are zero-shuffle copies.
 //
 // Two non-trivial cases:
 //
 //   1. **Vertex / face packed buffers.** MATLAB users pass V as
-//      Vx3 double (column-major: x,x,…,y,y,…,z,z,…). cxf's
+//      Vx3 double (column-major: x,x,…,y,y,…,z,z,…). nxr-compute's
 //      ComputeContext takes a flat row-major xyz buffer. We
 //      repack at the boundary.
 //
-//   2. **Face indexing.** MATLAB convention is 1-based; cxf uses
+//   2. **Face indexing.** MATLAB convention is 1-based; nxr-compute uses
 //      0-based. mxToFaceBuffer subtracts 1 on conversion.
 //
 // Sparse matrices: MATLAB sparse is CSC, Eigen SparseMatrix
@@ -154,7 +154,7 @@ inline mxArray* eigenSparseToMx(const Eigen::SparseMatrix<double>& src) {
 // ── Vertex / face buffer marshallers ────────────────────────
 //
 // MATLAB convention: vertices Vx3, faces Fx3 (1-based).
-// cxf convention: row-major flat xyz triples for vertices,
+// nxr-compute convention: row-major flat xyz triples for vertices,
 // row-major flat int32_t for faces (0-based).
 
 inline std::vector<double> mxToVertexBuffer(const mxArray* arr, int& nVOut) {

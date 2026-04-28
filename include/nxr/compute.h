@@ -1,6 +1,6 @@
 #pragma once
 
-// cxf — portable C++ math/compute library for cortical-flow,
+// nxr-compute — portable C++ math/compute library for cortical-flow,
 // the NXR design system, and any other consumer that needs
 // halfedge-mesh-based scientific computing. Targets one source,
 // many shells (N-API addon, WASM/Embind, MATLAB MEX, CLI).
@@ -573,7 +573,7 @@ Eigen::MatrixXd tracePath(
  *
  *  Returns a [V, 2] matrix of UV coordinates (u, v) per vertex.
  *  Mesh must have at least one boundary loop; for closed meshes
- *  the user must cut the surface first. The mesh in cxf is
+ *  the user must cut the surface first. The mesh in nxr-compute is
  *  ManifoldSurfaceMesh so boundary detection works automatically.
  *
  *  Used by texture-based visualizations (LIC, isoline rendering

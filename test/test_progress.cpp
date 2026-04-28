@@ -1,5 +1,5 @@
 /**
- * test_progress.cpp — ProgressObserver contract for cxf solvers.
+ * test_progress.cpp — ProgressObserver contract for nxr-compute solvers.
  *
  * Validates that:
  *   1. Default-constructed observer is a no-op (no slots written).
@@ -139,7 +139,7 @@ void test_ResidualSaturation() {
 
 int main() {
     std::cout << "==========================================" << std::endl;
-    std::cout << "  cxf progress observer contract" << std::endl;
+    std::cout << "  nxr-compute progress observer contract" << std::endl;
     std::cout << "==========================================" << std::endl;
 
     test_DefaultObserverIsNoOp();

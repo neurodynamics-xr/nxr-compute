@@ -795,4 +795,4 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     return exports;
 }
 
-NODE_API_MODULE(cxf_addon, Init)
+NODE_API_MODULE(nxr_compute_addon, Init)
