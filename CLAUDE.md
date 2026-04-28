@@ -147,10 +147,13 @@ state, not a missed optimization.
 
 5. **Remove DC mode** after solving — see `removeDC.m` reference.
 
-6. **Error handling**: `cortical_compute` throws `std::runtime_error` on
-   factorization failure. The addon is built with `NAPI_CPP_EXCEPTIONS`,
-   so node-addon-api converts these into JS errors. Don't catch and
-   silently zero out — failing loud is the contract.
+6. **Error handling**: cxf throws `cxf::CxfError` (carrying an
+   `ErrorCode` enum + message + optional hint) on every failure path.
+   `CxfError` derives from `std::runtime_error` so existing
+   `catch (const std::exception&)` keeps working, but new code should
+   catch `CxfError` and switch on `code()`. Bindings translate
+   `code()` per their idiom — see §11 below.  Don't catch and silently
+   zero out — failing loud is the contract.
 
 7. **Thread safety / async**: The eigensolver is wrapped in
    `Napi::AsyncWorker` (see `EigenSolveWorker` in `addon.cpp`) so it
@@ -164,26 +167,105 @@ state, not a missed optimization.
 
 ```sh
 bash scripts/build-native.sh Release
-# Outputs:
-#   native/build_node/Release/cxf_addon.node  (copied to project root)
-#   native/build_node/Release/test_eigen.exe
-#   native/build_node/Release/test_factor_cache.exe
+# Outputs (cmake-js flat layout):
+#   native/build_node/Release/cxf_addon.node          (copied to project root)
+#   native/build_node/Release/cxf.exe                 (CLI)
+#   native/build_node/Release/cxf.mexw64              (MATLAB MEX)
+#   native/build_node/Release/test_eigen.exe          (end-to-end smoke)
+#   native/build_node/Release/test_cholesky_cache.exe (cache contract)
+#   native/build_node/Release/test_field_generators.exe
+#   native/build_node/Release/test_visualization_primitives.exe
+#   native/build_node/Release/test_cancellation.exe   (Phase A)
+#   native/build_node/Release/test_progress.exe       (Phase A)
 ```
 
-Run the standalone tests directly:
+WASM build (separate toolchain):
+
+```sh
+emcmake cmake -B native/build_wasm -S native -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build native/build_wasm --target cxf_wasm
+node scripts/_smoke-wasm.mjs   # Embind round-trip, ~10 ms on icosahedron
+```
+
+Run the standalone native tests directly:
 
 ```sh
 ./native/build_node/Release/test_eigen.exe          # 14 tests, end-to-end
-./native/build_node/Release/test_factor_cache.exe   # cache contract
+./native/build_node/Release/test_cholesky_cache.exe # cache contract
+./native/build_node/Release/test_cancellation.exe   # CancellationToken
+./native/build_node/Release/test_progress.exe       # ProgressObserver
 ```
 
-`test_factor_cache.cpp` is the canary for the bit-for-bit cache contract.
+`test_cholesky_cache.cpp` is the canary for the bit-for-bit cache contract.
 Any change to `CholeskyCache` or the solvers that consume it must keep
-this test passing.
+this test passing. `test_cancellation.cpp` and `test_progress.cpp`
+guard the §12 cancel/progress contract.
 
 `native/deps/` carries `geometry-central` (operator assembly) and
 `polyscope` (debug-only viewer used during native development; not
 shipped in the addon).
+
+---
+
+## §11 Storage convention (hard rule)
+
+Every JS-facing binding shell (N-API addon, WASM/Embind) must
+honour this layout when flattening Eigen matrices to typed arrays:
+
+| Eigen shape | Flat layout | Why |
+|---|---|---|
+| `[V × 3]` / `[F × 3]` / `[N × 3]` | row-major: `xyz xyz xyz …` | three.js BufferAttribute, NumPy `.reshape(-1, 3)`. |
+| `[V × K]` eigenvectors | row-major (vMajor): `U[v*K + k]` | Cortical-flow's Zarr schema (`manifold/eigenmodes/eigenvectors` shape `[V, K]`) and the GPU spectral-synthesis access pattern. |
+| `[T × V]` activity time-series | row-major: frame at `data[t*V .. (t+1)*V]` | Zarr `recordings/.../activity` schema. |
+| Sparse | COO `{ row, col, data, rows, cols }` | Existing convention; both bindings honour it. |
+
+**MEX is exempt**: a `V × K` Eigen matrix becomes a real MATLAB matrix
+(column-major in MATLAB's native storage), so MATLAB users get
+`U(:,k)` for mode k contiguously. The flatten rule applies only when
+crossing into a JS typed array.
+
+**Internal C++ storage is unchanged** — `Eigen::MatrixXd` keeps its
+default column-major layout. The bindings transpose at the flatten
+step (e.g. via `Eigen::Matrix<double, Dynamic, Dynamic, RowMajor>
+rowMajor = m;` in `eigenMatrixToVal`).
+
+## §12 Cancellation and progress contract
+
+Long-running cxf operations accept two optional parameters:
+
+```cpp
+EigenResult solveEigenmodes(
+    const Eigen::SparseMatrix<double>& K,
+    const Eigen::SparseMatrix<double>& M,
+    int k,
+    double sigma                          = -1e-8,
+    const cxf::CancellationToken& cancel  = {},   // never cancelled
+    const cxf::ProgressObserver& progress = {});  // discard updates
+```
+
+cxf is binding-agnostic: every shell builds `CancellationToken` from
+its own native cancel mechanism, but the solver sees one type.
+
+| Binding | CancellationToken construction | ProgressObserver wiring |
+|---|---|---|
+| **N-API addon** | `CancellationToken(reinterpret_cast<atomic<int32_t>*>(int32Arr.Data()))` where `int32Arr` is a SAB-backed `Int32Array`. | Same array kind; layout `[iter, totalIter, residual×1e6]`. |
+| **WASM/Embind** | `CancellationToken(reinterpret_cast<atomic<int32_t>*>(cancelAddr))` where `cancelAddr` is a wasm-heap pointer (`Module._malloc`). | Same; pointer to a 3×int32 region in the heap. |
+| **MEX** | `CancellationToken([](){ return utIsInterruptPending(); })` — bridges MATLAB Ctrl-C. | Deferred to Phase B (synchronous MATLAB has no natural progress UI surface). |
+| **CLI** | `CancellationToken(&g_sigintFlag)` — flipped by a `SIGINT` handler. | Not wired (no UI surface). |
+
+Bindings translate `CxfError` per their idiom:
+
+| Binding | Error surface |
+|---|---|
+| N-API addon | JS `Error` with `.code` (string-named enumerator, e.g. `"CANCELLED"`) and `.hint`. |
+| WASM | JS `Error` whose `.message` is `"[CODE_NAME] message [\| hint: ...]"`. Phase B will add a richer mapping via Embind exception registration. |
+| MEX | `MException` with identifier `cxf:cancelled`, `cxf:nonManifold`, etc. (`toMatlabIdentifier` turns the enumerator name into camelCase). |
+| CLI | Exit code: `130` for `Cancelled` (POSIX 128+SIGINT), `1` otherwise. |
+
+The cancellation poll point inside cxf is once per Spectra
+`perform_op` call, giving sub-second cancel latency on
+cortical-sized meshes. The wrapper that drives this is
+`CancelProgressOp` in `cxf/src/eigensolver.cpp`.
 
 ---
 
