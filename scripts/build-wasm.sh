@@ -2,8 +2,8 @@
 # Build the nxr-compute WASM binding via Emscripten.
 #
 # Outputs:
-#   native/build_wasm/nxr_compute.js   — ES-module factory function (createNxrComputeModule)
-#   native/build_wasm/nxr_compute.wasm — WebAssembly binary
+#   build_wasm/nxr_compute.js   — ES-module factory function (createNxrComputeModule)
+#   build_wasm/nxr_compute.wasm — WebAssembly binary
 #
 # Prerequisites:
 #   - emsdk installed and activated (see https://emscripten.org/docs/getting_started/downloads.html)
@@ -16,8 +16,7 @@ set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$SCRIPT_DIR/.."
-NATIVE_DIR="$PROJECT_ROOT/native"
-BUILD_DIR="$NATIVE_DIR/build_wasm"
+BUILD_DIR="$PROJECT_ROOT/build_wasm"
 CONFIG="${1:-Release}"
 
 # Resolve emsdk binaries. On Windows the wrappers are .bat files, which
@@ -55,7 +54,7 @@ echo "  Project: $PROJECT_ROOT"
 echo "  Build:   $BUILD_DIR"
 "$EMCC_BIN" --version | head -1
 
-cd "$NATIVE_DIR"
+cd "$PROJECT_ROOT"
 
 # Configure (rerun if BUILD_DIR doesn't exist or the user passed --reconfigure)
 if [ ! -d "$BUILD_DIR" ] || [ "$2" = "--reconfigure" ]; then

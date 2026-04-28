@@ -13,7 +13,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot  = path.resolve(__dirname, '..')
 
-const wasmJsPath = path.join(repoRoot, 'native', 'build_wasm', 'nxr_compute.js')
+const wasmJsPath = path.join(repoRoot, 'build_wasm', 'nxr_compute.js')
 const moduleUrl  = pathToFileURL(wasmJsPath).href
 
 console.log(`[smoke] loading ${wasmJsPath}`)

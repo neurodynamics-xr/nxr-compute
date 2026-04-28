@@ -1,0 +1,44 @@
+# Build outputs
+build/
+build_wasm/
+build_node/
+*.node
+*.mexw64
+*.exe
+*.lib
+*.a
+*.dll
+*.so
+*.dylib
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exp
+
+# CMake / generator artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.vcxproj*
+*.sln
+*.dir/
+.vs/
+
+# Node
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Test outputs
+.tmp-*/
