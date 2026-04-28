@@ -1,42 +1,39 @@
 /**
- * nxr-compute — command-line interface around the nxr-compute compute library.
+ * nxr-compute — command-line smoke for the nxr-compute library.
  *
- * v0 closes the offline-precompute gap: take a cortical surface
- * mesh, assemble operators, solve eigenmodes, write a Zarr store
- * the renderer can load directly.
+ * The library is binding-shell-agnostic: it reads typed arrays in
+ * and returns matrices out. It does not parse mesh files. The CLI
+ * is therefore intentionally minimal — it verifies the library
+ * builds, links, and runs end-to-end against a synthetic fixture.
  *
- *   nxr-compute precompute --input <FS-surface.pial> --output <session.zarr> [--k 300]
+ *   nxr_compute --version
+ *   nxr_compute smoke      → eigensolve on a unit icosahedron,
+ *                            prints the canonical λ spectrum
  *
- * Single-hemisphere only in v0; bilateral support comes later.
+ * Real pipelines that consume mesh files live in the host app
+ * (cortical-flow, brainstorm, your code) and bring their own I/O.
  */
 
 #include "nxr/compute.h"
-#include "cxf-io/freesurfer.h"
-#include "cxf-io/zarr.h"
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstdint>
-#include <cstring>
 #include <iostream>
 #include <string>
-#include <vector>
 
 namespace {
 
-// ── SIGINT (Ctrl-C) → cancellation token ─────────────────────
-//
-// One process-wide atomic flag, flipped by the SIGINT handler.
-// nxr-compute solvers wrap a CancellationToken around it via ctrl_c_token().
-// The handler is async-signal-safe (only writes to the atomic).
+// Process-wide SIGINT flag → CancellationToken. Async-signal-safe.
 std::atomic<int32_t> g_sigintFlag{0};
 
 void onSigint(int /*sig*/) {
     g_sigintFlag.store(1, std::memory_order_relaxed);
 }
 
-nxr::compute::CancellationToken ctrl_c_token() {
+nxr::compute::CancellationToken ctrlCToken() {
     return nxr::compute::CancellationToken(&g_sigintFlag);
 }
 
@@ -44,30 +41,15 @@ constexpr const char* kVersion = "nxr-compute 0.1.0";
 
 void printUsage() {
     std::cout
-        << "Usage: nxr-compute <command> [options]\n"
+        << "Usage: nxr_compute <command>\n"
         << "\n"
         << "Commands:\n"
-        << "  precompute   Assemble operators + solve eigenmodes for a surface,\n"
-        << "               writing the result as a Zarr v2 store.\n"
+        << "  smoke     Eigensolve on a unit icosahedron and print λ spectrum.\n"
+        << "            Exits 0 if the canonical spectrum matches.\n"
         << "\n"
-        << "Global flags:\n"
+        << "Flags:\n"
         << "  -h, --help      Print this help and exit.\n"
-        << "  -v, --version   Print version and exit.\n"
-        << "\n"
-        << "Run `nxr-compute <command> --help` for command-specific options.\n";
-}
-
-void printPrecomputeUsage() {
-    std::cout
-        << "Usage: nxr-compute precompute --input <path> --output <path> [--k <N>]\n"
-        << "\n"
-        << "Required:\n"
-        << "  --input  <path>   FreeSurfer surface file (e.g. lh.pial).\n"
-        << "  --output <path>   Output Zarr store directory (will be created).\n"
-        << "\n"
-        << "Optional:\n"
-        << "  --k <N>           Number of eigenmodes to solve (default: 100).\n"
-        << "                    Eigensolve runs at sigma = -1e-8 (smallest k).\n";
+        << "  -v, --version   Print version and exit.\n";
 }
 
 double elapsedMs(std::chrono::steady_clock::time_point t0) {
@@ -75,160 +57,75 @@ double elapsedMs(std::chrono::steady_clock::time_point t0) {
     return std::chrono::duration<double, std::milli>(now - t0).count();
 }
 
-int cmdPrecompute(int argc, char** argv) {
-    std::string inputPath;
-    std::string outputPath;
-    int k = 100;
-
-    for (int i = 0; i < argc; i++) {
-        std::string arg = argv[i];
-        if (arg == "--input" && i + 1 < argc) {
-            inputPath = argv[++i];
-        } else if (arg == "--output" && i + 1 < argc) {
-            outputPath = argv[++i];
-        } else if (arg == "--k" && i + 1 < argc) {
-            k = std::stoi(argv[++i]);
-        } else if (arg == "-h" || arg == "--help") {
-            printPrecomputeUsage();
-            return 0;
-        } else {
-            std::cerr << "nxr-compute precompute: unknown argument \"" << arg << "\"\n";
-            printPrecomputeUsage();
-            return 2;
-        }
+int cmdSmoke() {
+    // Unit icosahedron: 12 vertices, 20 faces. The combinatorial
+    // Laplace–Beltrami spectrum on the regular icosahedron has a
+    // triplet at λ ≈ 2 and a doublet at λ ≈ 4.34, which is what
+    // we assert below. (Same fixture as test_eigen.cpp.)
+    const double t = (1.0 + std::sqrt(5.0)) / 2.0;
+    double rawVerts[36] = {
+        -1,  t,  0,    1,  t,  0,   -1, -t,  0,    1, -t,  0,
+         0, -1,  t,    0,  1,  t,    0, -1, -t,    0,  1, -t,
+         t,  0, -1,    t,  0,  1,   -t,  0, -1,   -t,  0,  1,
+    };
+    double verts[36];
+    for (int i = 0; i < 36; i += 3) {
+        const double len = std::sqrt(rawVerts[i]   * rawVerts[i]
+                                    + rawVerts[i+1] * rawVerts[i+1]
+                                    + rawVerts[i+2] * rawVerts[i+2]);
+        verts[i]   = rawVerts[i]   / len;
+        verts[i+1] = rawVerts[i+1] / len;
+        verts[i+2] = rawVerts[i+2] / len;
     }
+    std::int32_t faces[60] = {
+        0,11,5, 0,5,1,  0,1,7,  0,7,10, 0,10,11,
+        1,5,9,  5,11,4, 11,10,2,10,7,6, 7,1,8,
+        3,9,4,  3,4,2,  3,2,6,  3,6,8,  3,8,9,
+        4,9,5,  2,4,11, 6,2,10, 8,6,7,  9,8,1,
+    };
 
-    if (inputPath.empty() || outputPath.empty()) {
-        std::cerr << "nxr-compute precompute: --input and --output are required\n";
-        printPrecomputeUsage();
-        return 2;
-    }
-    if (k <= 0) {
-        std::cerr << "nxr-compute precompute: --k must be positive (got " << k << ")\n";
-        return 2;
-    }
-
-    // ── 1. Read FreeSurfer surface ────────────────────────
-    std::cout << "[nxr-compute] reading " << inputPath << std::endl;
     auto t0 = std::chrono::steady_clock::now();
-    cxf_io::freesurfer::Surface surf;
-    try {
-        surf = cxf_io::freesurfer::readSurface(inputPath);
-    } catch (const std::exception& e) {
-        std::cerr << "nxr-compute precompute: failed to read surface: " << e.what() << "\n";
-        return 1;
-    }
-    std::cout << "[nxr-compute]   nV=" << surf.nV << "  nF=" << surf.nF
-              << "  (" << elapsedMs(t0) << " ms)" << std::endl;
-
-    // ── 2. ComputeContext (needs double-precision vertices) ──
-    std::vector<double> verts64(surf.vertices.size());
-    for (std::size_t i = 0; i < surf.vertices.size(); i++) {
-        verts64[i] = static_cast<double>(surf.vertices[i]);
-    }
-    nxr::compute::ComputeContext ctx(verts64.data(), surf.nV, surf.faces.data(), surf.nF);
-
-    // ── 3. Mesh operators (Laplacian, mass, normals, areas) ──
-    t0 = std::chrono::steady_clock::now();
+    nxr::compute::ComputeContext ctx(verts, 12, faces, 20);
     auto ops = nxr::compute::assembleMeshOperators(ctx);
-    std::cout << "[nxr-compute] assembled mesh operators (" << elapsedMs(t0) << " ms)" << std::endl;
-
-    // ── 4. Eigensolve → normalize → removeDC ──────────────
-    if (k >= surf.nV) {
-        std::cerr << "nxr-compute precompute: requested k=" << k
-                  << " but the mesh only has " << surf.nV << " vertices.\n";
-        return 1;
-    }
-    t0 = std::chrono::steady_clock::now();
-    auto eig = nxr::compute::solveEigenmodes(ops.stiffness, ops.mass, k, -1e-8, ctrl_c_token());
+    auto eig = nxr::compute::solveEigenmodes(ops.stiffness, ops.mass, 6, -1e-8, ctrlCToken());
     eig.eigenvectors = nxr::compute::normalizeEigenmodes(eig.eigenvectors, ops.mass);
     eig = nxr::compute::removeDC(eig);
-    std::cout << "[nxr-compute] eigensolve k=" << eig.k
-              << " (" << elapsedMs(t0) << " ms)" << std::endl;
+    const double dt = elapsedMs(t0);
 
-    // ── 5. Write Zarr ────────────────────────────────────
-    t0 = std::chrono::steady_clock::now();
-    // Group markers at every level — the renderer's zarr-fs.ts
-    // refuses to open a store without `.zgroup` at the root.
-    cxf_io::zarr::writeGroup(outputPath, "");
-    cxf_io::zarr::writeGroup(outputPath, "manifold");
-    cxf_io::zarr::writeGroup(outputPath, "manifold/eigenmodes");
-
-    // Top-level store metadata.
-    cxf_io::zarr::writeAttrs(outputPath, "",
-        "{\"schema\":\"nxr-compute.session@0.1\",\"format\":\"zarr\",\"zarr_version\":2}");
-
-    // manifold/.zattrs — describes the geometry block.
-    {
-        std::string a = "{";
-        a += "\"schema\":\"nxr-compute.manifold@0.1\",";
-        a += "\"numVertices\":" + std::to_string(surf.nV) + ",";
-        a += "\"numFaces\":"    + std::to_string(surf.nF) + ",";
-        a += "\"source\":\""    + inputPath + "\"";
-        a += "}";
-        cxf_io::zarr::writeAttrs(outputPath, "manifold", a);
+    std::cout << "[smoke] icosahedron precompute in " << dt << " ms\n";
+    std::cout << "[smoke]   nV=" << ops.nV << "  nF=" << ops.nF
+              << "  totalArea=" << ops.totalArea << "\n";
+    std::cout << "[smoke]   eigenvalues (k=" << eig.k << " post-removeDC):";
+    for (int i = 0; i < eig.k; ++i) {
+        std::cout << "  " << eig.eigenvalues(i);
     }
+    std::cout << "\n";
 
-    // Vertices [V, 3] float32 — already row-major xyz triples.
-    cxf_io::zarr::writeFloat32(
-        outputPath, "manifold/vertices",
-        {surf.nV, 3}, surf.vertices.data());
-
-    // Faces [F, 3] uint32 — Zarr convention is unsigned for indices.
-    // surf.faces is int32_t but always non-negative; copy through a
-    // uint32_t buffer to be explicit about the cast.
-    std::vector<std::uint32_t> facesU32(surf.faces.size());
-    for (std::size_t i = 0; i < surf.faces.size(); i++) {
-        facesU32[i] = static_cast<std::uint32_t>(surf.faces[i]);
+    // Canonical icosahedron spectrum: triplet at λ≈2 (λ_0..λ_2),
+    // doublet at λ≈4.34 (λ_3, λ_4). Tolerance generous for
+    // floating-point + Spectra convergence noise.
+    int fail = 0;
+    for (int i = 0; i < 3 && i < eig.k; ++i) {
+        if (std::abs(eig.eigenvalues(i) - 2.0) > 1e-5) {
+            std::cerr << "[smoke] FAIL: λ_" << i << " expected ~2.0, got "
+                      << eig.eigenvalues(i) << "\n";
+            ++fail;
+        }
     }
-    cxf_io::zarr::writeUInt32(
-        outputPath, "manifold/faces",
-        {surf.nF, 3}, facesU32.data());
-
-    // Eigenmodes block.
-    {
-        std::string a = "{";
-        a += "\"schema\":\"nxr-compute.eigen@0.1\",";
-        a += "\"numModes\":"    + std::to_string(eig.k) + ",";
-        a += "\"numVertices\":" + std::to_string(surf.nV) + ",";
-        a += "\"removedDC\":true,";
-        a += "\"normalisation\":\"M-orthonormal\",";
-        a += "\"operator\":\"Laplace-Beltrami\",";
-        a += "\"basis\":\"P1-FEM\"";
-        a += "}";
-        cxf_io::zarr::writeAttrs(outputPath, "manifold/eigenmodes", a);
+    if (eig.k > 3 && std::abs(eig.eigenvalues(3) - 4.34164) > 1e-3) {
+        std::cerr << "[smoke] FAIL: λ_3 expected ~4.34, got "
+                  << eig.eigenvalues(3) << "\n";
+        ++fail;
     }
-
-    // Eigenvectors [V, K] float64 — Eigen storage is column-major,
-    // Zarr expects row-major. Materialize a row-major copy.
-    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
-        evecsRowMajor = eig.eigenvectors;
-    cxf_io::zarr::writeFloat64(
-        outputPath, "manifold/eigenmodes/eigenvectors",
-        {static_cast<int>(eig.eigenvectors.rows()),
-         static_cast<int>(eig.eigenvectors.cols())},
-        evecsRowMajor.data());
-
-    // Eigenvalues [K, 1] float64. Eigen::VectorXd is K×1 column-major;
-    // bytes are identical to row-major [K, 1], so dump directly.
-    cxf_io::zarr::writeFloat64(
-        outputPath, "manifold/eigenmodes/eigenvalues",
-        {static_cast<int>(eig.eigenvalues.size()), 1},
-        eig.eigenvalues.data());
-
-    std::cout << "[nxr-compute] wrote Zarr store " << outputPath
-              << " (" << elapsedMs(t0) << " ms)" << std::endl;
-    std::cout << "[nxr-compute] done." << std::endl;
-    return 0;
+    if (fail == 0) {
+        std::cout << "[smoke] canonical spectrum matched ✓\n";
+    }
+    return fail == 0 ? 0 : 1;
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
-    // Wire Ctrl-C → cancel on nxr-compute solvers. The default action would be
-    // immediate process termination; the handler instead just sets the
-    // flag so nxr-compute throws Error(Cancelled) and we exit cleanly,
-    // closing files and surfacing a useful exit code.
     std::signal(SIGINT, onSigint);
 
     if (argc < 2) {
@@ -236,7 +133,7 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    std::string cmd = argv[1];
+    const std::string cmd = argv[1];
     if (cmd == "-h" || cmd == "--help") {
         printUsage();
         return 0;
@@ -245,26 +142,21 @@ int main(int argc, char** argv) {
         std::cout << kVersion << "\n";
         return 0;
     }
-
-    if (cmd == "precompute") {
+    if (cmd == "smoke") {
         try {
-            return cmdPrecompute(argc - 2, argv + 2);
+            return cmdSmoke();
         } catch (const nxr::compute::Error& e) {
-            std::cerr << "nxr-compute precompute: ["
-                      << nxr::compute::errorCodeName(e.code()) << "] " << e.what() << "\n";
-            if (!e.hint().empty()) {
-                std::cerr << "  hint: " << e.hint() << "\n";
-            }
-            // Distinguish cancellation (130 = 128 + SIGINT, POSIX
-            // convention) from other failures (1).
+            std::cerr << "nxr_compute smoke: ["
+                      << nxr::compute::errorCodeName(e.code()) << "] "
+                      << e.what() << "\n";
             return e.code() == nxr::compute::ErrorCode::Cancelled ? 130 : 1;
         } catch (const std::exception& e) {
-            std::cerr << "nxr-compute precompute: " << e.what() << "\n";
+            std::cerr << "nxr_compute smoke: " << e.what() << "\n";
             return 1;
         }
     }
 
-    std::cerr << "nxr: unknown command \"" << cmd << "\"\n";
+    std::cerr << "nxr_compute: unknown command \"" << cmd << "\"\n";
     printUsage();
     return 2;
 }
