@@ -60,16 +60,25 @@ DECOperators  assembleDECOperators(ComputeContext&);
 class CholeskyCache {
 public:
     static constexpr double kRegularization = 1e-8;
-    const Eigen::SimplicialLLT<…>& laplacian   (const MeshOperators&);
-    const Eigen::SimplicialLLT<…>& hodgeExact  (const DECOperators&);
-    const Eigen::SparseLU       <…>& hodgeCoExact(const DECOperators&);
+    // Primary signatures take raw sparse matrices (mesh- and graph-friendly).
+    const Eigen::SimplicialLLT<…>& laplacian   (const Eigen::SparseMatrix<double>& K);
+    const Eigen::SimplicialLLT<…>& hodgeExact  (const DECOperators&);  // mesh-only (DEC)
+    const Eigen::SparseLU       <…>& hodgeCoExact(const DECOperators&);  // mesh-only (DEC)
+    // Convenience overload: laplacian(MeshOperators&) forwards to laplacian(ops.stiffness).
 };
 
-// Solvers (each takes the cache and reuses factors across calls)
-EigenResult         solveEigenmodes(K, M, k, sigma=-1e-8);
+// Spectral kernel — already agnostic in K, M.
+EigenResult         solveEigenmodes(K, M, k, sigma=-1e-8, cancel={}, progress={});
 Eigen::MatrixXd     normalizeEigenmodes(U, M);
 EigenResult         removeDC(EigenResult);
-Eigen::VectorXd     solvePoisson(MeshOperators&, CholeskyCache&, densityMap);
+
+// Convenience layer — agnostic primary signatures + MeshOperators overloads.
+Eigen::VectorXd     solvePoisson(K, M, CholeskyCache&, densityMap);
+Eigen::MatrixXf     generateHeatDiffusion(M, eig, u0, timesteps, alpha);
+//   …and inline:    solvePoisson(MeshOperators&, …)             → forwards
+//                   generateHeatDiffusion(MeshOperators&, …)     → forwards
+
+// Mesh-only (need a halfedge surface — no graph analogue).
 HodgeResult         hodgeDecompose(ComputeContext&, DECOperators&, CholeskyCache&, omega);
 DirectionFieldResult computeDirectionField(ComputeContext&, DECOperators&, CholeskyCache&, singMap);
 Eigen::VectorXd     computeGeodesicDistance(ComputeContext&, sourceVerts);
@@ -136,6 +145,12 @@ state, not a missed optimization.
    `d1 ★₁⁻¹ d1ᵀ`. Never inline a `SimplicialLLT::compute(...)` of those
    matrices in a new solver. If you need a new factor, add a slot to
    `CholeskyCache`.
+
+   The `laplacian(K)` slot now takes a raw `const SparseMatrix<double>&`
+   so it serves graph Laplacians as well as mesh stiffness. There is an
+   inline `laplacian(const MeshOperators&)` overload that forwards to
+   `laplacian(ops.stiffness)` — this preserves source compatibility for
+   every existing call site.
 
 3. **Spectra configuration**: Use `SymGEigsShiftSolver<…, ShiftInvert>`
    for the smallest eigenmodes. Always enforce real + symmetric on the
