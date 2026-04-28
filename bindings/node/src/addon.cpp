@@ -11,7 +11,7 @@
  */
 
 #include <napi.h>
-#include "cxf/cxf.h"
+#include "nxr/compute.h"
 #include "cxf-io/freesurfer.h"
 
 #include <cstring>
@@ -19,7 +19,7 @@
 #include <map>
 #include <vector>
 
-using namespace cxf;
+using namespace nxr::compute;
 
 // ─── Helpers: TypedArray ↔ Eigen conversion ──────────────────
 
@@ -278,9 +278,9 @@ public:
             // Cache on the holder so time-varying generators can reuse
             // without round-tripping the eigenmode arrays through IPC.
             holder_->eigenmodes = std::make_shared<EigenResult>(result_);
-        } catch (const cxf::CxfError& e) {
+        } catch (const nxr::compute::Error& e) {
             // Preserve structured error info for OnError to attach to the JS Error.
-            errorCode_   = std::string(cxf::errorCodeName(e.code()));
+            errorCode_   = std::string(nxr::compute::errorCodeName(e.code()));
             errorHint_   = std::string(e.hint());
             SetError(e.what());
         } catch (const std::exception& e) {

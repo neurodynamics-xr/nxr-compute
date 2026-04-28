@@ -22,7 +22,7 @@ if(DEFINED CMAKE_JS_INC)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../node_modules/node-addon-api
     )
     target_link_libraries(cxf_addon PRIVATE
-        cxf
+        nxr_compute
         cxf-io
         ${CMAKE_JS_LIB}
     )

@@ -1,0 +1,85 @@
+# ── nxr-compute — portable C++ math library ─────────────────
+#
+# Pure compute kernel of the neurodynamics-xr stack. Depends only
+# on Eigen, Spectra (header-only), and geometry-central (vendored
+# submodule). All consumer targets (the N-API addon, MATLAB MEX,
+# WASM, CLI) link against this library and add nothing more.
+#
+# CMake target: nxr_compute (underscore — CMake convention)
+# Headers:      include/nxr/{compute,errors,cancellation,progress}.h
+# Namespace:    nxr::compute
+
+add_library(nxr_compute STATIC
+  src/mesh_operators.cpp
+  src/eigensolver.cpp
+  src/normalize.cpp
+  src/cholesky_cache.cpp
+  src/poisson_solver.cpp
+  src/geodesic.cpp
+  src/hodge.cpp
+  src/field_generators.cpp
+  src/curvatures.cpp
+  src/normals.cpp
+  src/vector_field.cpp
+  src/isolines.cpp
+  src/direction_field.cpp
+  src/face_frames.cpp
+  src/geodesic_path.cpp
+  src/parametrization.cpp
+)
+# Note: file format I/O (FreeSurfer parser, Zarr writer) lives in
+# the sibling `cxf-io` library, not here. nxr-compute is pure
+# compute — vertices/faces/matrices in, results out. See ../cxf-io/.
+
+target_include_directories(nxr_compute PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${spectra_SOURCE_DIR}/include
+)
+
+# C++17 floor — Phase A code intentionally avoids C++20-only features
+# (std::span, designated initializers, std::stop_token) because the
+# vendored Eigen 3.4 trips a template-deduction bug under Emscripten's
+# Clang at C++20 (visible in geometry-central's BFF source and any
+# nxr-compute source that uses .norm() / .squaredNorm()). When Phase B
+# lands std::span parameters we'll need to either upgrade Eigen, patch
+# the trip site, or pin the WASM target to a slightly older Eigen —
+# all tracked separately. Until then, every Phase A primitive (Error,
+# CancellationToken, ProgressObserver) compiles cleanly at C++17.
+target_compile_features(nxr_compute PUBLIC cxx_std_17)
+
+target_link_libraries(nxr_compute PUBLIC
+  geometry-central
+)
+
+# AVX2 intentionally NOT enabled here — see CLAUDE.md §10 and the
+# project_avx2_eigen_abi memory. /arch:AVX2 on nxr_compute alone
+# causes an Eigen alignment ABI mismatch with geometry-central.
+# Re-enable only by either propagating the flag through
+# geometry-central or defining EIGEN_MAX_ALIGN_BYTES=16 globally.
+
+# ── Standalone tests (no Node.js) ────────────────────────────
+# Skipped under Emscripten — these are native-only smoke tests; the
+# WASM build has its own JS-side smoke (scripts/_smoke-wasm.mjs).
+
+if(NOT EMSCRIPTEN)
+    add_executable(test_eigen test/test_eigen.cpp)
+    target_link_libraries(test_eigen PRIVATE nxr_compute)
+
+    add_executable(test_cholesky_cache test/test_cholesky_cache.cpp)
+    target_link_libraries(test_cholesky_cache PRIVATE nxr_compute)
+
+    add_executable(test_field_generators test/test_field_generators.cpp)
+    target_link_libraries(test_field_generators PRIVATE nxr_compute)
+
+    add_executable(test_visualization_primitives test/test_visualization_primitives.cpp)
+    target_link_libraries(test_visualization_primitives PRIVATE nxr_compute)
+
+    add_executable(test_cancellation test/test_cancellation.cpp)
+    target_link_libraries(test_cancellation PRIVATE nxr_compute)
+
+    add_executable(test_progress test/test_progress.cpp)
+    target_link_libraries(test_progress PRIVATE nxr_compute)
+
+    add_executable(test_graph_agnostic test/test_graph_agnostic.cpp)
+    target_link_libraries(test_graph_agnostic PRIVATE nxr_compute)
+endif()

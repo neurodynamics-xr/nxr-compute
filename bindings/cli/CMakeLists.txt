@@ -13,4 +13,4 @@
 # `cxf precompute …` regardless of the internal target name.
 add_executable(cxf-cli src/main.cpp)
 set_target_properties(cxf-cli PROPERTIES OUTPUT_NAME cxf)
-target_link_libraries(cxf-cli PRIVATE cxf cxf-io)
+target_link_libraries(cxf-cli PRIVATE nxr_compute cxf-io)

@@ -20,7 +20,7 @@
 // defaults to CSC. The index types differ (`mwIndex` vs `int`)
 // so we copy through rather than alias.
 
-#include "cxf/cxf.h"
+#include "nxr/compute.h"
 #include "mex.h"
 
 #include <cstdint>
@@ -28,7 +28,7 @@
 #include <string>
 #include <vector>
 
-namespace cxf::mex {
+namespace nxr::compute::mex {
 
 // ── Scalar / string ─────────────────────────────────────────
 
@@ -220,7 +220,7 @@ inline std::vector<std::int32_t> mxToFaceBuffer(const mxArray* arr, int& nFOut) 
 
 // ── Struct builders for compound return values ──────────────
 
-inline mxArray* meshOperatorsToStruct(const cxf::MeshOperators& ops) {
+inline mxArray* meshOperatorsToStruct(const nxr::compute::MeshOperators& ops) {
     const char* fields[] = {
         "stiffness", "mass", "vertexAreas", "normals",
         "totalArea", "nV", "nE", "nF",
@@ -243,7 +243,7 @@ inline mxArray* meshOperatorsToStruct(const cxf::MeshOperators& ops) {
     return s;
 }
 
-inline mxArray* eigenResultToStruct(const cxf::EigenResult& r) {
+inline mxArray* eigenResultToStruct(const nxr::compute::EigenResult& r) {
     const char* fields[] = {"eigenvectors", "eigenvalues", "k", "nConverged"};
     mxArray* s = mxCreateStructMatrix(1, 1, 4, fields);
     mxSetField(s, 0, "eigenvectors", eigenMatrixToMx(r.eigenvectors));
@@ -256,11 +256,11 @@ inline mxArray* eigenResultToStruct(const cxf::EigenResult& r) {
 /** Read back an EigenResult struct previously returned by
  *  eigenResultToStruct. Used by removeDC, which takes the result
  *  of solveEigenmodes and returns a trimmed copy. */
-inline cxf::EigenResult mxToEigenResult(const mxArray* s) {
+inline nxr::compute::EigenResult mxToEigenResult(const mxArray* s) {
     if (!mxIsStruct(s)) {
         throw std::invalid_argument("expected an EigenResult struct");
     }
-    cxf::EigenResult r;
+    nxr::compute::EigenResult r;
     mxArray* uField = mxGetField(s, 0, "eigenvectors");
     mxArray* lField = mxGetField(s, 0, "eigenvalues");
     if (!uField || !lField) {
@@ -273,4 +273,4 @@ inline cxf::EigenResult mxToEigenResult(const mxArray* s) {
     return r;
 }
 
-} // namespace cxf::mex
+} // namespace nxr::compute::mex

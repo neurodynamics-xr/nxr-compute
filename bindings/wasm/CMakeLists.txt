@@ -25,7 +25,7 @@ set_target_properties(cxf_wasm PROPERTIES
     OUTPUT_NAME cxf
     SUFFIX ".js"        # Emscripten executable → .js + .wasm pair
 )
-target_link_libraries(cxf_wasm PRIVATE cxf)
+target_link_libraries(cxf_wasm PRIVATE nxr_compute)
 
 # ── Emscripten link options ─────────────────────────────────
 #

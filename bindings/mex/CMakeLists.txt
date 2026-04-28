@@ -20,7 +20,7 @@ message(STATUS "cxf-mex: building against MATLAB at ${Matlab_ROOT_DIR}")
 matlab_add_mex(
     NAME cxf_mex                # CMake target name (file is cxf.mexw64)
     SRC src/cxf_mex.cpp
-    LINK_TO cxf
+    LINK_TO nxr_compute
     OUTPUT_NAME cxf
     R2018a                      # use the new mxArray API (interleaved complex etc.)
 )
