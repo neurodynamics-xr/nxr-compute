@@ -73,25 +73,46 @@ target_link_libraries(nxr_compute PUBLIC
 # Re-enable only by either propagating the flag through
 # geometry-central or defining EIGEN_MAX_ALIGN_BYTES=16 globally.
 
+# ── Consumer-facing options ─────────────────────────────────
+# Defaults are set for the standalone build (everything ON).
+# Downstream consumers that just want the static library — e.g.
+# cortical-flow, brainstorm, or any host app embedding nxr-compute
+# as a submodule — should set both OFF before add_subdirectory()
+# to avoid target name collisions with their own bindings:
+#
+#   set(NXR_COMPUTE_BUILD_BINDINGS OFF CACHE BOOL "" FORCE)
+#   set(NXR_COMPUTE_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+#   add_subdirectory(vendor/nxr-compute)
+#
+# Standalone users (running the repo's own scripts/build.sh) get
+# all four bindings + 7 tests with no extra configuration.
+
+option(NXR_COMPUTE_BUILD_BINDINGS
+    "Build N-API / WASM / MATLAB MEX / CLI binding shells" ON)
+option(NXR_COMPUTE_BUILD_TESTS
+    "Build standalone test executables (test_eigen, etc.)"  ON)
+
 # ── Bindings ─────────────────────────────────────────────────
 # Each binding is its own CMakeLists.txt under bindings/, building
 # one shell around the nxr_compute static library. Builds are
 # conditional on the toolchain: WASM under Emscripten, native
 # bindings otherwise.
 
-if(EMSCRIPTEN)
-    add_subdirectory(bindings/wasm)
-else()
-    add_subdirectory(bindings/node)  # N-API for Node.js / Electron
-    add_subdirectory(bindings/cli)   # Standalone CLI smoke
-    add_subdirectory(bindings/mex)   # MATLAB MEX
+if(NXR_COMPUTE_BUILD_BINDINGS)
+    if(EMSCRIPTEN)
+        add_subdirectory(bindings/wasm)
+    else()
+        add_subdirectory(bindings/node)  # N-API for Node.js / Electron
+        add_subdirectory(bindings/cli)   # Standalone CLI smoke
+        add_subdirectory(bindings/mex)   # MATLAB MEX
+    endif()
 endif()
 
 # ── Standalone tests (no Node.js) ────────────────────────────
 # Skipped under Emscripten — these are native-only smoke tests;
 # the WASM build has its own JS-side smoke (scripts/_smoke-wasm.mjs).
 
-if(NOT EMSCRIPTEN)
+if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     enable_testing()
 
     add_executable(test_eigen test/test_eigen.cpp)
