@@ -206,18 +206,43 @@ Napi::Value AssembleDECOperators(const Napi::CallbackInfo& info) {
     return result;
 }
 
-// ─── solveEigenmodes(ctx, k) → { eigenvectors, eigenvalues } ───
-// AsyncWorker since this can take seconds
+// ─── solveEigenmodes(ctx, k, cancelArr?, progressArr?) ───────
+// AsyncWorker since this can take seconds.
+//
+// Optional cancel and progress are SharedArrayBuffer-backed
+// Int32Arrays. The worker thread polls / writes them while the
+// JS main thread reads / writes from anywhere via Atomics.*.
+// Layout convention (matches WASM and MEX):
+//   cancelArr[0]   — non-zero ⇒ cancel requested
+//   progressArr[0] — current iteration counter
+//   progressArr[1] — high-water bound for iteration
+//   progressArr[2] — residual × 1e6
+//
+// Both arrays' lifetimes are guaranteed by ctxRef_'s persistent
+// reference (the JS caller must keep the arrays reachable while
+// the returned Promise is pending — same contract as cancellation
+// in any other Node async API).
 
 class EigenSolveWorker : public Napi::AsyncWorker {
 public:
-    EigenSolveWorker(Napi::Env env, Napi::Value ctxExternal, ContextHolder* holder, int k)
+    EigenSolveWorker(Napi::Env env, Napi::Value ctxExternal, ContextHolder* holder, int k,
+                     Napi::Value cancelVal, int32_t* cancelPtr,
+                     Napi::Value progressVal, int32_t* progressPtr, std::size_t progressLen)
         : Napi::AsyncWorker(env), deferred(Napi::Promise::Deferred::New(env)),
-          ctxRef_(Napi::Persistent(ctxExternal)), holder_(holder), k_(k) {
-        // The persistent reference prevents V8's GC from finalizing the
-        // External<ContextHolder> while the worker thread is running.
-        // Without this, an await on the returned Promise allows a GC
-        // cycle that frees the ContextHolder mid-eigensolve → segfault.
+          ctxRef_(Napi::Persistent(ctxExternal)), holder_(holder), k_(k),
+          cancelPtr_(cancelPtr), progressPtr_(progressPtr), progressLen_(progressLen) {
+        // ctxRef_ prevents V8's GC from finalizing the External<ContextHolder>
+        // while the worker thread is running — an await on the returned Promise
+        // allows a GC cycle that frees the ContextHolder mid-eigensolve →
+        // segfault. Same hazard for the SAB-backed Int32Arrays the worker is
+        // reading; pin them with persistent references for the worker's
+        // lifetime so their backing memory stays live.
+        if (!cancelVal.IsUndefined() && !cancelVal.IsNull()) {
+            cancelRef_ = Napi::Persistent(cancelVal);
+        }
+        if (!progressVal.IsUndefined() && !progressVal.IsNull()) {
+            progressRef_ = Napi::Persistent(progressVal);
+        }
     }
 
     void Execute() override {
@@ -227,7 +252,25 @@ public:
                     assembleMeshOperators(*holder_->ctx)
                 );
             }
-            result_ = solveEigenmodes(holder_->ops->stiffness, holder_->ops->mass, k_);
+
+            // Build the cancellation token from the SAB-backed Int32Array.
+            // std::atomic<int32_t> is layout/alignment-compatible with int32_t
+            // on every platform we ship — this reinterpret is sound in
+            // practice and the canonical way to bridge a SAB cell into
+            // the C++ atomic-pointer API.
+            CancellationToken cancel = cancelPtr_
+                ? CancellationToken(reinterpret_cast<const std::atomic<int32_t>*>(cancelPtr_))
+                : CancellationToken{};
+
+            ProgressObserver progress;
+            if (progressPtr_ && progressLen_ >= 3) {
+                progress.iteration       = reinterpret_cast<std::atomic<int32_t>*>(progressPtr_ + 0);
+                progress.totalIterations = reinterpret_cast<std::atomic<int32_t>*>(progressPtr_ + 1);
+                progress.residualMicro   = reinterpret_cast<std::atomic<int32_t>*>(progressPtr_ + 2);
+            }
+
+            result_ = solveEigenmodes(holder_->ops->stiffness, holder_->ops->mass, k_,
+                                      -1e-8, cancel, progress);
             // Normalize eigenvectors
             result_.eigenvectors = normalizeEigenmodes(result_.eigenvectors, holder_->ops->mass);
             // Remove DC
@@ -235,7 +278,13 @@ public:
             // Cache on the holder so time-varying generators can reuse
             // without round-tripping the eigenmode arrays through IPC.
             holder_->eigenmodes = std::make_shared<EigenResult>(result_);
+        } catch (const cxf::CxfError& e) {
+            // Preserve structured error info for OnError to attach to the JS Error.
+            errorCode_   = std::string(cxf::errorCodeName(e.code()));
+            errorHint_   = std::string(e.hint());
+            SetError(e.what());
         } catch (const std::exception& e) {
+            errorCode_ = "INTERNAL_ERROR";
             SetError(e.what());
         }
     }
@@ -243,6 +292,7 @@ public:
     void OnOK() override {
         Napi::Env env = Env();
         auto obj = Napi::Object::New(env);
+        // vMajor row-major: matches Zarr `[V, K]` schema and renderer expectations.
         obj.Set("eigenvectors", matrixToFloat64Array(env, result_.eigenvectors));
         obj.Set("eigenvalues", toFloat64Array(env, result_.eigenvalues));
         obj.Set("k", Napi::Number::New(env, result_.k));
@@ -251,17 +301,30 @@ public:
     }
 
     void OnError(const Napi::Error& e) override {
-        deferred.Reject(e.Value());
+        Napi::Env env = Env();
+        // Attach structured fields to the Error so JS can switch on .code
+        // and surface .hint without parsing the message.
+        Napi::Error err = Napi::Error::New(env, e.Message());
+        if (!errorCode_.empty()) err.Set("code", Napi::String::New(env, errorCode_));
+        if (!errorHint_.empty()) err.Set("hint", Napi::String::New(env, errorHint_));
+        deferred.Reject(err.Value());
     }
 
     Napi::Promise GetPromise() { return deferred.Promise(); }
 
 private:
     Napi::Promise::Deferred deferred;
-    Napi::Reference<Napi::Value> ctxRef_;  // prevent GC during async work
+    Napi::Reference<Napi::Value> ctxRef_;       // prevent GC during async work
+    Napi::Reference<Napi::Value> cancelRef_;    // pin SAB-backed Int32Array
+    Napi::Reference<Napi::Value> progressRef_;  // pin SAB-backed Int32Array
     ContextHolder* holder_;
     int k_;
+    int32_t*    cancelPtr_;        // nullable; points into a SAB cell
+    int32_t*    progressPtr_;      // nullable; points into a SAB cell
+    std::size_t progressLen_;      // element count, for safety-bound check
     EigenResult result_;
+    std::string errorCode_;
+    std::string errorHint_;
 };
 
 Napi::Value SolveEigenmodes(const Napi::CallbackInfo& info) {
@@ -271,7 +334,32 @@ Napi::Value SolveEigenmodes(const Napi::CallbackInfo& info) {
 
     int k = info[1].As<Napi::Number>().Int32Value();
 
-    auto* worker = new EigenSolveWorker(env, info[0], holder, k);
+    // Optional cancel + progress arrays. Caller is expected to back
+    // them with a SharedArrayBuffer so flips are visible cross-thread,
+    // but a normal Int32Array also works (single-threaded JS still
+    // sees writes between awaits).
+    int32_t*    cancelPtr   = nullptr;
+    int32_t*    progressPtr = nullptr;
+    std::size_t progressLen = 0;
+    Napi::Value cancelVal   = env.Undefined();
+    Napi::Value progressVal = env.Undefined();
+    if (info.Length() > 2 && info[2].IsTypedArray()) {
+        auto arr = info[2].As<Napi::Int32Array>();
+        if (arr.ElementLength() >= 1) {
+            cancelPtr = arr.Data();
+            cancelVal = info[2];
+        }
+    }
+    if (info.Length() > 3 && info[3].IsTypedArray()) {
+        auto arr = info[3].As<Napi::Int32Array>();
+        progressPtr = arr.Data();
+        progressLen = arr.ElementLength();
+        progressVal = info[3];
+    }
+
+    auto* worker = new EigenSolveWorker(env, info[0], holder, k,
+                                        cancelVal, cancelPtr,
+                                        progressVal, progressPtr, progressLen);
     auto promise = worker->GetPromise();
     worker->Queue();
     return promise;

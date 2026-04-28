@@ -116,10 +116,12 @@ console.log(`  faceFrames ✓ (orthonormal to ${maxOrth.toExponential(2)})`)
 
 // ── Test 3: M-orthonormality of eigenvectors ──────────────────
 //
-// U' M U should be ≈ identity. Eigenvectors are flat column-major
-// V×K — column k (mode k) is at offset k*nV. Mass is diagonal here
-// so we just extract the diagonal into a flat Float64.
-const evecs = data.eigenmodes.eigenvectors  // [V*K] column-major
+// U' M U should be ≈ identity. Phase A standardised vMajor
+// (row-major) layout for [V × K] eigenvectors: U[v*K + k] gives
+// vertex v's value in mode k. Mode k extraction is therefore a
+// strided read (stride K), matching the cortical-flow Zarr schema
+// `manifold/eigenmodes/eigenvectors` shape [V, K].
+const evecs = data.eigenmodes.eigenvectors  // [V*K] row-major (vMajor)
 const K = data.eigenmodes.k
 const massCOO = data.operators.mass
 
@@ -130,19 +132,19 @@ for (let i = 0; i < massCOO.row.length; i++) {
   }
 }
 
-// Verify subarray() actually extracts a contiguous mode (the whole
-// point of column-major output).
-const mode0 = evecs.subarray(0,      nV)   // first mode
-const mode1 = evecs.subarray(nV,     2*nV) // second mode
-require(mode0.length === nV && mode1.length === nV,
-    'eigenmode subarray slicing produces nV contiguous values')
+// Mode extraction with vMajor: stride K read.
+function extractMode(k) {
+  const out = new Float64Array(nV)
+  for (let v = 0; v < nV; v++) out[v] = evecs[v * K + k]
+  return out
+}
 
 let maxOffDiag = 0
 let maxDiagErr = 0
 for (let j = 0; j < K; j++) {
-  const u_j = evecs.subarray(j * nV, (j + 1) * nV)
+  const u_j = extractMode(j)
   for (let k = 0; k < K; k++) {
-    const u_k = evecs.subarray(k * nV, (k + 1) * nV)
+    const u_k = extractMode(k)
     let dot = 0
     for (let v = 0; v < nV; v++) {
       dot += u_j[v] * massDiag[v] * u_k[v]

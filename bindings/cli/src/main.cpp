@@ -14,7 +14,9 @@
 #include "cxf-io/freesurfer.h"
 #include "cxf-io/zarr.h"
 
+#include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -22,6 +24,21 @@
 #include <vector>
 
 namespace {
+
+// ── SIGINT (Ctrl-C) → cancellation token ─────────────────────
+//
+// One process-wide atomic flag, flipped by the SIGINT handler.
+// cxf solvers wrap a CancellationToken around it via ctrl_c_token().
+// The handler is async-signal-safe (only writes to the atomic).
+std::atomic<int32_t> g_sigintFlag{0};
+
+void onSigint(int /*sig*/) {
+    g_sigintFlag.store(1, std::memory_order_relaxed);
+}
+
+cxf::CancellationToken ctrl_c_token() {
+    return cxf::CancellationToken(&g_sigintFlag);
+}
 
 constexpr const char* kVersion = "cxf 0.1.0";
 
@@ -123,7 +140,7 @@ int cmdPrecompute(int argc, char** argv) {
         return 1;
     }
     t0 = std::chrono::steady_clock::now();
-    auto eig = cxf::solveEigenmodes(ops.stiffness, ops.mass, k);
+    auto eig = cxf::solveEigenmodes(ops.stiffness, ops.mass, k, -1e-8, ctrl_c_token());
     eig.eigenvectors = cxf::normalizeEigenmodes(eig.eigenvectors, ops.mass);
     eig = cxf::removeDC(eig);
     std::cout << "[cxf] eigensolve k=" << eig.k
@@ -208,15 +225,18 @@ int cmdPrecompute(int argc, char** argv) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // Wire Ctrl-C → cancel on cxf solvers. The default action would be
+    // immediate process termination; the handler instead just sets the
+    // flag so cxf throws CxfError(Cancelled) and we exit cleanly,
+    // closing files and surfacing a useful exit code.
+    std::signal(SIGINT, onSigint);
+
     if (argc < 2) {
         printUsage();
         return 2;
     }
 
     std::string cmd = argv[1];
-    if (cmd == "precompute") {
-        return cmdPrecompute(argc - 2, argv + 2);
-    }
     if (cmd == "-h" || cmd == "--help") {
         printUsage();
         return 0;
@@ -224,6 +244,24 @@ int main(int argc, char** argv) {
     if (cmd == "-v" || cmd == "--version") {
         std::cout << kVersion << "\n";
         return 0;
+    }
+
+    if (cmd == "precompute") {
+        try {
+            return cmdPrecompute(argc - 2, argv + 2);
+        } catch (const cxf::CxfError& e) {
+            std::cerr << "cxf precompute: ["
+                      << cxf::errorCodeName(e.code()) << "] " << e.what() << "\n";
+            if (!e.hint().empty()) {
+                std::cerr << "  hint: " << e.hint() << "\n";
+            }
+            // Distinguish cancellation (130 = 128 + SIGINT, POSIX
+            // convention) from other failures (1).
+            return e.code() == cxf::ErrorCode::Cancelled ? 130 : 1;
+        } catch (const std::exception& e) {
+            std::cerr << "cxf precompute: " << e.what() << "\n";
+            return 1;
+        }
     }
 
     std::cerr << "cxf: unknown command \"" << cmd << "\"\n";

@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 project(cxf_workspace LANGUAGES CXX)
 
+# C++17 is the workspace default — geometry-central + Eigen 3.4
+# under Emscripten Clang trip a template-deduction bug at C++20
+# (see boundary_first_flattening.cpp). cxf itself bumps its own
+# target to C++20 via target_compile_features in cxf/CMakeLists.txt
+# so its consumers (addon, wasm, mex, cli, tests) inherit the
+# requirement without forcing geometry-central up.
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)

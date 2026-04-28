@@ -25,6 +25,7 @@
 
 #include "cxf/cxf.h"
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -62,19 +63,11 @@ val eigenMatrixToVal(const Eigen::MatrixXd& m) {
         static_cast<std::size_t>(rowMajor.rows()) * rowMajor.cols());
 }
 
-/** Eigen MatrixXd → column-major flat (Eigen's native bytes; no copy
- *  layout change). Used for eigenvectors specifically — for a V×K
- *  eigenmode matrix this puts column k (= mode k) at offset k*V in
- *  flat memory, so JS can extract one mode as a contiguous slice:
- *
- *      const mode_k = eigenvectors.subarray(k * nV, (k + 1) * nV)
- *
- *  Without column-major output, mode extraction would need a strided
- *  copy on the JS side. */
-val eigenMatrixToValColumnMajor(const Eigen::MatrixXd& m) {
-    return toJsArrayCopy(m.data(),
-        static_cast<std::size_t>(m.rows()) * m.cols());
-}
+// Per cxf.h's hard layout rule (vMajor for eigenvectors), all
+// V×K matrices flatten row-major into JS just like V×3 / F×3.
+// Use eigenMatrixToVal above. The previous column-major helper
+// was removed in Phase A — the Zarr schema and renderer both
+// consume vMajor (U[v*K + k]).
 
 val eigenMatrixFloat32ToVal(const Eigen::MatrixXf& m) {
     Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
@@ -194,11 +187,55 @@ public:
 
     // ── Spectral basis ───────────────────────────────────────
 
-    val solveEigenmodes(int k, double sigma) {
+    // Cancellation/progress contract for WASM consumers:
+    //   • cancelAddr — wasm heap pointer to a single int32. Pass 0 to
+    //     opt out. Allocate via `Module._malloc(4)` and write via
+    //     `Module.HEAP32[ptr >> 2] = 1` to cancel. With SHARED_MEMORY
+    //     enabled, JS can use `Atomics.store(new Int32Array(Module
+    //     .HEAPU8.buffer), ptr >> 2, 1)` from a different thread.
+    //   • progressAddr — wasm heap pointer to a 3×int32 array. Pass 0
+    //     to opt out. Layout: [iteration, totalIterations, residual×1e6].
+    //
+    // Errors land in JS as Error objects whose .message starts with
+    // "[CODE] " (where CODE is the cxf::ErrorCode name, e.g. CANCELLED).
+    // A small parseError helper on the JS side recovers .code from the
+    // message prefix; richer per-binding error mapping can land in a
+    // future phase.
+    val solveEigenmodes(int k, double sigma,
+                        std::intptr_t cancelAddr,
+                        std::intptr_t progressAddr,
+                        int progressLen) {
         ensureOps();
-        cxf::EigenResult r = cxf::solveEigenmodes(
-            ops_->stiffness, ops_->mass, k, sigma);
-        return eigenResultToVal(r);
+
+        cxf::CancellationToken cancel = cancelAddr
+            ? cxf::CancellationToken(reinterpret_cast<const std::atomic<int32_t>*>(cancelAddr))
+            : cxf::CancellationToken{};
+
+        cxf::ProgressObserver progress;
+        if (progressAddr && progressLen >= 3) {
+            auto* base = reinterpret_cast<std::atomic<int32_t>*>(progressAddr);
+            progress.iteration       = &base[0];
+            progress.totalIterations = &base[1];
+            progress.residualMicro   = &base[2];
+        }
+
+        try {
+            cxf::EigenResult r = cxf::solveEigenmodes(
+                ops_->stiffness, ops_->mass, k, sigma, cancel, progress);
+            return eigenResultToVal(r);
+        } catch (const cxf::CxfError& e) {
+            // Prefix the message with the code so JS consumers can
+            // pattern-match without losing the human-readable text.
+            std::string msg = "[";
+            msg += cxf::errorCodeName(e.code());
+            msg += "] ";
+            msg += e.what();
+            if (!e.hint().empty()) {
+                msg += " | hint: ";
+                msg += std::string(e.hint());
+            }
+            throw std::runtime_error(msg);
+        }
     }
 
     val normalizeEigenmodes(val UJsArr, int rows, int cols) {
@@ -469,10 +506,10 @@ private:
 
     val eigenResultToVal(const cxf::EigenResult& r) {
         val o = val::object();
-        // Column-major: each mode (column) is contiguous in the flat
-        // buffer at offset k*V — the natural layout for "switch
-        // between modes" workflows in three.js consumers.
-        o.set("eigenvectors", eigenMatrixToValColumnMajor(r.eigenvectors));
+        // vMajor row-major: U[v*K + k]. Matches the cortical-flow
+        // Zarr schema (manifold/eigenmodes/eigenvectors stored as
+        // [V, K]) and the GPU spectral-synthesis access pattern.
+        o.set("eigenvectors", eigenMatrixToVal(r.eigenvectors));
         o.set("eigenvalues",  eigenVectorToVal(r.eigenvalues));
         o.set("k",            r.k);
         o.set("nConverged",   r.nConverged);
@@ -487,11 +524,13 @@ private:
         auto lVec = emscripten::convertJSArrayToNumberVector<double>(lField);
         int K = static_cast<int>(lVec.size());
         int V = K > 0 ? static_cast<int>(uVec.size()) / K : 0;
-        // Eigenvectors in WASM JS are column-major — same byte layout
-        // as Eigen::MatrixXd, just memcpy the bytes back.
-        r.eigenvectors.resize(V, K);
-        std::memcpy(r.eigenvectors.data(), uVec.data(),
-                    V * K * sizeof(double));
+        // Round-trip layout: JS hands back vMajor (V×K row-major).
+        // Map the buffer as a row-major matrix and let Eigen's
+        // assignment operator transpose into its own column-major
+        // storage — one copy, no manual indexing.
+        Eigen::Map<const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>
+            rowMajor(uVec.data(), V, K);
+        r.eigenvectors = rowMajor;
         r.eigenvalues.resize(K);
         std::memcpy(r.eigenvalues.data(), lVec.data(), K * sizeof(double));
         r.k = K;
