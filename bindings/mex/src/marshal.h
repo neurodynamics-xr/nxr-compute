@@ -151,6 +151,34 @@ inline mxArray* eigenSparseToMx(const Eigen::SparseMatrix<double>& src) {
     return arr;
 }
 
+// ── Vertex index lists (1-based MATLAB → 0-based C) ─────────
+//
+// Source-vertex arguments to vector heat / signed heat / find center
+// are 1-based in MATLAB convention; we subtract 1 at the boundary to
+// match the rest of nxr-compute. Accepts double, int32, or uint32 for
+// caller flexibility.
+
+inline std::vector<int> mxToVertexIndices(const mxArray* arr) {
+    if (mxIsComplex(arr) || mxIsSparse(arr)) {
+        throw std::invalid_argument("vertex indices must be a real dense vector");
+    }
+    std::size_t n = mxGetNumberOfElements(arr);
+    std::vector<int> out(n);
+    if (mxIsDouble(arr)) {
+        const double* src = mxGetPr(arr);
+        for (std::size_t i = 0; i < n; i++) out[i] = static_cast<int>(src[i]) - 1;
+    } else if (mxIsInt32(arr)) {
+        const std::int32_t* src = static_cast<const std::int32_t*>(mxGetData(arr));
+        for (std::size_t i = 0; i < n; i++) out[i] = src[i] - 1;
+    } else if (mxIsUint32(arr)) {
+        const std::uint32_t* src = static_cast<const std::uint32_t*>(mxGetData(arr));
+        for (std::size_t i = 0; i < n; i++) out[i] = static_cast<int>(src[i]) - 1;
+    } else {
+        throw std::invalid_argument("vertex indices must be double, int32, or uint32");
+    }
+    return out;
+}
+
 // ── Vertex / face buffer marshallers ────────────────────────
 //
 // MATLAB convention: vertices Vx3, faces Fx3 (1-based).

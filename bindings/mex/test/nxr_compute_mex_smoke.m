@@ -10,9 +10,12 @@
 clear; clc;
 fprintf('[nxr_compute_mex] starting smoke test\n');
 
-% Locate the freshly-built MEX (relative to this script).
+% Locate the freshly-built MEX (relative to this script). The build
+% script writes to <repo>/build/Release; this file lives three levels
+% deep at bindings/mex/test/, so the artifact resolves at
+% ../../../build/Release.
 thisDir = fileparts(mfilename('fullpath'));
-mexDir  = fullfile(thisDir, '..', '..', 'build_node', 'Release');
+mexDir  = fullfile(thisDir, '..', '..', '..', 'build', 'Release');
 addpath(mexDir);
 
 assert(exist(fullfile(mexDir, 'nxr_compute.mexw64'), 'file') == 3, ...
@@ -103,5 +106,64 @@ deltaLambda = max(abs(oneShot.eigenvalues - trimmed.eigenvalues));
 fprintf('       max|Δλ| step-by-step vs one-shot = %.3e\n', deltaLambda);
 assert(deltaLambda < 1e-10, ...
     'one-shot eigenvalues differ from step-by-step by %g', deltaLambda);
+
+% ── 6. vectorHeatTransport ───────────────────────────────────
+% Transport one tangent vector from vertex 1 (MATLAB 1-based).
+% Output is V×3 in MATLAB's column-major convention, with each
+% column being x / y / z respectively.
+srcVecs = [1 0 0];
+transported = nxr_compute('vectorHeatTransport', V, F, 1, srcVecs);
+fprintf('  [6] vectorHeatTransport ✓ (size %dx%d)\n', size(transported, 1), size(transported, 2));
+assert(isequal(size(transported), [nV 3]), 'transported should be V×3');
+assert(any(vecnorm(transported, 2, 2) > 1e-6), 'transported field should be non-trivial');
+
+% ── 7. vectorHeatExtendScalar ────────────────────────────────
+extended = nxr_compute('vectorHeatExtendScalar', V, F, [1; 7], [1.0; 0.0]);
+fprintf('  [7] vectorHeatExtendScalar ✓\n');
+assert(numel(extended) == nV, 'extended field length must be nV');
+
+% ── 8. vectorHeatLogMap ──────────────────────────────────────
+% Default strategy = AffineLocal (1).
+lm = nxr_compute('vectorHeatLogMap', V, F, 1);
+fprintf('  [8] vectorHeatLogMap ✓\n');
+assert(isequal(size(lm.logCoords), [nV 2]), 'logCoords should be V×2');
+assert(numel(lm.sourceE1) == 3 && numel(lm.sourceE2) == 3, ...
+    'source frame should be two 3-vectors');
+% Log map of the source vertex itself is (0, 0).
+assert(norm(lm.logCoords(1, :)) < 1e-6, 'log map at source should be ~0');
+
+% ── 9. vectorHeatFindCenter ──────────────────────────────────
+center = nxr_compute('vectorHeatFindCenter', V, F, [1; 2; 6]);
+fprintf('  [9] vectorHeatFindCenter ✓ ([%g %g %g])\n', center(1), center(2), center(3));
+assert(numel(center) == 3 && all(isfinite(center)), 'center should be a finite 3-vector');
+% Unit-sphere icosahedron — center should sit roughly on the surface.
+assert(abs(norm(center) - 1) < 0.4, 'center should be near unit-sphere surface');
+
+% ── 10. signedHeatDistance ───────────────────────────────────
+% Loop around vertex 1 (north pole). Curve indices are 1-based.
+sd = nxr_compute('signedHeatDistance', V, F, [12; 6; 2; 8; 11], 1);
+fprintf('  [10] signedHeatDistance ✓ (range [%g, %g])\n', min(sd), max(sd));
+assert(numel(sd) == nV, 'signed distance length nV');
+assert(min(sd) < 0 && max(sd) > 0, 'signed distance should straddle zero');
+
+% ── 11. computeSmoothFaceField ───────────────────────────────
+faceField = nxr_compute('computeSmoothFaceField', V, F, 4);
+fprintf('  [11] computeSmoothFaceField ✓ (nSym=4)\n');
+assert(isequal(size(faceField), [nF 3]), 'face field should be F×3');
+assert(any(vecnorm(faceField, 2, 2) > 1e-6), 'face field should be non-trivial');
+
+% ── 12. computeSmoothVertexField ─────────────────────────────
+vfield = nxr_compute('computeSmoothVertexField', V, F, 2);
+fprintf('  [12] computeSmoothVertexField ✓ (nSym=2)\n');
+assert(isequal(size(vfield.vertexVectors), [nV 3]), 'vertexVectors should be V×3');
+assert(numel(vfield.vertexFieldRaw) == nV * 2, 'vertexFieldRaw should be V*2');
+assert(vfield.nSym == 2, 'nSym should round-trip');
+
+% ── 13. computeStripePattern ─────────────────────────────────
+stripes = nxr_compute('computeStripePattern', V, F, vfield.vertexFieldRaw, 8.0);
+fprintf('  [13] computeStripePattern ✓ (segs=%d)\n', stripes.segmentCount);
+assert(stripes.segmentCount >= 0, 'segmentCount non-negative');
+assert(isequal(size(stripes.positions), [stripes.segmentCount * 2, 3]), ...
+    'positions should be (2*segs)×3');
 
 fprintf('[nxr_compute_mex] all assertions passed ✓\n');
