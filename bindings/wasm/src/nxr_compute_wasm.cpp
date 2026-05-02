@@ -467,6 +467,111 @@ public:
         return eigenVectorToVal(omega);
     }
 
+    // ── Vector heat method ──────────────────────────────────
+
+    val vectorHeatTransport(val sourceVertsArr, val sourceVectorsArr) {
+        ensureVHM();
+        auto verts = emscripten::convertJSArrayToNumberVector<int>(sourceVertsArr);
+        auto vecs  = emscripten::convertJSArrayToNumberVector<double>(sourceVectorsArr);
+        if (vecs.size() != verts.size() * 3) {
+            throw std::invalid_argument("sourceVectors must be Nx3 (length 3*sources)");
+        }
+        Eigen::MatrixXd S(static_cast<int>(verts.size()), 3);
+        for (std::size_t i = 0; i < verts.size(); i++) {
+            S(i, 0) = vecs[i * 3 + 0];
+            S(i, 1) = vecs[i * 3 + 1];
+            S(i, 2) = vecs[i * 3 + 2];
+        }
+        Eigen::MatrixXd out = nxr::compute::vectorHeatTransport(*vhm_, verts, S);
+        return eigenMatrixToVal(out);
+    }
+
+    val vectorHeatExtendScalar(val sourceVertsArr, val sourceValuesArr) {
+        ensureVHM();
+        auto verts = emscripten::convertJSArrayToNumberVector<int>(sourceVertsArr);
+        auto vals  = emscripten::convertJSArrayToNumberVector<double>(sourceValuesArr);
+        if (verts.size() != vals.size()) {
+            throw std::invalid_argument("sourceVerts and sourceValues must have the same length");
+        }
+        Eigen::VectorXd vv(vals.size());
+        for (std::size_t i = 0; i < vals.size(); i++) vv[i] = vals[i];
+        Eigen::VectorXd out = nxr::compute::vectorHeatExtendScalar(*vhm_, verts, vv);
+        return eigenVectorToVal(out);
+    }
+
+    val vectorHeatLogMap(int sourceVertex, int strategy) {
+        ensureVHM();
+        auto s = static_cast<nxr::compute::LogMapStrategy>(strategy);
+        nxr::compute::LogMapResult r = nxr::compute::vectorHeatLogMap(*vhm_, sourceVertex, s);
+        val obj = val::object();
+        obj.set("logCoords", eigenMatrixToVal(r.logCoords));
+        double e1[3] = {r.sourceE1.x(), r.sourceE1.y(), r.sourceE1.z()};
+        double e2[3] = {r.sourceE2.x(), r.sourceE2.y(), r.sourceE2.z()};
+        obj.set("sourceE1", toJsArrayCopy(e1, 3));
+        obj.set("sourceE2", toJsArrayCopy(e2, 3));
+        return obj;
+    }
+
+    val vectorHeatFindCenter(val sourceVertsArr, int p) {
+        ensureVHM();
+        auto verts = emscripten::convertJSArrayToNumberVector<int>(sourceVertsArr);
+        Eigen::Vector3d c = nxr::compute::vectorHeatFindCenter(*vhm_, verts, p);
+        double xyz[3] = {c.x(), c.y(), c.z()};
+        return toJsArrayCopy(xyz, 3);
+    }
+
+    // ── Signed heat method ──────────────────────────────────
+
+    val signedHeatDistance(val curveVertsArr, bool isLoop, int levelSet) {
+        ensureSHS();
+        auto verts = emscripten::convertJSArrayToNumberVector<int>(curveVertsArr);
+        auto ls    = static_cast<nxr::compute::SignedHeatLevelSet>(levelSet);
+        Eigen::VectorXd out = nxr::compute::signedHeatDistance(*shs_, verts, isLoop, ls);
+        return eigenVectorToVal(out);
+    }
+
+    // ── Smooth direction fields ─────────────────────────────
+
+    val computeSmoothFaceField(int nSym, bool alignToCurvature) {
+        Eigen::MatrixXd v = nxr::compute::computeSmoothFaceField(*ctx_, nSym, alignToCurvature);
+        return eigenMatrixToVal(v);
+    }
+
+    val computeSmoothVertexField(int nSym, bool alignToCurvature) {
+        nxr::compute::SmoothFieldResult r =
+            nxr::compute::computeSmoothVertexField(*ctx_, nSym, alignToCurvature);
+        val obj = val::object();
+        obj.set("vertexVectors",  eigenMatrixToVal(r.vertexVectors));
+        obj.set("vertexFieldRaw", eigenVectorToVal(r.vertexFieldRaw));
+        obj.set("nSym",           r.nSym);
+        return obj;
+    }
+
+    // ── Stripe patterns ─────────────────────────────────────
+
+    val computeStripePattern(val vertexFieldArr, double uniformFrequency,
+                             bool connectOnSingularities) {
+        Eigen::VectorXd raw = valToEigenVector(vertexFieldArr);
+        nxr::compute::StripePatternResult r = nxr::compute::computeStripePattern(
+            *ctx_, raw, uniformFrequency, connectOnSingularities);
+        val obj = val::object();
+        obj.set("positions",    eigenMatrixToVal(r.positions));
+        obj.set("segmentCount", r.segmentCount);
+        return obj;
+    }
+
+    val computeStripePatternFreq(val vertexFieldArr, val freqsArr,
+                                 bool connectOnSingularities) {
+        Eigen::VectorXd raw   = valToEigenVector(vertexFieldArr);
+        Eigen::VectorXd freqs = valToEigenVector(freqsArr);
+        nxr::compute::StripePatternResult r = nxr::compute::computeStripePatternFreq(
+            *ctx_, raw, freqs, connectOnSingularities);
+        val obj = val::object();
+        obj.set("positions",    eigenMatrixToVal(r.positions));
+        obj.set("segmentCount", r.segmentCount);
+        return obj;
+    }
+
 private:
     // Lazy state (matches the addon's ContextHolder caching).
     void ensureOps() {
@@ -476,6 +581,12 @@ private:
     void ensureDec() {
         if (!dec_) dec_ = std::make_unique<nxr::compute::DECOperators>(
             nxr::compute::assembleDECOperators(*ctx_));
+    }
+    void ensureVHM() {
+        if (!vhm_) vhm_ = std::make_unique<nxr::compute::VectorHeatSolver>(*ctx_);
+    }
+    void ensureSHS() {
+        if (!shs_) shs_ = std::make_unique<nxr::compute::SignedHeatSolver>(*ctx_);
     }
 
     val meshOpsToVal() {
@@ -538,11 +649,13 @@ private:
         return r;
     }
 
-    std::unique_ptr<nxr::compute::ComputeContext>   ctx_;
-    std::unique_ptr<nxr::compute::MeshOperators>    ops_;
-    std::unique_ptr<nxr::compute::DECOperators>     dec_;
-    std::unique_ptr<nxr::compute::CholeskyCache>    cache_;
-    std::unique_ptr<nxr::compute::EigenResult>      eigCache_;
+    std::unique_ptr<nxr::compute::ComputeContext>     ctx_;
+    std::unique_ptr<nxr::compute::MeshOperators>      ops_;
+    std::unique_ptr<nxr::compute::DECOperators>       dec_;
+    std::unique_ptr<nxr::compute::CholeskyCache>      cache_;
+    std::unique_ptr<nxr::compute::EigenResult>        eigCache_;
+    std::unique_ptr<nxr::compute::VectorHeatSolver>   vhm_;
+    std::unique_ptr<nxr::compute::SignedHeatSolver>   shs_;
     std::vector<double>  verts_;
     std::vector<int>     faces_;
     std::vector<int32_t> faces32_;
@@ -592,6 +705,19 @@ EMSCRIPTEN_BINDINGS(nxr_compute_wasm) {
         .function("generateDampedWave",     &ContextWrapper::generateDampedWave)
         .function("generateRandomDecomposed1Form",
                                             &ContextWrapper::generateRandomDecomposed1Form)
+        // Vector heat method
+        .function("vectorHeatTransport",    &ContextWrapper::vectorHeatTransport)
+        .function("vectorHeatExtendScalar", &ContextWrapper::vectorHeatExtendScalar)
+        .function("vectorHeatLogMap",       &ContextWrapper::vectorHeatLogMap)
+        .function("vectorHeatFindCenter",   &ContextWrapper::vectorHeatFindCenter)
+        // Signed heat method
+        .function("signedHeatDistance",     &ContextWrapper::signedHeatDistance)
+        // Smooth direction fields
+        .function("computeSmoothFaceField",   &ContextWrapper::computeSmoothFaceField)
+        .function("computeSmoothVertexField", &ContextWrapper::computeSmoothVertexField)
+        // Stripe patterns
+        .function("computeStripePattern",     &ContextWrapper::computeStripePattern)
+        .function("computeStripePatternFreq", &ContextWrapper::computeStripePatternFreq)
         ;
 
     emscripten::function("version", &getVersion);

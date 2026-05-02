@@ -208,6 +208,77 @@ require(heat.data instanceof Float32Array, 'heat data Float32Array')
 require(heat.data.length === 5 * 12, 'heat data length T*V')
 console.log(`  generateHeatDiffusion ✓ (T=${heat.T}, nV=${heat.nV})`)
 
+// ── Test 8: vector heat method ───────────────────────────────
+{
+  const transported = ctx.vectorHeatTransport(
+    new Int32Array([0]),
+    new Float64Array([1.0, 0.0, 0.0]),
+  )
+  require(transported.length === nV * 3, 'vhm transport length nV*3')
+  let maxNorm = 0
+  for (let v = 0; v < nV; v++) {
+    maxNorm = Math.max(maxNorm,
+      Math.hypot(transported[v*3], transported[v*3+1], transported[v*3+2]))
+  }
+  require(maxNorm > 1e-6, 'vhm transport produced non-trivial vectors')
+
+  const extended = ctx.vectorHeatExtendScalar(
+    new Int32Array([0, 6]),
+    new Float64Array([1.0, 0.0]),
+  )
+  require(extended.length === nV, 'vhm extendScalar length nV')
+
+  const logmap = ctx.vectorHeatLogMap(0, /* AffineLocal */ 1)
+  require(logmap.logCoords.length === nV * 2, 'logmap V*2')
+  require(logmap.sourceE1.length === 3 && logmap.sourceE2.length === 3, 'logmap source frame 3')
+  require(Math.hypot(logmap.logCoords[0], logmap.logCoords[1]) < 1e-6, 'logmap zero at source')
+
+  const center = ctx.vectorHeatFindCenter(new Int32Array([0, 1, 5]), 2)
+  require(center.length === 3 && center.every(Number.isFinite), 'findCenter xyz finite')
+  console.log(`  vectorHeat ✓ (transport max=${maxNorm.toFixed(3)}, ` +
+              `center=[${[...center].map(v => v.toFixed(3)).join(', ')}])`)
+}
+
+// ── Test 9: signed heat method ───────────────────────────────
+{
+  const sd = ctx.signedHeatDistance(
+    new Int32Array([11, 5, 1, 7, 10]),
+    /* isLoop = */ true,
+    /* ZeroSet = */ 1,
+  )
+  require(sd.length === nV, 'signed distance length nV')
+  let mn = Infinity, mx = -Infinity
+  for (const d of sd) { if (d < mn) mn = d; if (d > mx) mx = d }
+  require(mn < 0 && mx > 0, `signed range straddles zero, got [${mn}, ${mx}]`)
+  console.log(`  signedHeat ✓ (range [${mn.toFixed(3)}, ${mx.toFixed(3)}])`)
+}
+
+// ── Test 10: smooth NRoSy direction fields ──────────────────
+{
+  const faceField = ctx.computeSmoothFaceField(4, false)
+  require(faceField.length === nF * 3, 'smooth face field length F*3')
+
+  const vfield = ctx.computeSmoothVertexField(2, false)
+  require(vfield.vertexVectors.length  === nV * 3, 'smooth vertex field V*3')
+  require(vfield.vertexFieldRaw.length === nV * 2, 'smooth vertex field raw V*2')
+  require(vfield.nSym === 2, 'nSym preserved')
+  console.log(`  smoothField ✓ (face nF=${nF}, vertex nV=${nV})`)
+
+  // ── Test 11: stripe patterns ───────────────────────────────
+  const stripes = ctx.computeStripePattern(vfield.vertexFieldRaw, 8.0, true)
+  require(stripes.segmentCount >= 0, 'stripes segmentCount non-negative')
+  require(stripes.positions.length === stripes.segmentCount * 6,
+          'stripes positions length 2*segs*3')
+  console.log(`  stripes ✓ (segs=${stripes.segmentCount})`)
+}
+
+// Note: index.mjs supplies the optional-argument defaults declared
+// in index.d.ts. We don't exercise that wrapper here because it
+// imports `../../build_wasm/nxr_compute.js`, a path that resolves
+// relative to `bindings/wasm/js/` and predates the current build
+// layout — orthogonal to this PR. The Embind methods exercised
+// above match the .d.ts contract once the wrapper is loadable.
+
 // ── Cleanup ───────────────────────────────────────────────────
 ctx.delete()
 console.log('[smoke] all assertions passed ✓')

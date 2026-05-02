@@ -622,6 +622,242 @@ IsolineResult computeIsolines(
     double maxValue = 0.0
 );
 
+// ── Vector Heat Method (Sharp, Soliman, Crane 2019) ──────────
+//
+// Stateful solver around a single (Laplacian, vector heat, Poisson)
+// factor triple. Owned by the binding shell's per-mesh holder
+// (ContextHolder / ContextWrapper) and lazily constructed on first
+// use, mirroring CholeskyCache's lifetime model.
+//
+// The solver is opaque to JS — three free functions below operate
+// on a long-lived solver passed by reference. The shells expose
+// these as methods on their stateful context wrapper so the
+// internal `VectorHeatMethodSolver*` never crosses the boundary.
+//
+// All tangent-vector inputs/outputs are V × 3 world-space vectors.
+// Internally we project to / lift from each vertex's intrinsic
+// tangent basis (geometry-central's `vertexTangentBasis`). This
+// is a §11 layout extension: V × 2 tangent-frame data is lifted
+// to V × 3 at the C++/JS boundary so callers never see Vector2.
+
+class VectorHeatSolverImpl;
+class VectorHeatSolver {
+public:
+    explicit VectorHeatSolver(ComputeContext& ctx, double tCoef = 1.0);
+    ~VectorHeatSolver();
+    VectorHeatSolver(const VectorHeatSolver&) = delete;
+    VectorHeatSolver& operator=(const VectorHeatSolver&) = delete;
+
+    // Internal — bindings should not call these directly.
+    VectorHeatSolverImpl& impl();
+    ComputeContext& ctx();
+
+private:
+    std::unique_ptr<VectorHeatSolverImpl> impl_;
+};
+
+/** Parallel-transport tangent vectors from a sparse set of sources
+ *  to every vertex via the vector heat method.
+ *
+ *  Each source is (vertexIdx, worldVec3). The solver projects
+ *  worldVec3 onto the source vertex's tangent basis, runs the
+ *  vector heat solve, then lifts each destination vertex's
+ *  Vector2 result to a world-space V × 3 vector using its own
+ *  vertex tangent basis. Vectors at vertices very near a source
+ *  reproduce the source vector almost exactly; vectors far away
+ *  are the parallel transport of those sources along geodesics.
+ *
+ *  @return [nV, 3] row-major world-space tangent vectors. */
+Eigen::MatrixXd vectorHeatTransport(
+    VectorHeatSolver& solver,
+    const std::vector<int>& sourceVertices,
+    const Eigen::MatrixXd& sourceVectors  // [nSources, 3]
+);
+
+/** Extend a sparse scalar field from the given source vertices to
+ *  the entire mesh via the scalar heat method. Behaves like a
+ *  geodesic Voronoi: each destination vertex takes the value of
+ *  its nearest source, smoothly interpolated.
+ *
+ *  @return [nV] per-vertex scalars. */
+Eigen::VectorXd vectorHeatExtendScalar(
+    VectorHeatSolver& solver,
+    const std::vector<int>& sourceVertices,
+    const Eigen::VectorXd& sourceValues   // [nSources]
+);
+
+/** Logarithmic map at a source vertex: per-vertex 2D coordinates
+ *  (logX, logY) in the *source* vertex's tangent frame.
+ *
+ *  The norm √(logX² + logY²) is the geodesic distance from source
+ *  to that vertex; the angle atan2(logY, logX) is the direction
+ *  in source's frame. Equivalent to the exponential-map inverse
+ *  flattened around the source, useful for picking, brushing, and
+ *  any "distance + bearing from p" UI.
+ *
+ *  Strategy defaults to AffineLocal (Affine Heat Method, faster
+ *  and more accurate near source than the original VectorHeat
+ *  approach; the inner solver pre-factors and caches its
+ *  connection-Laplacian so repeated calls on different sources
+ *  amortize the factorization).
+ *
+ *  Returns:
+ *    - logCoords: [nV, 2] row-major (logX, logY)
+ *    - sourceE1, sourceE2: 3D world vectors of the source frame
+ *      so consumers can reconstruct world positions if needed
+ *      via  `position(v) ≈ source + logX·e1 + logY·e2`. */
+struct LogMapResult {
+    Eigen::MatrixXd logCoords;   // [nV, 2]
+    Eigen::Vector3d sourceE1;    // source vertex's tangent basis e1 in world
+    Eigen::Vector3d sourceE2;    // source vertex's tangent basis e2 in world
+};
+
+enum class LogMapStrategy {
+    VectorHeat = 0,      // original VHM paper (no prefactoring)
+    AffineLocal = 1,     // Affine Heat Method, prefactored, default
+    AffineAdaptive = 2,  // Affine Heat Method, no prefactor, most accurate
+};
+
+LogMapResult vectorHeatLogMap(
+    VectorHeatSolver& solver,
+    int sourceVertex,
+    LogMapStrategy strategy = LogMapStrategy::AffineLocal
+);
+
+/** Karcher mean / surface center of a set of source vertices.
+ *  Returns the 3D world position of the SurfacePoint that
+ *  minimizes ∑ d(p, source_i)^p (default p=2 → Karcher mean). */
+Eigen::Vector3d vectorHeatFindCenter(
+    VectorHeatSolver& solver,
+    const std::vector<int>& sourceVertices,
+    int p = 2
+);
+
+// ── Signed Heat Method (Feng & Crane 2024) ───────────────────
+//
+// Signed geodesic distance from a curve on the surface. Stateful
+// solver, same lifetime model as VectorHeatSolver. The curve is
+// expressed as a polyline of vertex indices; `isLoop` controls
+// whether the curve closes (last → first).
+//
+// Useful for region selection, flood fills, and morphological
+// operations on the mesh: positive distance one side of the
+// curve, negative the other. The level-set constraint keeps the
+// zero-set pinned exactly at the curve.
+
+class SignedHeatSolverImpl;
+class SignedHeatSolver {
+public:
+    explicit SignedHeatSolver(ComputeContext& ctx, double tCoef = 1.0);
+    ~SignedHeatSolver();
+    SignedHeatSolver(const SignedHeatSolver&) = delete;
+    SignedHeatSolver& operator=(const SignedHeatSolver&) = delete;
+
+    SignedHeatSolverImpl& impl();
+
+private:
+    std::unique_ptr<SignedHeatSolverImpl> impl_;
+};
+
+enum class SignedHeatLevelSet {
+    None = 0,        // unconstrained — curve may not lie exactly on the zero set
+    ZeroSet = 1,     // pin the zero level set to the curve (default)
+    Multiple = 2,    // pin each curve to its own level set
+};
+
+/** Signed geodesic distance from a curve to every vertex.
+ *
+ *  @param curveVertices  ordered vertex indices defining the curve polyline
+ *  @param isLoop         if true, edge from last → first is included
+ *  @param levelSet       which level-set constraint to enforce
+ *  @return               [nV] signed distances (sign convention follows
+ *                        the curve's orientation; flip the input order
+ *                        to flip the sign) */
+Eigen::VectorXd signedHeatDistance(
+    SignedHeatSolver& solver,
+    const std::vector<int>& curveVertices,
+    bool isLoop = true,
+    SignedHeatLevelSet levelSet = SignedHeatLevelSet::ZeroSet
+);
+
+// ── Smooth Direction Fields (NRoSy, Knöppel-Crane) ───────────
+//
+// Smoothest unit-norm direction field of order n via the
+// Knöppel-Crane formulation — minimizes Dirichlet energy on
+// the connection Laplacian, no prescribed singularities (they
+// emerge automatically). Distinct from `computeDirectionField`
+// above (which solves trivial connections with user-prescribed
+// singularities).
+//
+// nSym selects the symmetry order:
+//    1 → vector field (one direction per face)
+//    2 → line field (two opposite directions per face)
+//    4 → cross field (four directions, useful for quad meshing
+//                     and stripe patterns aligned to two axes)
+//
+// `alignToCurvature` returns the principal-curvature-aligned
+// field instead of pure smoothest (only meaningful for nSym ≥ 2).
+
+struct SmoothFieldResult {
+    Eigen::MatrixXd faceVectors;     // [nF, 3] world-space, per face
+    Eigen::MatrixXd vertexVectors;   // [nV, 3] world-space, per vertex
+    Eigen::VectorXd faceFieldRaw;    // [nF * 2] raw Vector2 in face tangent basis
+    Eigen::VectorXd vertexFieldRaw;  // [nV * 2] raw Vector2 in vertex tangent basis
+    int nSym;
+};
+
+/** Compute the smoothest face-based direction field. */
+Eigen::MatrixXd computeSmoothFaceField(
+    ComputeContext& ctx,
+    int nSym = 4,
+    bool alignToCurvature = false
+);
+
+/** Compute the smoothest vertex-based direction field (needed
+ *  as input to stripe patterns).
+ *  Returns the raw [nV * 2] Vector2 form alongside [nV, 3] world
+ *  vectors, since stripes consume the Vector2 form internally. */
+SmoothFieldResult computeSmoothVertexField(
+    ComputeContext& ctx,
+    int nSym = 2,
+    bool alignToCurvature = false
+);
+
+// ── Stripe Patterns (Knöppel-Crane SIGGRAPH 2015) ────────────
+//
+// Procedural sinusoidal stripes aligned to a 2-RoSy direction
+// field. Output is a list of 3D polyline segments (the zero
+// level set of the per-corner phase function), suitable for
+// drawing as three.js LineSegments.
+//
+// Frequencies control stripe spacing in oscillations per unit
+// edge length. A constant uniformFrequency is the common case;
+// pass per-vertex frequencies if you want curvature-modulated
+// striping.
+
+struct StripePatternResult {
+    Eigen::MatrixXd positions;   // [2 * segmentCount, 3] endpoint pairs
+    int segmentCount;
+};
+
+/** Stripe pattern with a uniform target frequency. The vertex
+ *  field must be 2-RoSy (use `computeSmoothVertexField(ctx, 2)`
+ *  or pass an existing line field). */
+StripePatternResult computeStripePattern(
+    ComputeContext& ctx,
+    const Eigen::VectorXd& vertexFieldRaw,  // [nV * 2] in vertex tangent basis
+    double uniformFrequency,
+    bool connectOnSingularities = true
+);
+
+/** Stripe pattern with per-vertex target frequencies. */
+StripePatternResult computeStripePatternFreq(
+    ComputeContext& ctx,
+    const Eigen::VectorXd& vertexFieldRaw,  // [nV * 2]
+    const Eigen::VectorXd& frequencies,     // [nV]
+    bool connectOnSingularities = true
+);
+
 // ── Direction Field Design (Trivial Connections) ─────────────
 
 struct DirectionFieldResult {

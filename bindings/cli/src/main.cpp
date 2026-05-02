@@ -90,9 +90,32 @@ int cmdSmoke() {
     auto eig = nxr::compute::solveEigenmodes(ops.stiffness, ops.mass, 6, -1e-8, ctrlCToken());
     eig.eigenvectors = nxr::compute::normalizeEigenmodes(eig.eigenvectors, ops.mass);
     eig = nxr::compute::removeDC(eig);
+
+    // Touch the new vector / signed heat / smooth field surfaces so the
+    // smoke catches link-time and basic-execution regressions across all
+    // four new families.
+    nxr::compute::VectorHeatSolver vhm(ctx);
+    Eigen::MatrixXd srcVec(1, 3); srcVec << 1.0, 0.0, 0.0;
+    Eigen::MatrixXd transported = nxr::compute::vectorHeatTransport(vhm, {0}, srcVec);
+    auto logmap = nxr::compute::vectorHeatLogMap(vhm, 0);
+    Eigen::Vector3d center = nxr::compute::vectorHeatFindCenter(vhm, {0, 1, 2});
+
+    nxr::compute::SignedHeatSolver shs(ctx);
+    Eigen::VectorXd sd = nxr::compute::signedHeatDistance(shs, {0, 1, 5}, true);
+
+    Eigen::MatrixXd faceField = nxr::compute::computeSmoothFaceField(ctx, 4);
+    auto vfield = nxr::compute::computeSmoothVertexField(ctx, 2);
+    auto stripes = nxr::compute::computeStripePattern(ctx, vfield.vertexFieldRaw, 8.0);
+
     const double dt = elapsedMs(t0);
 
     std::cout << "[smoke] icosahedron precompute in " << dt << " ms\n";
+    std::cout << "[smoke]   vhm transport vec[0]=" << transported.row(0)
+              << "  logmap rows=" << logmap.logCoords.rows()
+              << "  center=" << center.transpose() << "\n";
+    std::cout << "[smoke]   signedHeat range=[" << sd.minCoeff() << ", " << sd.maxCoeff() << "]\n";
+    std::cout << "[smoke]   smoothFaceField nF=" << faceField.rows()
+              << "  stripes segs=" << stripes.segmentCount << "\n";
     std::cout << "[smoke]   nV=" << ops.nV << "  nF=" << ops.nF
               << "  totalArea=" << ops.totalArea << "\n";
     std::cout << "[smoke]   eigenvalues (k=" << eig.k << " post-removeDC):";

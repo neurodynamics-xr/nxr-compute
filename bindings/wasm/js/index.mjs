@@ -146,6 +146,50 @@ function makeContextWrapper(raw) {
       return raw.generateRandomDecomposed1Form(alphaStrength, betaStrength, gammaStrength, seed)
     },
 
+    // Vector heat method (Sharp, Soliman, Crane 2019)
+    vectorHeatTransport(sourceVerts, sourceVectors) {
+      const sv = sourceVerts    instanceof Int32Array   ? sourceVerts    : new Int32Array(sourceVerts)
+      const vv = sourceVectors  instanceof Float64Array ? sourceVectors  : new Float64Array(sourceVectors)
+      return raw.vectorHeatTransport(sv, vv)
+    },
+    vectorHeatExtendScalar(sourceVerts, sourceValues) {
+      const sv = sourceVerts   instanceof Int32Array   ? sourceVerts   : new Int32Array(sourceVerts)
+      const sa = sourceValues  instanceof Float64Array ? sourceValues  : new Float64Array(sourceValues)
+      return raw.vectorHeatExtendScalar(sv, sa)
+    },
+    vectorHeatLogMap(sourceVertex, strategy = 1 /* AffineLocal */) {
+      return raw.vectorHeatLogMap(sourceVertex, strategy)
+    },
+    vectorHeatFindCenter(sourceVerts, p = 2) {
+      const sv = sourceVerts instanceof Int32Array ? sourceVerts : new Int32Array(sourceVerts)
+      return raw.vectorHeatFindCenter(sv, p)
+    },
+
+    // Signed heat method (Feng & Crane 2024)
+    signedHeatDistance(curveVerts, isLoop = true, levelSet = 1 /* ZeroSet */) {
+      const cv = curveVerts instanceof Int32Array ? curveVerts : new Int32Array(curveVerts)
+      return raw.signedHeatDistance(cv, isLoop, levelSet)
+    },
+
+    // Smooth direction fields (Knöppel-Crane)
+    computeSmoothFaceField(nSym = 4, alignToCurvature = false) {
+      return raw.computeSmoothFaceField(nSym, alignToCurvature)
+    },
+    computeSmoothVertexField(nSym = 2, alignToCurvature = false) {
+      return raw.computeSmoothVertexField(nSym, alignToCurvature)
+    },
+
+    // Stripe patterns (Knöppel-Crane SIGGRAPH 2015)
+    computeStripePattern(vertexFieldRaw, uniformFrequency, connectOnSingularities = true) {
+      const vf = vertexFieldRaw instanceof Float64Array ? vertexFieldRaw : new Float64Array(vertexFieldRaw)
+      return raw.computeStripePattern(vf, uniformFrequency, connectOnSingularities)
+    },
+    computeStripePatternFreq(vertexFieldRaw, frequencies, connectOnSingularities = true) {
+      const vf = vertexFieldRaw instanceof Float64Array ? vertexFieldRaw : new Float64Array(vertexFieldRaw)
+      const fr = frequencies    instanceof Float64Array ? frequencies    : new Float64Array(frequencies)
+      return raw.computeStripePatternFreq(vf, fr, connectOnSingularities)
+    },
+
     /** Release WASM heap memory for this context. After delete(),
      *  the wrapper is unusable; create a fresh context for new work. */
     delete: () => raw.delete(),

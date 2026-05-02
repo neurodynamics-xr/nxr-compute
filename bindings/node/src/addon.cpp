@@ -123,6 +123,8 @@ struct ContextHolder {
     std::shared_ptr<DECOperators> dec;      // cached after first DEC call
     std::shared_ptr<CholeskyCache> factors;   // pre-factored Cholesky/LU, lazy
     std::shared_ptr<EigenResult> eigenmodes; // populated by EigenSolveWorker
+    std::shared_ptr<VectorHeatSolver> vhm;   // lazy
+    std::shared_ptr<SignedHeatSolver> shs;   // lazy
 };
 
 static void FinalizeContext(Napi::Env env, ContextHolder* holder) {
@@ -700,6 +702,197 @@ Napi::Value GenerateDampedWave(const Napi::CallbackInfo& info) {
     return result;
 }
 
+// ─── Vector heat method ──────────────────────────────────────
+
+static void ensureVHM(ContextHolder* holder) {
+    if (!holder->vhm) {
+        holder->vhm = std::make_shared<VectorHeatSolver>(*holder->ctx);
+    }
+}
+static void ensureSHS(ContextHolder* holder) {
+    if (!holder->shs) {
+        holder->shs = std::make_shared<SignedHeatSolver>(*holder->ctx);
+    }
+}
+
+Napi::Value VectorHeatTransport(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);
+    if (!holder) return env.Null();
+
+    auto vertsArr = info[1].As<Napi::Int32Array>();
+    auto vecsArr  = info[2].As<Napi::Float64Array>();
+    int n = static_cast<int>(vertsArr.ElementLength());
+    if (vecsArr.ElementLength() != static_cast<size_t>(n) * 3) {
+        Napi::TypeError::New(env, "sourceVectors must be Nx3 (length 3*sources)").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+    std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + n);
+    Eigen::MatrixXd S(n, 3);
+    const double* vd = vecsArr.Data();
+    for (int i = 0; i < n; i++) {
+        S(i, 0) = vd[i * 3 + 0];
+        S(i, 1) = vd[i * 3 + 1];
+        S(i, 2) = vd[i * 3 + 2];
+    }
+
+    ensureVHM(holder);
+    Eigen::MatrixXd out = vectorHeatTransport(*holder->vhm, verts, S);
+    return matrixToFloat64Array(env, out);
+}
+
+Napi::Value VectorHeatExtendScalar(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);
+    if (!holder) return env.Null();
+
+    auto vertsArr = info[1].As<Napi::Int32Array>();
+    auto valsArr  = info[2].As<Napi::Float64Array>();
+    int n = static_cast<int>(vertsArr.ElementLength());
+    if (valsArr.ElementLength() != static_cast<size_t>(n)) {
+        Napi::TypeError::New(env, "sourceVerts and sourceValues must have the same length").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+    std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + n);
+    Eigen::VectorXd vals(n);
+    std::memcpy(vals.data(), valsArr.Data(), n * sizeof(double));
+
+    ensureVHM(holder);
+    Eigen::VectorXd out = vectorHeatExtendScalar(*holder->vhm, verts, vals);
+    return toFloat64Array(env, out);
+}
+
+Napi::Value VectorHeatLogMap(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);
+    if (!holder) return env.Null();
+
+    int sourceVertex = info[1].As<Napi::Number>().Int32Value();
+    int strategyInt  = info.Length() > 2
+        ? info[2].As<Napi::Number>().Int32Value()
+        : static_cast<int>(LogMapStrategy::AffineLocal);
+    auto strategy = static_cast<LogMapStrategy>(strategyInt);
+
+    ensureVHM(holder);
+    LogMapResult r = vectorHeatLogMap(*holder->vhm, sourceVertex, strategy);
+
+    auto obj = Napi::Object::New(env);
+    obj.Set("logCoords", matrixToFloat64Array(env, r.logCoords));
+    auto e1 = Napi::Float64Array::New(env, 3);
+    auto e2 = Napi::Float64Array::New(env, 3);
+    for (int i = 0; i < 3; i++) {
+        e1[i] = r.sourceE1(i);
+        e2[i] = r.sourceE2(i);
+    }
+    obj.Set("sourceE1", e1);
+    obj.Set("sourceE2", e2);
+    return obj;
+}
+
+Napi::Value VectorHeatFindCenter(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);
+    if (!holder) return env.Null();
+
+    auto vertsArr = info[1].As<Napi::Int32Array>();
+    int p = info.Length() > 2 ? info[2].As<Napi::Number>().Int32Value() : 2;
+    std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + vertsArr.ElementLength());
+
+    ensureVHM(holder);
+    Eigen::Vector3d c = vectorHeatFindCenter(*holder->vhm, verts, p);
+    auto out = Napi::Float64Array::New(env, 3);
+    out[0] = c.x(); out[1] = c.y(); out[2] = c.z();
+    return out;
+}
+
+// ─── Signed heat method ──────────────────────────────────────
+
+Napi::Value SignedHeatDistance(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);
+    if (!holder) return env.Null();
+
+    auto vertsArr = info[1].As<Napi::Int32Array>();
+    bool isLoop = info.Length() > 2 ? info[2].As<Napi::Boolean>().Value() : true;
+    int  lsInt  = info.Length() > 3
+        ? info[3].As<Napi::Number>().Int32Value()
+        : static_cast<int>(SignedHeatLevelSet::ZeroSet);
+    auto ls = static_cast<SignedHeatLevelSet>(lsInt);
+
+    std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + vertsArr.ElementLength());
+
+    ensureSHS(holder);
+    Eigen::VectorXd out = signedHeatDistance(*holder->shs, verts, isLoop, ls);
+    return toFloat64Array(env, out);
+}
+
+// ─── Smooth direction fields ────────────────────────────────
+
+Napi::Value ComputeSmoothFaceField(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);
+    if (!holder) return env.Null();
+
+    int  nSym             = info.Length() > 1 ? info[1].As<Napi::Number>().Int32Value() : 4;
+    bool alignToCurvature = info.Length() > 2 ? info[2].As<Napi::Boolean>().Value()     : false;
+
+    Eigen::MatrixXd v = computeSmoothFaceField(*holder->ctx, nSym, alignToCurvature);
+    return matrixToFloat64Array(env, v);
+}
+
+Napi::Value ComputeSmoothVertexField(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);
+    if (!holder) return env.Null();
+
+    int  nSym             = info.Length() > 1 ? info[1].As<Napi::Number>().Int32Value() : 2;
+    bool alignToCurvature = info.Length() > 2 ? info[2].As<Napi::Boolean>().Value()     : false;
+
+    SmoothFieldResult r = computeSmoothVertexField(*holder->ctx, nSym, alignToCurvature);
+    auto obj = Napi::Object::New(env);
+    obj.Set("vertexVectors",  matrixToFloat64Array(env, r.vertexVectors));
+    obj.Set("vertexFieldRaw", toFloat64Array(env, r.vertexFieldRaw));
+    obj.Set("nSym", Napi::Number::New(env, r.nSym));
+    return obj;
+}
+
+// ─── Stripe patterns ────────────────────────────────────────
+
+Napi::Value ComputeStripePattern(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);
+    if (!holder) return env.Null();
+
+    auto fieldArr = info[1].As<Napi::Float64Array>();
+    Eigen::VectorXd raw = toVectorXd(fieldArr);
+    double freq   = info[2].As<Napi::Number>().DoubleValue();
+    bool   connect = info.Length() > 3 ? info[3].As<Napi::Boolean>().Value() : true;
+
+    StripePatternResult r = computeStripePattern(*holder->ctx, raw, freq, connect);
+    auto obj = Napi::Object::New(env);
+    obj.Set("positions",    matrixToFloat64Array(env, r.positions));
+    obj.Set("segmentCount", Napi::Number::New(env, r.segmentCount));
+    return obj;
+}
+
+Napi::Value ComputeStripePatternFreq(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);
+    if (!holder) return env.Null();
+
+    auto fieldArr = info[1].As<Napi::Float64Array>();
+    auto freqsArr = info[2].As<Napi::Float64Array>();
+    Eigen::VectorXd raw   = toVectorXd(fieldArr);
+    Eigen::VectorXd freqs = toVectorXd(freqsArr);
+    bool connect = info.Length() > 3 ? info[3].As<Napi::Boolean>().Value() : true;
+
+    StripePatternResult r = computeStripePatternFreq(*holder->ctx, raw, freqs, connect);
+    auto obj = Napi::Object::New(env);
+    obj.Set("positions",    matrixToFloat64Array(env, r.positions));
+    obj.Set("segmentCount", Napi::Number::New(env, r.segmentCount));
+    return obj;
+}
+
 // ─── Module Init ─────────────────────────────────────────────
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -719,6 +912,19 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("traceStreamlines", Napi::Function::New(env, TraceStreamlines));
     exports.Set("generateHeatDiffusion", Napi::Function::New(env, GenerateHeatDiffusion));
     exports.Set("generateDampedWave", Napi::Function::New(env, GenerateDampedWave));
+    // Vector heat method
+    exports.Set("vectorHeatTransport",    Napi::Function::New(env, VectorHeatTransport));
+    exports.Set("vectorHeatExtendScalar", Napi::Function::New(env, VectorHeatExtendScalar));
+    exports.Set("vectorHeatLogMap",       Napi::Function::New(env, VectorHeatLogMap));
+    exports.Set("vectorHeatFindCenter",   Napi::Function::New(env, VectorHeatFindCenter));
+    // Signed heat method
+    exports.Set("signedHeatDistance",     Napi::Function::New(env, SignedHeatDistance));
+    // Smooth direction fields
+    exports.Set("computeSmoothFaceField",   Napi::Function::New(env, ComputeSmoothFaceField));
+    exports.Set("computeSmoothVertexField", Napi::Function::New(env, ComputeSmoothVertexField));
+    // Stripe patterns
+    exports.Set("computeStripePattern",     Napi::Function::New(env, ComputeStripePattern));
+    exports.Set("computeStripePatternFreq", Napi::Function::New(env, ComputeStripePatternFreq));
     return exports;
 }
 

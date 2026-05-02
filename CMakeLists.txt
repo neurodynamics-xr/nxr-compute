@@ -55,6 +55,10 @@ add_library(nxr_compute STATIC
   src/face_frames.cpp
   src/geodesic_path.cpp
   src/parametrization.cpp
+  src/vector_heat.cpp
+  src/signed_heat.cpp
+  src/smooth_field.cpp
+  src/stripe_patterns.cpp
 )
 
 target_include_directories(nxr_compute PUBLIC
@@ -142,4 +146,8 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_graph_agnostic test/test_graph_agnostic.cpp)
     target_link_libraries(test_graph_agnostic PRIVATE nxr_compute)
     add_test(NAME test_graph_agnostic COMMAND test_graph_agnostic)
+
+    add_executable(test_geometry_central_extras test/test_geometry_central_extras.cpp)
+    target_link_libraries(test_geometry_central_extras PRIVATE nxr_compute)
+    add_test(NAME test_geometry_central_extras COMMAND test_geometry_central_extras)
 endif()
