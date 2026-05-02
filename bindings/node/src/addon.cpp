@@ -16,9 +16,49 @@
 #include <cstring>
 #include <memory>
 #include <map>
+#include <string>
 #include <vector>
 
 using namespace nxr::compute;
+
+// ─── Synchronous error translation ──────────────────────────
+//
+// Every synchronous N-API entry point catches nxr::compute::Error
+// and re-raises as a Napi::Error decorated with the structured
+// fields the AsyncWorker path already exposes:
+//
+//   • .code  — string-named ErrorCode enumerator (e.g. "INVALID_INPUT")
+//   • .hint  — diagnostic hint, when the source set one
+//   • message — "[CODE] message [| hint: ...]" so plain catch-all
+//                handlers still see a useful string.
+//
+// Without this, the C++ exception escapes Embind's default handler
+// and JS sees an Error with the raw message but no .code, which
+// breaks `if (err.code === 'INVALID_INPUT')` consumers who expect
+// the same contract the AsyncWorker eigensolve path already honours.
+//
+// Use as: return nxrSyncCall(env, [&] -> Napi::Value { ... });
+template <typename Fn>
+static Napi::Value nxrSyncCall(Napi::Env env, Fn&& fn) {
+    try {
+        return fn();
+    } catch (const nxr::compute::Error& e) {
+        std::string codeName(nxr::compute::errorCodeName(e.code()));
+        std::string hint(e.hint());
+        std::string msg = "[" + codeName + "] " + e.what();
+        if (!hint.empty()) msg += " | hint: " + hint;
+        Napi::Error err = Napi::Error::New(env, msg);
+        err.Set("code", Napi::String::New(env, codeName));
+        if (!hint.empty()) err.Set("hint", Napi::String::New(env, hint));
+        err.ThrowAsJavaScriptException();
+        return env.Null();
+    } catch (const std::exception& e) {
+        Napi::Error err = Napi::Error::New(env, e.what());
+        err.Set("code", Napi::String::New(env, "INTERNAL_ERROR"));
+        err.ThrowAsJavaScriptException();
+        return env.Null();
+    }
+}
 
 // ─── Helpers: TypedArray ↔ Eigen conversion ──────────────────
 
@@ -171,21 +211,22 @@ Napi::Value AssembleMeshOperators(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        holder->ops = std::make_shared<MeshOperators>(
+            assembleMeshOperators(*holder->ctx)
+        );
+        const auto& ops = *holder->ops;
 
-    holder->ops = std::make_shared<MeshOperators>(
-        assembleMeshOperators(*holder->ctx)
-    );
-    const auto& ops = *holder->ops;
-
-    auto result = Napi::Object::New(env);
-    result.Set("stiffness", sparseToCOO(env, ops.stiffness));
-    result.Set("massDiag", toFloat64Array(env, ops.vertexAreas));
-    result.Set("normals", matrixToFloat64Array(env, ops.normals));
-    result.Set("totalArea", Napi::Number::New(env, ops.totalArea));
-    result.Set("nV", Napi::Number::New(env, ops.nV));
-    result.Set("nE", Napi::Number::New(env, ops.nE));
-    result.Set("nF", Napi::Number::New(env, ops.nF));
-    return result;
+        auto result = Napi::Object::New(env);
+        result.Set("stiffness", sparseToCOO(env, ops.stiffness));
+        result.Set("massDiag", toFloat64Array(env, ops.vertexAreas));
+        result.Set("normals", matrixToFloat64Array(env, ops.normals));
+        result.Set("totalArea", Napi::Number::New(env, ops.totalArea));
+        result.Set("nV", Napi::Number::New(env, ops.nV));
+        result.Set("nE", Napi::Number::New(env, ops.nE));
+        result.Set("nF", Napi::Number::New(env, ops.nF));
+        return result;
+    });
 }
 
 // ─── assembleDECOperators(ctx) → { d0, d1, hodge1, hodge1Inv } ───
@@ -194,17 +235,18 @@ Napi::Value AssembleDECOperators(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        holder->dec = std::make_shared<DECOperators>(
+            assembleDECOperators(*holder->ctx)
+        );
+        const auto& dec = *holder->dec;
 
-    holder->dec = std::make_shared<DECOperators>(
-        assembleDECOperators(*holder->ctx)
-    );
-    const auto& dec = *holder->dec;
-
-    auto result = Napi::Object::New(env);
-    result.Set("d0", sparseToCOO(env, dec.d0));
-    result.Set("d1", sparseToCOO(env, dec.d1));
-    result.Set("hodge1", sparseDiagonalToFloat64Array(env, dec.hodge1));
-    return result;
+        auto result = Napi::Object::New(env);
+        result.Set("d0", sparseToCOO(env, dec.d0));
+        result.Set("d1", sparseToCOO(env, dec.d1));
+        result.Set("hodge1", sparseDiagonalToFloat64Array(env, dec.hodge1));
+        return result;
+    });
 }
 
 // ─── solveEigenmodes(ctx, k, cancelArr?, progressArr?) ───────
@@ -372,23 +414,24 @@ Napi::Value SolvePoisson(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        auto vertsArr = info[1].As<Napi::Int32Array>();
+        auto valuesArr = info[2].As<Napi::Float64Array>();
 
-    auto vertsArr = info[1].As<Napi::Int32Array>();
-    auto valuesArr = info[2].As<Napi::Float64Array>();
+        if (!holder->ops) {
+            holder->ops = std::make_shared<MeshOperators>(
+                assembleMeshOperators(*holder->ctx)
+            );
+        }
 
-    if (!holder->ops) {
-        holder->ops = std::make_shared<MeshOperators>(
-            assembleMeshOperators(*holder->ctx)
-        );
-    }
+        std::map<int, double> densityMap;
+        for (size_t i = 0; i < vertsArr.ElementLength(); i++) {
+            densityMap[vertsArr[i]] = valuesArr[i];
+        }
 
-    std::map<int, double> densityMap;
-    for (size_t i = 0; i < vertsArr.ElementLength(); i++) {
-        densityMap[vertsArr[i]] = valuesArr[i];
-    }
-
-    Eigen::VectorXd phi = solvePoisson(*holder->ops, *holder->factors, densityMap);
-    return toFloat64Array(env, phi);
+        Eigen::VectorXd phi = solvePoisson(*holder->ops, *holder->factors, densityMap);
+        return toFloat64Array(env, phi);
+    });
 }
 
 // ─── computeGeodesicDistance(ctx, sourceVertices) ────────────
@@ -397,16 +440,17 @@ Napi::Value ComputeGeodesicDistance(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        auto sourcesArr = info[1].As<Napi::Int32Array>();
+        std::vector<int> sources;
+        sources.reserve(sourcesArr.ElementLength());
+        for (size_t i = 0; i < sourcesArr.ElementLength(); i++) {
+            sources.push_back(sourcesArr[i]);
+        }
 
-    auto sourcesArr = info[1].As<Napi::Int32Array>();
-    std::vector<int> sources;
-    sources.reserve(sourcesArr.ElementLength());
-    for (size_t i = 0; i < sourcesArr.ElementLength(); i++) {
-        sources.push_back(sourcesArr[i]);
-    }
-
-    Eigen::VectorXd dists = computeGeodesicDistance(*holder->ctx, sources);
-    return toFloat64Array(env, dists);
+        Eigen::VectorXd dists = computeGeodesicDistance(*holder->ctx, sources);
+        return toFloat64Array(env, dists);
+    });
 }
 
 // ─── hodgeDecompose(ctx, omega?) — returns all scalars + vectors ─
@@ -415,39 +459,40 @@ Napi::Value HodgeDecompose(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        if (!holder->dec) {
+            holder->dec = std::make_shared<DECOperators>(
+                assembleDECOperators(*holder->ctx)
+            );
+        }
 
-    if (!holder->dec) {
-        holder->dec = std::make_shared<DECOperators>(
-            assembleDECOperators(*holder->ctx)
-        );
-    }
+        // Use provided omega or generate random
+        Eigen::VectorXd omega;
+        if (info.Length() > 1 && info[1].IsTypedArray()) {
+            omega = toVectorXd(info[1].As<Napi::Float64Array>());
+        } else {
+            omega = generateRandomOmega(holder->ctx->nE());
+        }
 
-    // Use provided omega or generate random
-    Eigen::VectorXd omega;
-    if (info.Length() > 1 && info[1].IsTypedArray()) {
-        omega = toVectorXd(info[1].As<Napi::Float64Array>());
-    } else {
-        omega = generateRandomOmega(holder->ctx->nE());
-    }
+        HodgeResult result = hodgeDecompose(*holder->ctx, *holder->dec, *holder->factors, omega);
 
-    HodgeResult result = hodgeDecompose(*holder->ctx, *holder->dec, *holder->factors, omega);
-
-    auto obj = Napi::Object::New(env);
-    // Scalar potentials
-    obj.Set("alpha", toFloat64Array(env, result.exactPotential));
-    obj.Set("beta", toFloat64Array(env, result.coExactPotentialV));
-    obj.Set("combined", toFloat64Array(env, result.combinedPotential));
-    // Input 1-form and its components
-    obj.Set("omega", toFloat64Array(env, result.omega));
-    obj.Set("dAlpha", toFloat64Array(env, result.dAlpha));
-    obj.Set("deltaBeta", toFloat64Array(env, result.deltaBeta));
-    obj.Set("gamma", toFloat64Array(env, result.gamma));
-    // Face-centered vector fields [nF * 3]
-    obj.Set("omegaVectors", matrixToFloat64Array(env, result.omegaVectors));
-    obj.Set("dAlphaVectors", matrixToFloat64Array(env, result.dAlphaVectors));
-    obj.Set("deltaBetaVectors", matrixToFloat64Array(env, result.deltaBetaVectors));
-    obj.Set("gammaVectors", matrixToFloat64Array(env, result.gammaVectors));
-    return obj;
+        auto obj = Napi::Object::New(env);
+        // Scalar potentials
+        obj.Set("alpha", toFloat64Array(env, result.exactPotential));
+        obj.Set("beta", toFloat64Array(env, result.coExactPotentialV));
+        obj.Set("combined", toFloat64Array(env, result.combinedPotential));
+        // Input 1-form and its components
+        obj.Set("omega", toFloat64Array(env, result.omega));
+        obj.Set("dAlpha", toFloat64Array(env, result.dAlpha));
+        obj.Set("deltaBeta", toFloat64Array(env, result.deltaBeta));
+        obj.Set("gamma", toFloat64Array(env, result.gamma));
+        // Face-centered vector fields [nF * 3]
+        obj.Set("omegaVectors", matrixToFloat64Array(env, result.omegaVectors));
+        obj.Set("dAlphaVectors", matrixToFloat64Array(env, result.dAlphaVectors));
+        obj.Set("deltaBetaVectors", matrixToFloat64Array(env, result.deltaBetaVectors));
+        obj.Set("gammaVectors", matrixToFloat64Array(env, result.gammaVectors));
+        return obj;
+    });
 }
 
 // ─── computeCurvatures(ctx) → { gaussian, mean, kMin, kMax, principalDir } ──
@@ -456,16 +501,17 @@ Napi::Value ComputeCurvatures(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        CurvatureResult result = computeCurvatures(*holder->ctx);
 
-    CurvatureResult result = computeCurvatures(*holder->ctx);
-
-    auto obj = Napi::Object::New(env);
-    obj.Set("gaussian", toFloat64Array(env, result.gaussian));
-    obj.Set("mean", toFloat64Array(env, result.mean));
-    obj.Set("kMin", toFloat64Array(env, result.kMin));
-    obj.Set("kMax", toFloat64Array(env, result.kMax));
-    obj.Set("principalDir", matrixToFloat64Array(env, result.principalDirMax));
-    return obj;
+        auto obj = Napi::Object::New(env);
+        obj.Set("gaussian", toFloat64Array(env, result.gaussian));
+        obj.Set("mean", toFloat64Array(env, result.mean));
+        obj.Set("kMin", toFloat64Array(env, result.kMin));
+        obj.Set("kMax", toFloat64Array(env, result.kMax));
+        obj.Set("principalDir", matrixToFloat64Array(env, result.principalDirMax));
+        return obj;
+    });
 }
 
 // ─── computeVertexNormals(ctx, type) → Float64Array [nV*3] ──
@@ -474,12 +520,13 @@ Napi::Value ComputeVertexNormals(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        int typeInt = info.Length() > 1 ? info[1].As<Napi::Number>().Int32Value() : 0;
+        NormalType type = static_cast<NormalType>(typeInt);
 
-    int typeInt = info.Length() > 1 ? info[1].As<Napi::Number>().Int32Value() : 0;
-    NormalType type = static_cast<NormalType>(typeInt);
-
-    Eigen::MatrixXd normals = computeVertexNormals(*holder->ctx, type);
-    return matrixToFloat64Array(env, normals);
+        Eigen::MatrixXd normals = computeVertexNormals(*holder->ctx, type);
+        return matrixToFloat64Array(env, normals);
+    });
 }
 
 // ─── whitneyInterpolate(ctx, oneForm) → Float64Array [nF*3] ──
@@ -488,18 +535,19 @@ Napi::Value WhitneyInterpolate(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        auto oneFormArr = info[1].As<Napi::Float64Array>();
+        Eigen::VectorXd oneForm = toVectorXd(oneFormArr);
 
-    auto oneFormArr = info[1].As<Napi::Float64Array>();
-    Eigen::VectorXd oneForm = toVectorXd(oneFormArr);
+        if (!holder->dec) {
+            holder->dec = std::make_shared<DECOperators>(
+                assembleDECOperators(*holder->ctx)
+            );
+        }
 
-    if (!holder->dec) {
-        holder->dec = std::make_shared<DECOperators>(
-            assembleDECOperators(*holder->ctx)
-        );
-    }
-
-    Eigen::MatrixXd vectors = whitneyInterpolate(*holder->ctx, *holder->dec, oneForm);
-    return matrixToFloat64Array(env, vectors);
+        Eigen::MatrixXd vectors = whitneyInterpolate(*holder->ctx, *holder->dec, oneForm);
+        return matrixToFloat64Array(env, vectors);
+    });
 }
 
 // ─── scalarGradient(ctx, vertexScalars) → Float64Array [nF*3] ──
@@ -508,12 +556,13 @@ Napi::Value ScalarGradient(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        auto scalarsArr = info[1].As<Napi::Float64Array>();
+        Eigen::VectorXd scalars = toVectorXd(scalarsArr);
 
-    auto scalarsArr = info[1].As<Napi::Float64Array>();
-    Eigen::VectorXd scalars = toVectorXd(scalarsArr);
-
-    Eigen::MatrixXd gradient = scalarGradient(*holder->ctx, scalars);
-    return matrixToFloat64Array(env, gradient);
+        Eigen::MatrixXd gradient = scalarGradient(*holder->ctx, scalars);
+        return matrixToFloat64Array(env, gradient);
+    });
 }
 
 // ─── computeIsolines(ctx, scalars, numLevels, min, max) → { positions, count } ──
@@ -522,20 +571,21 @@ Napi::Value ComputeIsolines(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        auto scalarsArr = info[1].As<Napi::Float64Array>();
+        Eigen::VectorXd scalars = toVectorXd(scalarsArr);
 
-    auto scalarsArr = info[1].As<Napi::Float64Array>();
-    Eigen::VectorXd scalars = toVectorXd(scalarsArr);
+        int numLevels = info.Length() > 2 ? info[2].As<Napi::Number>().Int32Value() : 20;
+        double minVal = info.Length() > 3 ? info[3].As<Napi::Number>().DoubleValue() : 0.0;
+        double maxVal = info.Length() > 4 ? info[4].As<Napi::Number>().DoubleValue() : 0.0;
 
-    int numLevels = info.Length() > 2 ? info[2].As<Napi::Number>().Int32Value() : 20;
-    double minVal = info.Length() > 3 ? info[3].As<Napi::Number>().DoubleValue() : 0.0;
-    double maxVal = info.Length() > 4 ? info[4].As<Napi::Number>().DoubleValue() : 0.0;
+        IsolineResult result = computeIsolines(*holder->ctx, scalars, numLevels, minVal, maxVal);
 
-    IsolineResult result = computeIsolines(*holder->ctx, scalars, numLevels, minVal, maxVal);
-
-    auto obj = Napi::Object::New(env);
-    obj.Set("positions", matrixToFloat64Array(env, result.positions));
-    obj.Set("segmentCount", Napi::Number::New(env, result.segmentCount));
-    return obj;
+        auto obj = Napi::Object::New(env);
+        obj.Set("positions", matrixToFloat64Array(env, result.positions));
+        obj.Set("segmentCount", Napi::Number::New(env, result.segmentCount));
+        return obj;
+    });
 }
 
 // ─── computeDirectionField(ctx, singVerts, singValues) → { ... } ──
@@ -544,30 +594,31 @@ Napi::Value ComputeDirectionField(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        auto vertsArr = info[1].As<Napi::Int32Array>();
+        auto valsArr = info[2].As<Napi::Float64Array>();
 
-    auto vertsArr = info[1].As<Napi::Int32Array>();
-    auto valsArr = info[2].As<Napi::Float64Array>();
+        if (!holder->dec) {
+            holder->dec = std::make_shared<DECOperators>(
+                assembleDECOperators(*holder->ctx)
+            );
+        }
 
-    if (!holder->dec) {
-        holder->dec = std::make_shared<DECOperators>(
-            assembleDECOperators(*holder->ctx)
-        );
-    }
+        std::map<int, double> singMap;
+        for (size_t i = 0; i < vertsArr.ElementLength(); i++) {
+            singMap[vertsArr[i]] = valsArr[i];
+        }
 
-    std::map<int, double> singMap;
-    for (size_t i = 0; i < vertsArr.ElementLength(); i++) {
-        singMap[vertsArr[i]] = valsArr[i];
-    }
+        DirectionFieldResult result = computeDirectionField(*holder->ctx, *holder->dec, *holder->factors, singMap);
 
-    DirectionFieldResult result = computeDirectionField(*holder->ctx, *holder->dec, *holder->factors, singMap);
-
-    auto obj = Napi::Object::New(env);
-    obj.Set("connections", toFloat64Array(env, result.connections));
-    obj.Set("directionVectors", matrixToFloat64Array(env, result.directionVectors));
-    obj.Set("orthogonalVectors", matrixToFloat64Array(env, result.orthogonalVectors));
-    obj.Set("eulerCharacteristic", Napi::Number::New(env, result.eulerCharacteristic));
-    obj.Set("gaussBonnetSatisfied", Napi::Boolean::New(env, result.gaussBonnetSatisfied));
-    return obj;
+        auto obj = Napi::Object::New(env);
+        obj.Set("connections", toFloat64Array(env, result.connections));
+        obj.Set("directionVectors", matrixToFloat64Array(env, result.directionVectors));
+        obj.Set("orthogonalVectors", matrixToFloat64Array(env, result.orthogonalVectors));
+        obj.Set("eulerCharacteristic", Napi::Number::New(env, result.eulerCharacteristic));
+        obj.Set("gaussBonnetSatisfied", Napi::Boolean::New(env, result.gaussBonnetSatisfied));
+        return obj;
+    });
 }
 
 // ─── traceStreamlines(ctx, faceField, numSeeds, stepCoef, maxSteps) → { positions, count } ──
@@ -576,27 +627,28 @@ Napi::Value TraceStreamlines(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        auto fieldArr = info[1].As<Napi::Float64Array>();
+        int nF = holder->ctx->nF();
+        Eigen::MatrixXd faceField(nF, 3);
+        const double* data = fieldArr.Data();
+        for (int i = 0; i < nF; i++) {
+            faceField(i, 0) = data[i * 3 + 0];
+            faceField(i, 1) = data[i * 3 + 1];
+            faceField(i, 2) = data[i * 3 + 2];
+        }
 
-    auto fieldArr = info[1].As<Napi::Float64Array>();
-    int nF = holder->ctx->nF();
-    Eigen::MatrixXd faceField(nF, 3);
-    const double* data = fieldArr.Data();
-    for (int i = 0; i < nF; i++) {
-        faceField(i, 0) = data[i * 3 + 0];
-        faceField(i, 1) = data[i * 3 + 1];
-        faceField(i, 2) = data[i * 3 + 2];
-    }
+        int numSeeds = info.Length() > 2 ? info[2].As<Napi::Number>().Int32Value() : 15;
+        double stepCoef = info.Length() > 3 ? info[3].As<Napi::Number>().DoubleValue() : 0.15;
+        int maxSteps = info.Length() > 4 ? info[4].As<Napi::Number>().Int32Value() : 1000;
 
-    int numSeeds = info.Length() > 2 ? info[2].As<Napi::Number>().Int32Value() : 15;
-    double stepCoef = info.Length() > 3 ? info[3].As<Napi::Number>().DoubleValue() : 0.15;
-    int maxSteps = info.Length() > 4 ? info[4].As<Napi::Number>().Int32Value() : 1000;
+        StreamlineResult result = traceStreamlines(*holder->ctx, faceField, numSeeds, stepCoef, maxSteps);
 
-    StreamlineResult result = traceStreamlines(*holder->ctx, faceField, numSeeds, stepCoef, maxSteps);
-
-    auto obj = Napi::Object::New(env);
-    obj.Set("positions", matrixToFloat64Array(env, result.positions));
-    obj.Set("segmentCount", Napi::Number::New(env, result.segmentCount));
-    return obj;
+        auto obj = Napi::Object::New(env);
+        obj.Set("positions", matrixToFloat64Array(env, result.positions));
+        obj.Set("segmentCount", Napi::Number::New(env, result.segmentCount));
+        return obj;
+    });
 }
 
 // ─── generateHeatDiffusion(ctx, {sources, timesteps, alpha}) ────
@@ -608,46 +660,46 @@ Napi::Value GenerateHeatDiffusion(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        if (!holder->eigenmodes) {
+            throw nxr::compute::Error(nxr::compute::ErrorCode::NotPrecomputed,
+                "generateHeatDiffusion: eigenmodes not computed",
+                "call solveEigenmodes first");
+        }
+        if (!holder->ops) {
+            holder->ops = std::make_shared<MeshOperators>(
+                assembleMeshOperators(*holder->ctx)
+            );
+        }
 
-    if (!holder->eigenmodes) {
-        Napi::Error::New(env,
-            "generateHeatDiffusion: eigenmodes not computed; "
-            "call solveEigenmodes first").ThrowAsJavaScriptException();
-        return env.Null();
-    }
-    if (!holder->ops) {
-        holder->ops = std::make_shared<MeshOperators>(
-            assembleMeshOperators(*holder->ctx)
+        // args[1] = options object
+        auto opts = info[1].As<Napi::Object>();
+        auto sourceVertsArr = opts.Get("sourceVerts").As<Napi::Int32Array>();
+        auto sourceValuesArr = opts.Get("sourceValues").As<Napi::Float64Array>();
+        auto timestepsArr = opts.Get("timesteps").As<Napi::Float64Array>();
+        double alpha = opts.Get("alpha").As<Napi::Number>().DoubleValue();
+
+        int nV = holder->ctx->nV();
+        std::map<int, double> sourcesMap;
+        for (size_t i = 0; i < sourceVertsArr.ElementLength(); i++) {
+            sourcesMap[sourceVertsArr[i]] = sourceValuesArr[i];
+        }
+        Eigen::VectorXd u0 = generateDelta(nV, sourcesMap);
+
+        std::vector<double> timesteps(
+            timestepsArr.Data(),
+            timestepsArr.Data() + timestepsArr.ElementLength()
         );
-    }
 
-    // args[1] = options object
-    auto opts = info[1].As<Napi::Object>();
-    auto sourceVertsArr = opts.Get("sourceVerts").As<Napi::Int32Array>();
-    auto sourceValuesArr = opts.Get("sourceValues").As<Napi::Float64Array>();
-    auto timestepsArr = opts.Get("timesteps").As<Napi::Float64Array>();
-    double alpha = opts.Get("alpha").As<Napi::Number>().DoubleValue();
+        Eigen::MatrixXf field = generateHeatDiffusion(
+            *holder->ops, *holder->eigenmodes, u0, timesteps, alpha);
 
-    int nV = holder->ctx->nV();
-    std::map<int, double> sourcesMap;
-    for (size_t i = 0; i < sourceVertsArr.ElementLength(); i++) {
-        sourcesMap[sourceVertsArr[i]] = sourceValuesArr[i];
-    }
-    Eigen::VectorXd u0 = generateDelta(nV, sourcesMap);
-
-    std::vector<double> timesteps(
-        timestepsArr.Data(),
-        timestepsArr.Data() + timestepsArr.ElementLength()
-    );
-
-    Eigen::MatrixXf field = generateHeatDiffusion(
-        *holder->ops, *holder->eigenmodes, u0, timesteps, alpha);
-
-    auto result = Napi::Object::New(env);
-    result.Set("data", matrixToFloat32Array(env, field));
-    result.Set("T", Napi::Number::New(env, static_cast<int>(field.rows())));
-    result.Set("nV", Napi::Number::New(env, static_cast<int>(field.cols())));
-    return result;
+        auto result = Napi::Object::New(env);
+        result.Set("data", matrixToFloat32Array(env, field));
+        result.Set("T", Napi::Number::New(env, static_cast<int>(field.rows())));
+        result.Set("nV", Napi::Number::New(env, static_cast<int>(field.cols())));
+        return result;
+    });
 }
 
 // ─── generateDampedWave(ctx, {modeIndices, amplitudes, dampings, phases, timesteps}) ─
@@ -657,49 +709,50 @@ Napi::Value GenerateDampedWave(const Napi::CallbackInfo& info) {
     auto holder = getContext(info);
     if (!holder) return env.Null();
 
-    if (!holder->eigenmodes) {
-        Napi::Error::New(env,
-            "generateDampedWave: eigenmodes not computed; "
-            "call solveEigenmodes first").ThrowAsJavaScriptException();
-        return env.Null();
-    }
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        if (!holder->eigenmodes) {
+            throw nxr::compute::Error(nxr::compute::ErrorCode::NotPrecomputed,
+                "generateDampedWave: eigenmodes not computed",
+                "call solveEigenmodes first");
+        }
 
-    auto opts = info[1].As<Napi::Object>();
-    auto modeIdxArr  = opts.Get("modeIndices").As<Napi::Int32Array>();
-    auto ampsArr     = opts.Get("amplitudes").As<Napi::Float64Array>();
-    auto dampsArr    = opts.Get("dampings").As<Napi::Float64Array>();
-    auto phasesArr   = opts.Get("phases").As<Napi::Float64Array>();
-    auto tsArr       = opts.Get("timesteps").As<Napi::Float64Array>();
+        auto opts = info[1].As<Napi::Object>();
+        auto modeIdxArr  = opts.Get("modeIndices").As<Napi::Int32Array>();
+        auto ampsArr     = opts.Get("amplitudes").As<Napi::Float64Array>();
+        auto dampsArr    = opts.Get("dampings").As<Napi::Float64Array>();
+        auto phasesArr   = opts.Get("phases").As<Napi::Float64Array>();
+        auto tsArr       = opts.Get("timesteps").As<Napi::Float64Array>();
 
-    std::vector<int> modeIndices(
-        modeIdxArr.Data(),
-        modeIdxArr.Data() + modeIdxArr.ElementLength()
-    );
-    std::vector<double> amplitudes(
-        ampsArr.Data(),
-        ampsArr.Data() + ampsArr.ElementLength()
-    );
-    std::vector<double> dampings(
-        dampsArr.Data(),
-        dampsArr.Data() + dampsArr.ElementLength()
-    );
-    std::vector<double> phases(
-        phasesArr.Data(),
-        phasesArr.Data() + phasesArr.ElementLength()
-    );
-    std::vector<double> timesteps(
-        tsArr.Data(),
-        tsArr.Data() + tsArr.ElementLength()
-    );
+        std::vector<int> modeIndices(
+            modeIdxArr.Data(),
+            modeIdxArr.Data() + modeIdxArr.ElementLength()
+        );
+        std::vector<double> amplitudes(
+            ampsArr.Data(),
+            ampsArr.Data() + ampsArr.ElementLength()
+        );
+        std::vector<double> dampings(
+            dampsArr.Data(),
+            dampsArr.Data() + dampsArr.ElementLength()
+        );
+        std::vector<double> phases(
+            phasesArr.Data(),
+            phasesArr.Data() + phasesArr.ElementLength()
+        );
+        std::vector<double> timesteps(
+            tsArr.Data(),
+            tsArr.Data() + tsArr.ElementLength()
+        );
 
-    Eigen::MatrixXf field = generateDampedWave(
-        *holder->eigenmodes, modeIndices, amplitudes, dampings, phases, timesteps);
+        Eigen::MatrixXf field = generateDampedWave(
+            *holder->eigenmodes, modeIndices, amplitudes, dampings, phases, timesteps);
 
-    auto result = Napi::Object::New(env);
-    result.Set("data", matrixToFloat32Array(env, field));
-    result.Set("T", Napi::Number::New(env, static_cast<int>(field.rows())));
-    result.Set("nV", Napi::Number::New(env, static_cast<int>(field.cols())));
-    return result;
+        auto result = Napi::Object::New(env);
+        result.Set("data", matrixToFloat32Array(env, field));
+        result.Set("T", Napi::Number::New(env, static_cast<int>(field.rows())));
+        result.Set("nV", Napi::Number::New(env, static_cast<int>(field.cols())));
+        return result;
+    });
 }
 
 // ─── Vector heat method ──────────────────────────────────────
@@ -719,90 +772,94 @@ Napi::Value VectorHeatTransport(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        auto vertsArr = info[1].As<Napi::Int32Array>();
+        auto vecsArr  = info[2].As<Napi::Float64Array>();
+        int n = static_cast<int>(vertsArr.ElementLength());
+        if (vecsArr.ElementLength() != static_cast<size_t>(n) * 3) {
+            throw nxr::compute::Error(nxr::compute::ErrorCode::InvalidInput,
+                "sourceVectors must be Nx3 (length 3*sources)");
+        }
+        std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + n);
+        Eigen::MatrixXd S(n, 3);
+        const double* vd = vecsArr.Data();
+        for (int i = 0; i < n; i++) {
+            S(i, 0) = vd[i * 3 + 0];
+            S(i, 1) = vd[i * 3 + 1];
+            S(i, 2) = vd[i * 3 + 2];
+        }
 
-    auto vertsArr = info[1].As<Napi::Int32Array>();
-    auto vecsArr  = info[2].As<Napi::Float64Array>();
-    int n = static_cast<int>(vertsArr.ElementLength());
-    if (vecsArr.ElementLength() != static_cast<size_t>(n) * 3) {
-        Napi::TypeError::New(env, "sourceVectors must be Nx3 (length 3*sources)").ThrowAsJavaScriptException();
-        return env.Null();
-    }
-    std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + n);
-    Eigen::MatrixXd S(n, 3);
-    const double* vd = vecsArr.Data();
-    for (int i = 0; i < n; i++) {
-        S(i, 0) = vd[i * 3 + 0];
-        S(i, 1) = vd[i * 3 + 1];
-        S(i, 2) = vd[i * 3 + 2];
-    }
-
-    ensureVHM(holder);
-    Eigen::MatrixXd out = vectorHeatTransport(*holder->vhm, verts, S);
-    return matrixToFloat64Array(env, out);
+        ensureVHM(holder);
+        Eigen::MatrixXd out = vectorHeatTransport(*holder->vhm, verts, S);
+        return matrixToFloat64Array(env, out);
+    });
 }
 
 Napi::Value VectorHeatExtendScalar(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        auto vertsArr = info[1].As<Napi::Int32Array>();
+        auto valsArr  = info[2].As<Napi::Float64Array>();
+        int n = static_cast<int>(vertsArr.ElementLength());
+        if (valsArr.ElementLength() != static_cast<size_t>(n)) {
+            throw nxr::compute::Error(nxr::compute::ErrorCode::InvalidInput,
+                "sourceVerts and sourceValues must have the same length");
+        }
+        std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + n);
+        Eigen::VectorXd vals(n);
+        std::memcpy(vals.data(), valsArr.Data(), n * sizeof(double));
 
-    auto vertsArr = info[1].As<Napi::Int32Array>();
-    auto valsArr  = info[2].As<Napi::Float64Array>();
-    int n = static_cast<int>(vertsArr.ElementLength());
-    if (valsArr.ElementLength() != static_cast<size_t>(n)) {
-        Napi::TypeError::New(env, "sourceVerts and sourceValues must have the same length").ThrowAsJavaScriptException();
-        return env.Null();
-    }
-    std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + n);
-    Eigen::VectorXd vals(n);
-    std::memcpy(vals.data(), valsArr.Data(), n * sizeof(double));
-
-    ensureVHM(holder);
-    Eigen::VectorXd out = vectorHeatExtendScalar(*holder->vhm, verts, vals);
-    return toFloat64Array(env, out);
+        ensureVHM(holder);
+        Eigen::VectorXd out = vectorHeatExtendScalar(*holder->vhm, verts, vals);
+        return toFloat64Array(env, out);
+    });
 }
 
 Napi::Value VectorHeatLogMap(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        int sourceVertex = info[1].As<Napi::Number>().Int32Value();
+        int strategyInt  = info.Length() > 2
+            ? info[2].As<Napi::Number>().Int32Value()
+            : static_cast<int>(LogMapStrategy::AffineLocal);
+        auto strategy = static_cast<LogMapStrategy>(strategyInt);
 
-    int sourceVertex = info[1].As<Napi::Number>().Int32Value();
-    int strategyInt  = info.Length() > 2
-        ? info[2].As<Napi::Number>().Int32Value()
-        : static_cast<int>(LogMapStrategy::AffineLocal);
-    auto strategy = static_cast<LogMapStrategy>(strategyInt);
+        ensureVHM(holder);
+        LogMapResult r = vectorHeatLogMap(*holder->vhm, sourceVertex, strategy);
 
-    ensureVHM(holder);
-    LogMapResult r = vectorHeatLogMap(*holder->vhm, sourceVertex, strategy);
-
-    auto obj = Napi::Object::New(env);
-    obj.Set("logCoords", matrixToFloat64Array(env, r.logCoords));
-    auto e1 = Napi::Float64Array::New(env, 3);
-    auto e2 = Napi::Float64Array::New(env, 3);
-    for (int i = 0; i < 3; i++) {
-        e1[i] = r.sourceE1(i);
-        e2[i] = r.sourceE2(i);
-    }
-    obj.Set("sourceE1", e1);
-    obj.Set("sourceE2", e2);
-    return obj;
+        auto obj = Napi::Object::New(env);
+        obj.Set("logCoords", matrixToFloat64Array(env, r.logCoords));
+        auto e1 = Napi::Float64Array::New(env, 3);
+        auto e2 = Napi::Float64Array::New(env, 3);
+        for (int i = 0; i < 3; i++) {
+            e1[i] = r.sourceE1(i);
+            e2[i] = r.sourceE2(i);
+        }
+        obj.Set("sourceE1", e1);
+        obj.Set("sourceE2", e2);
+        return obj;
+    });
 }
 
 Napi::Value VectorHeatFindCenter(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        auto vertsArr = info[1].As<Napi::Int32Array>();
+        int p = info.Length() > 2 ? info[2].As<Napi::Number>().Int32Value() : 2;
+        std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + vertsArr.ElementLength());
 
-    auto vertsArr = info[1].As<Napi::Int32Array>();
-    int p = info.Length() > 2 ? info[2].As<Napi::Number>().Int32Value() : 2;
-    std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + vertsArr.ElementLength());
-
-    ensureVHM(holder);
-    Eigen::Vector3d c = vectorHeatFindCenter(*holder->vhm, verts, p);
-    auto out = Napi::Float64Array::New(env, 3);
-    out[0] = c.x(); out[1] = c.y(); out[2] = c.z();
-    return out;
+        ensureVHM(holder);
+        Eigen::Vector3d c = vectorHeatFindCenter(*holder->vhm, verts, p);
+        auto out = Napi::Float64Array::New(env, 3);
+        out[0] = c.x(); out[1] = c.y(); out[2] = c.z();
+        return out;
+    });
 }
 
 // ─── Signed heat method ──────────────────────────────────────
@@ -811,19 +868,20 @@ Napi::Value SignedHeatDistance(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        auto vertsArr = info[1].As<Napi::Int32Array>();
+        bool isLoop = info.Length() > 2 ? info[2].As<Napi::Boolean>().Value() : true;
+        int  lsInt  = info.Length() > 3
+            ? info[3].As<Napi::Number>().Int32Value()
+            : static_cast<int>(SignedHeatLevelSet::ZeroSet);
+        auto ls = static_cast<SignedHeatLevelSet>(lsInt);
 
-    auto vertsArr = info[1].As<Napi::Int32Array>();
-    bool isLoop = info.Length() > 2 ? info[2].As<Napi::Boolean>().Value() : true;
-    int  lsInt  = info.Length() > 3
-        ? info[3].As<Napi::Number>().Int32Value()
-        : static_cast<int>(SignedHeatLevelSet::ZeroSet);
-    auto ls = static_cast<SignedHeatLevelSet>(lsInt);
+        std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + vertsArr.ElementLength());
 
-    std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + vertsArr.ElementLength());
-
-    ensureSHS(holder);
-    Eigen::VectorXd out = signedHeatDistance(*holder->shs, verts, isLoop, ls);
-    return toFloat64Array(env, out);
+        ensureSHS(holder);
+        Eigen::VectorXd out = signedHeatDistance(*holder->shs, verts, isLoop, ls);
+        return toFloat64Array(env, out);
+    });
 }
 
 // ─── Smooth direction fields ────────────────────────────────
@@ -832,28 +890,30 @@ Napi::Value ComputeSmoothFaceField(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        int  nSym             = info.Length() > 1 ? info[1].As<Napi::Number>().Int32Value() : 4;
+        bool alignToCurvature = info.Length() > 2 ? info[2].As<Napi::Boolean>().Value()     : false;
 
-    int  nSym             = info.Length() > 1 ? info[1].As<Napi::Number>().Int32Value() : 4;
-    bool alignToCurvature = info.Length() > 2 ? info[2].As<Napi::Boolean>().Value()     : false;
-
-    Eigen::MatrixXd v = computeSmoothFaceField(*holder->ctx, nSym, alignToCurvature);
-    return matrixToFloat64Array(env, v);
+        Eigen::MatrixXd v = computeSmoothFaceField(*holder->ctx, nSym, alignToCurvature);
+        return matrixToFloat64Array(env, v);
+    });
 }
 
 Napi::Value ComputeSmoothVertexField(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        int  nSym             = info.Length() > 1 ? info[1].As<Napi::Number>().Int32Value() : 2;
+        bool alignToCurvature = info.Length() > 2 ? info[2].As<Napi::Boolean>().Value()     : false;
 
-    int  nSym             = info.Length() > 1 ? info[1].As<Napi::Number>().Int32Value() : 2;
-    bool alignToCurvature = info.Length() > 2 ? info[2].As<Napi::Boolean>().Value()     : false;
-
-    SmoothVertexFieldResult r = computeSmoothVertexField(*holder->ctx, nSym, alignToCurvature);
-    auto obj = Napi::Object::New(env);
-    obj.Set("vertexVectors",  matrixToFloat64Array(env, r.vertexVectors));
-    obj.Set("vertexFieldRaw", toFloat64Array(env, r.vertexFieldRaw));
-    obj.Set("nSym", Napi::Number::New(env, r.nSym));
-    return obj;
+        SmoothVertexFieldResult r = computeSmoothVertexField(*holder->ctx, nSym, alignToCurvature);
+        auto obj = Napi::Object::New(env);
+        obj.Set("vertexVectors",  matrixToFloat64Array(env, r.vertexVectors));
+        obj.Set("vertexFieldRaw", toFloat64Array(env, r.vertexFieldRaw));
+        obj.Set("nSym", Napi::Number::New(env, r.nSym));
+        return obj;
+    });
 }
 
 // ─── Stripe patterns ────────────────────────────────────────
@@ -862,35 +922,37 @@ Napi::Value ComputeStripePattern(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        auto fieldArr = info[1].As<Napi::Float64Array>();
+        Eigen::VectorXd raw = toVectorXd(fieldArr);
+        double freq   = info[2].As<Napi::Number>().DoubleValue();
+        bool   connect = info.Length() > 3 ? info[3].As<Napi::Boolean>().Value() : true;
 
-    auto fieldArr = info[1].As<Napi::Float64Array>();
-    Eigen::VectorXd raw = toVectorXd(fieldArr);
-    double freq   = info[2].As<Napi::Number>().DoubleValue();
-    bool   connect = info.Length() > 3 ? info[3].As<Napi::Boolean>().Value() : true;
-
-    StripePatternResult r = computeStripePattern(*holder->ctx, raw, freq, connect);
-    auto obj = Napi::Object::New(env);
-    obj.Set("positions",    matrixToFloat64Array(env, r.positions));
-    obj.Set("segmentCount", Napi::Number::New(env, r.segmentCount));
-    return obj;
+        StripePatternResult r = computeStripePattern(*holder->ctx, raw, freq, connect);
+        auto obj = Napi::Object::New(env);
+        obj.Set("positions",    matrixToFloat64Array(env, r.positions));
+        obj.Set("segmentCount", Napi::Number::New(env, r.segmentCount));
+        return obj;
+    });
 }
 
 Napi::Value ComputeStripePatternFreq(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        auto fieldArr = info[1].As<Napi::Float64Array>();
+        auto freqsArr = info[2].As<Napi::Float64Array>();
+        Eigen::VectorXd raw   = toVectorXd(fieldArr);
+        Eigen::VectorXd freqs = toVectorXd(freqsArr);
+        bool connect = info.Length() > 3 ? info[3].As<Napi::Boolean>().Value() : true;
 
-    auto fieldArr = info[1].As<Napi::Float64Array>();
-    auto freqsArr = info[2].As<Napi::Float64Array>();
-    Eigen::VectorXd raw   = toVectorXd(fieldArr);
-    Eigen::VectorXd freqs = toVectorXd(freqsArr);
-    bool connect = info.Length() > 3 ? info[3].As<Napi::Boolean>().Value() : true;
-
-    StripePatternResult r = computeStripePatternFreq(*holder->ctx, raw, freqs, connect);
-    auto obj = Napi::Object::New(env);
-    obj.Set("positions",    matrixToFloat64Array(env, r.positions));
-    obj.Set("segmentCount", Napi::Number::New(env, r.segmentCount));
-    return obj;
+        StripePatternResult r = computeStripePatternFreq(*holder->ctx, raw, freqs, connect);
+        auto obj = Napi::Object::New(env);
+        obj.Set("positions",    matrixToFloat64Array(env, r.positions));
+        obj.Set("segmentCount", Napi::Number::New(env, r.segmentCount));
+        return obj;
+    });
 }
 
 // ─── Module Init ─────────────────────────────────────────────
