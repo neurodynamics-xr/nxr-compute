@@ -538,7 +538,7 @@ public:
     }
 
     val computeSmoothVertexField(int nSym, bool alignToCurvature) {
-        nxr::compute::SmoothFieldResult r =
+        nxr::compute::SmoothVertexFieldResult r =
             nxr::compute::computeSmoothVertexField(*ctx_, nSym, alignToCurvature);
         val obj = val::object();
         obj.set("vertexVectors",  eigenMatrixToVal(r.vertexVectors));

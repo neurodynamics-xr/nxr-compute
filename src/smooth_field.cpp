@@ -71,7 +71,7 @@ Eigen::MatrixXd computeSmoothFaceField(
     return out;
 }
 
-SmoothFieldResult computeSmoothVertexField(
+SmoothVertexFieldResult computeSmoothVertexField(
     ComputeContext& ctx,
     int nSym,
     bool alignToCurvature
@@ -84,7 +84,6 @@ SmoothFieldResult computeSmoothVertexField(
     auto& geom = ctx.geometry();
 
     geom.requireVertexTangentBasis();
-    geom.requireFaceTangentBasis();
 
     VertexData<Vector2> vfield;
     if (alignToCurvature) {
@@ -96,9 +95,8 @@ SmoothFieldResult computeSmoothVertexField(
     }
 
     int nV = ctx.nV();
-    int nF = ctx.nF();
 
-    SmoothFieldResult out;
+    SmoothVertexFieldResult out;
     out.nSym = nSym;
     out.vertexVectors.resize(nV, 3);
     out.vertexFieldRaw.resize(nV * 2);
@@ -113,10 +111,6 @@ SmoothFieldResult computeSmoothVertexField(
         out.vertexVectors(vi, 1) = w.y;
         out.vertexVectors(vi, 2) = w.z;
     }
-    // Face vectors not produced for vertex fields — leave empty.
-    out.faceVectors.resize(0, 3);
-    out.faceFieldRaw.resize(0);
-    (void)nF;
     std::cout << "[smooth_field] vertex field, nSym=" << nSym
               << ", curvatureAligned=" << alignToCurvature
               << ", nV=" << nV << std::endl;

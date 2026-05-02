@@ -848,7 +848,7 @@ Napi::Value ComputeSmoothVertexField(const Napi::CallbackInfo& info) {
     int  nSym             = info.Length() > 1 ? info[1].As<Napi::Number>().Int32Value() : 2;
     bool alignToCurvature = info.Length() > 2 ? info[2].As<Napi::Boolean>().Value()     : false;
 
-    SmoothFieldResult r = computeSmoothVertexField(*holder->ctx, nSym, alignToCurvature);
+    SmoothVertexFieldResult r = computeSmoothVertexField(*holder->ctx, nSym, alignToCurvature);
     auto obj = Napi::Object::New(env);
     obj.Set("vertexVectors",  matrixToFloat64Array(env, r.vertexVectors));
     obj.Set("vertexFieldRaw", toFloat64Array(env, r.vertexFieldRaw));

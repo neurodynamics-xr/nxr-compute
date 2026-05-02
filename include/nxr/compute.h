@@ -798,15 +798,19 @@ Eigen::VectorXd signedHeatDistance(
 // `alignToCurvature` returns the principal-curvature-aligned
 // field instead of pure smoothest (only meaningful for nSym ≥ 2).
 
-struct SmoothFieldResult {
-    Eigen::MatrixXd faceVectors;     // [nF, 3] world-space, per face
+/** Result of `computeSmoothVertexField`. The face-based variant
+ *  returns a plain Eigen::MatrixXd directly, since face stripes
+ *  aren't a downstream consumer of its raw form. */
+struct SmoothVertexFieldResult {
     Eigen::MatrixXd vertexVectors;   // [nV, 3] world-space, per vertex
-    Eigen::VectorXd faceFieldRaw;    // [nF * 2] raw Vector2 in face tangent basis
     Eigen::VectorXd vertexFieldRaw;  // [nV * 2] raw Vector2 in vertex tangent basis
     int nSym;
 };
 
-/** Compute the smoothest face-based direction field. */
+/** Compute the smoothest face-based direction field.
+ *  Returns [nF, 3] world-space vectors (principal nSym-RoSy
+ *  representative; the other nSym-1 directions are obtained by
+ *  rotating in the face tangent plane). */
 Eigen::MatrixXd computeSmoothFaceField(
     ComputeContext& ctx,
     int nSym = 4,
@@ -817,7 +821,7 @@ Eigen::MatrixXd computeSmoothFaceField(
  *  as input to stripe patterns).
  *  Returns the raw [nV * 2] Vector2 form alongside [nV, 3] world
  *  vectors, since stripes consume the Vector2 form internally. */
-SmoothFieldResult computeSmoothVertexField(
+SmoothVertexFieldResult computeSmoothVertexField(
     ComputeContext& ctx,
     int nSym = 2,
     bool alignToCurvature = false
