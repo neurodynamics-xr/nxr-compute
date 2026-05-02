@@ -272,12 +272,33 @@ console.log(`  generateHeatDiffusion ✓ (T=${heat.T}, nV=${heat.nV})`)
   console.log(`  stripes ✓ (segs=${stripes.segmentCount})`)
 }
 
-// Note: index.mjs supplies the optional-argument defaults declared
-// in index.d.ts. We don't exercise that wrapper here because it
-// imports `../../build_wasm/nxr_compute.js`, a path that resolves
-// relative to `bindings/wasm/js/` and predates the current build
-// layout — orthogonal to this PR. The Embind methods exercised
-// above match the .d.ts contract once the wrapper is loadable.
+// ── Test 12: high-level wrapper supplies defaults ───────────
+//
+// The raw Embind class above requires every argument. The
+// index.mjs wrapper supplies the optional-argument defaults
+// declared in index.d.ts. Verify the wrapper is loadable AND
+// that calling each new method without its optional args works.
+{
+  const { initNxrCompute } = await import('../bindings/wasm/js/index.mjs')
+  const wrapped = await initNxrCompute()                  // idempotent — re-uses the loaded module
+  const wctx = wrapped.createContext(verts, faces)
+
+  // Defaults: strategy=AffineLocal, p=2, isLoop=true, levelSet=ZeroSet,
+  //           nSym=4 (face) / 2 (vertex), connectOnSingularities=true.
+  const lm = wctx.vectorHeatLogMap(0)
+  require(lm.logCoords.length === nV * 2, 'wrapped logMap default strategy works')
+  const c  = wctx.vectorHeatFindCenter([0, 1, 5])
+  require(c.length === 3, 'wrapped findCenter default p works')
+  const sd = wctx.signedHeatDistance([11, 5, 1, 7, 10])
+  require(sd.length === nV, 'wrapped signedHeat default flags work')
+  const ff = wctx.computeSmoothFaceField()
+  require(ff.length === nF * 3, 'wrapped smoothFaceField default nSym works')
+  const vf = wctx.computeSmoothVertexField()
+  const sp = wctx.computeStripePattern(vf.vertexFieldRaw, 8.0)
+  require(sp.segmentCount >= 0, 'wrapped stripes default flag works')
+  wctx.delete()
+  console.log('  index.mjs defaults ✓')
+}
 
 // ── Cleanup ───────────────────────────────────────────────────
 ctx.delete()
