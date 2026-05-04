@@ -176,6 +176,82 @@ state, not a missed optimization.
    synchronously today; promote to AsyncWorker only if profiling shows
    they freeze the UI on real meshes.
 
+8. **Solver-instance caching for stateful geometry-central solvers.**
+   Whenever you bind one of geometry-central's `*Solver` classes
+   (`HeatMethodDistanceSolver`, `VectorHeatMethodSolver`,
+   `SignedHeatSolver`), wrap it in a PIMPL class on the nxr-compute
+   side and hold the wrapper alive on `ContextWrapper` (or the addon's
+   `ContextHolder`) via an `ensureXxx()` helper. **Never construct the
+   solver inline per call** — that's a real bug we caught and fixed
+   (`computeGeodesicDistance`, commit `01a212a`). The constructor
+   pre-factors the Cholesky systems; subsequent method calls
+   back-substitute only. Throwing the solver away every call is
+   the perf gap. See `docs/integration-lessons.md` §A.
+
+9. **Result-level cache for stateless geometry-central free functions.**
+   Some geometry-central algorithms (e.g.
+   `computeSmoothest{,Boundary}AlignedFaceDirectionField`) are pure
+   free functions with no Solver class — each call rebuilds and
+   factorizes internally. Adding a Solver wrapper here would require
+   reimplementing the algorithm. Instead, cache the **output** at the
+   binding level, keyed by all input parameters (commit `6313bc7`
+   used `std::map<std::pair<int, bool>, Eigen::MatrixXd>` keyed by
+   `(nSym, alignToCurvature)`). The trade-off: parameter changes
+   pay the full cold cost once per new key, identical-parameter
+   repeats are cache-hit fast. See `docs/integration-lessons.md` §C.
+
+10. **Eigensolve K ceiling on browser/WASM.** `solveEigenmodes` throws
+    `EigensolveInvalidK` for `k > 1000`. Spectra's Krylov basis size
+    `ncv = 2k+1` (capped at n) approaches an n×n dense matrix at
+    large k; on a 10K-vertex mesh, k=5000 OOMs against the WASM 2 GB
+    cap. The cap applies regardless of binding for predictability —
+    native consumers (addon, MEX) inherit the same ceiling even
+    though they have memory headroom. See `docs/eigensolve-cap.md`
+    for the path to lift the cap.
+
+11. **Bench-validate every solver-pattern change.** The downstream
+    consumer
+    `nxr-design-system/apps/galleries/gallery-mesh-tests/public/probes/bench-*.html`
+    is the safety net for caching-pattern regressions. Run
+    `npm run bench:all && npm run bench:diff` against
+    `bench/baselines.json` after any change touching a method's
+    solver pattern, factor caching, or memory layout. The verdict
+    column in `bench/REPORT.md` flags methods where warm calls
+    don't amortise (`❌ no cache`) — any new `❌` is a signal that
+    rules 8-10 weren't followed.
+
+---
+
+## Common pitfalls — quick reference
+
+Read `docs/integration-lessons.md` for the full retrospective from
+the May-2026 bench round. Quick callouts that bit us already:
+
+- **Inline solver construction.** `HeatMethodDistanceSolver(geom)` /
+  `VectorHeatMethodSolver(geom)` / `SignedHeatSolver(geom)` MUST be
+  built once and held alive. Constructing per call discards both
+  Cholesky factors every time. Pattern A in
+  `docs/integration-lessons.md`.
+- **Stateless free-function results.** geometry-central's smooth-
+  direction-field functions don't have a Solver class. Cache the
+  OUTPUT in the binding, keyed by parameters. Don't try to extract
+  the internal factor. Pattern C in `docs/integration-lessons.md`.
+- **Spectra shift-invert factor is per-call by design.** Methods
+  that bundle an eigensolve (e.g. `precompute({k})`) will look like
+  they're "no caching" in bench output even when everything else IS
+  cached. Document this on the new method, don't try to fix it.
+- **Embind exception `.message` is empty in JS** because
+  `getExceptionMessage` isn't in the WASM build's
+  `EXPORTED_RUNTIME_METHODS`. JS consumers see `[object Object]`
+  instead of `[CODE_NAME] msg | hint: …`. Fix is a one-line
+  addition to `bindings/wasm/CMakeLists.txt` — tracked as
+  cleanup in nxr-design-system's bench-roadmap. The
+  throw-vs-no-throw behaviour is intact regardless.
+- **emscripten 5.x needs Python 3.10+.** macOS default
+  `/Library/Developer/CommandLineTools/usr/bin/python3` is 3.9 and
+  fails the assertion. Prefix `PATH="/opt/homebrew/bin:$PATH"` (or
+  set `EMSDK_PYTHON`) before invoking the WASM build.
+
 ---
 
 ## Build & Test
