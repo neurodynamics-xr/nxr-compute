@@ -89,6 +89,20 @@ EigenResult solveEigenmodes(
         throw Error(ErrorCode::EigensolveInvalidK,
             "solveEigenmodes: k must be < N (matrix size)");
     }
+    // K ceiling — Spectra's Krylov basis is `ncv = 2k+1` doubles per
+    // matrix row (capped at n). At k=1000 on a 10k-vertex cortical
+    // mesh, basis ≈ 160 MB; at k=5000 it approaches an n×n dense
+    // matrix and the WASM linear-memory cap (2 GB) is hit before
+    // convergence. Cap k at 1000 for browser/WASM consumers; native
+    // builds (addon, MEX) are unaffected since they have headroom.
+    constexpr int kMaxK = 1000;
+    if (k > kMaxK) {
+        throw Error(ErrorCode::EigensolveInvalidK,
+            "solveEigenmodes: k must be <= 1000",
+            "Browser/WASM Krylov basis ceiling — higher k requires "
+            "server-side or memory64 builds. See "
+            "docs/eigensolve-cap.md.");
+    }
 
     // Convergence parameter: ncv must be > k and <= n.
     // Larger ncv costs more memory and per-iteration work but
