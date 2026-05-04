@@ -11,12 +11,38 @@ namespace nxr::compute {
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
 
+// ── Solver impl (PIMPL) ───────────────────────────────────
+//
+// Owns the geometry-central HeatMethodDistanceSolver plus a
+// reference to the ComputeContext. The solver factorizes both
+// Cholesky systems (M + tA, and A) at construction; subsequent
+// computeDistance() calls back-substitute only. Mirrors the
+// VectorHeatSolver / SignedHeatSolver pattern.
+
+class HeatGeodesicSolverImpl {
+public:
+    HeatGeodesicSolverImpl(ComputeContext& c, double tCoef)
+        : ctx(c), solver(c.geometry(), tCoef) {}
+    ComputeContext& ctx;
+    HeatMethodDistanceSolver solver;
+};
+
+HeatGeodesicSolver::HeatGeodesicSolver(ComputeContext& ctx, double tCoef)
+    : impl_(std::make_unique<HeatGeodesicSolverImpl>(ctx, tCoef)) {}
+
+HeatGeodesicSolver::~HeatGeodesicSolver() = default;
+
+HeatGeodesicSolverImpl& HeatGeodesicSolver::impl() { return *impl_; }
+
+// ── Free function ─────────────────────────────────────────
+
 Eigen::VectorXd computeGeodesicDistance(
-    ComputeContext& ctx,
+    HeatGeodesicSolver& solver,
     const std::vector<int>& sourceVertices
 ) {
-    auto& mesh = ctx.mesh();
-    auto& geometry = ctx.geometry();
+    auto& s = solver.impl();
+    auto& mesh = s.ctx.mesh();
+    int nV = s.ctx.nV();
 
     // Build source vertex list for geometry-central
     std::vector<Vertex> sources;
@@ -25,12 +51,11 @@ Eigen::VectorXd computeGeodesicDistance(
         sources.push_back(mesh.vertex(static_cast<size_t>(idx)));
     }
 
-    // Solve via heat method
-    HeatMethodDistanceSolver solver(geometry);
-    VertexData<double> distances = solver.computeDistance(sources);
+    // Solve via the cached heat-method solver — back-substitution only
+    // on subsequent calls; no per-call factorization.
+    VertexData<double> distances = s.solver.computeDistance(sources);
 
     // Convert to Eigen::VectorXd indexed by vertex index
-    int nV = ctx.nV();
     Eigen::VectorXd result(nV);
     for (Vertex v : mesh.vertices()) {
         result(static_cast<int>(v.getIndex())) = distances[v];

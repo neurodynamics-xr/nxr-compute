@@ -304,8 +304,9 @@ public:
     }
 
     val computeGeodesicDistance(val sourceVertsArr) {
+        ensureHeatGeo();
         auto sources = emscripten::convertJSArrayToNumberVector<int>(sourceVertsArr);
-        Eigen::VectorXd d = nxr::compute::computeGeodesicDistance(*ctx_, sources);
+        Eigen::VectorXd d = nxr::compute::computeGeodesicDistance(*heatGeo_, sources);
         return eigenVectorToVal(d);
     }
 
@@ -588,6 +589,9 @@ private:
     void ensureSHS() {
         if (!shs_) shs_ = std::make_unique<nxr::compute::SignedHeatSolver>(*ctx_);
     }
+    void ensureHeatGeo() {
+        if (!heatGeo_) heatGeo_ = std::make_unique<nxr::compute::HeatGeodesicSolver>(*ctx_);
+    }
 
     val meshOpsToVal() {
         ensureOps();
@@ -656,6 +660,7 @@ private:
     std::unique_ptr<nxr::compute::EigenResult>        eigCache_;
     std::unique_ptr<nxr::compute::VectorHeatSolver>   vhm_;
     std::unique_ptr<nxr::compute::SignedHeatSolver>   shs_;
+    std::unique_ptr<nxr::compute::HeatGeodesicSolver> heatGeo_;
     std::vector<double>  verts_;
     std::vector<int>     faces_;
     std::vector<int32_t> faces32_;

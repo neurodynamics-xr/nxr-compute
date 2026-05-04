@@ -295,17 +295,44 @@ inline Eigen::VectorXd solvePoisson(
 }
 
 // ── Geodesic Distance (Heat Method) ──────────────────────────
+//
+// Stateful solver wrapping geometry-central's HeatMethodDistanceSolver,
+// matching the lifetime model of VectorHeatSolver / SignedHeatSolver.
+// The inner solver pre-factors both Cholesky systems (mean-curvature
+// flow `M + tA` and Laplacian `A`) at construction; subsequent
+// computeDistance() calls only do back-substitution.
+//
+// Without this caching we redo two factorizations on every call —
+// see commit history for the perf regression discovered when the
+// pre-cache version was constructing the solver inline. Bench
+// numbers in bench/REPORT.md document the warm/cold gap before the
+// fix landed.
+
+class HeatGeodesicSolverImpl;
+class HeatGeodesicSolver {
+public:
+    explicit HeatGeodesicSolver(ComputeContext& ctx, double tCoef = 1.0);
+    ~HeatGeodesicSolver();
+    HeatGeodesicSolver(const HeatGeodesicSolver&) = delete;
+    HeatGeodesicSolver& operator=(const HeatGeodesicSolver&) = delete;
+
+    HeatGeodesicSolverImpl& impl();
+
+private:
+    std::unique_ptr<HeatGeodesicSolverImpl> impl_;
+};
 
 /**
  * Compute geodesic distances from source vertices via the heat method.
- * Uses geometry-central's HeatMethodDistanceSolver.
+ * Reuses the pre-factored solver — first call pays the factor, subsequent
+ * calls are back-substitution only.
  *
- * @param ctx             compute context (mesh + geometry)
+ * @param solver          stateful heat-geodesic solver
  * @param sourceVertices  list of source vertex indices
  * @return                per-vertex geodesic distances
  */
 Eigen::VectorXd computeGeodesicDistance(
-    ComputeContext& ctx,
+    HeatGeodesicSolver& solver,
     const std::vector<int>& sourceVertices
 );
 
