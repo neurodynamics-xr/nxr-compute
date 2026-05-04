@@ -532,19 +532,46 @@ public:
     }
 
     // ── Smooth direction fields ─────────────────────────────
+    //
+    // geometry-central exposes computeSmoothest{,Boundary}AlignedFaceDirectionField
+    // and computeCurvatureAlignedFaceDirectionField as stateless free
+    // functions — each call rebuilds the connection-Laplacian and
+    // factorizes it. We can't add a Solver class without reimplementing
+    // the algorithm, so we cache at the result level keyed by
+    // (nSym, alignToCurvature). The geometry doesn't change for the
+    // lifetime of a ComputeContext, so the cache is correct by
+    // construction. Repeated identical calls become near-zero-cost;
+    // parameter changes still pay the full cold cost once per new key.
 
     val computeSmoothFaceField(int nSym, bool alignToCurvature) {
+        auto key = std::make_pair(nSym, alignToCurvature);
+        auto it = smoothFaceFieldCache_.find(key);
+        if (it != smoothFaceFieldCache_.end()) {
+            return eigenMatrixToVal(it->second);
+        }
         Eigen::MatrixXd v = nxr::compute::computeSmoothFaceField(*ctx_, nSym, alignToCurvature);
+        smoothFaceFieldCache_.emplace(key, v);
         return eigenMatrixToVal(v);
     }
 
     val computeSmoothVertexField(int nSym, bool alignToCurvature) {
+        auto key = std::make_pair(nSym, alignToCurvature);
+        auto it = smoothVertexFieldCache_.find(key);
+        if (it != smoothVertexFieldCache_.end()) {
+            const auto& r = it->second;
+            val obj = val::object();
+            obj.set("vertexVectors",  eigenMatrixToVal(r.vertexVectors));
+            obj.set("vertexFieldRaw", eigenVectorToVal(r.vertexFieldRaw));
+            obj.set("nSym",           r.nSym);
+            return obj;
+        }
         nxr::compute::SmoothVertexFieldResult r =
             nxr::compute::computeSmoothVertexField(*ctx_, nSym, alignToCurvature);
         val obj = val::object();
         obj.set("vertexVectors",  eigenMatrixToVal(r.vertexVectors));
         obj.set("vertexFieldRaw", eigenVectorToVal(r.vertexFieldRaw));
         obj.set("nSym",           r.nSym);
+        smoothVertexFieldCache_.emplace(key, std::move(r));
         return obj;
     }
 
@@ -661,6 +688,11 @@ private:
     std::unique_ptr<nxr::compute::VectorHeatSolver>   vhm_;
     std::unique_ptr<nxr::compute::SignedHeatSolver>   shs_;
     std::unique_ptr<nxr::compute::HeatGeodesicSolver> heatGeo_;
+    // Smooth-field result caches — keyed by (nSym, alignToCurvature).
+    // Stored by value so the cache owns the data; lookups copy back
+    // out to JS via toJsArrayCopy on each return.
+    std::map<std::pair<int, bool>, Eigen::MatrixXd>                       smoothFaceFieldCache_;
+    std::map<std::pair<int, bool>, nxr::compute::SmoothVertexFieldResult> smoothVertexFieldCache_;
     std::vector<double>  verts_;
     std::vector<int>     faces_;
     std::vector<int32_t> faces32_;
