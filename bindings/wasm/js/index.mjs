@@ -5,13 +5,28 @@
 // initialisation. Re-exports a friendly `initNxrCompute` that returns
 // the loaded module.
 //
-// Usage:
-//   import { initNxrCompute } from '@nxr-compute/wasm'
-//   const nxrCompute = await initNxrCompute()
-//   const ctx = nxrCompute.createContext(verticesFloat64, facesInt32)
-//   const data = ctx.precompute({ k: 300 })
-//   // … use data.operators, data.dec, data.eigenmodes, data.faceFrames
-//   ctx.delete()  // when done with this mesh
+// Two surfaces share the same underlying ContextWrapper:
+//
+//   1. Flat surface (legacy, backward-compatible):
+//        const nxr = await initNxrCompute()
+//        const ctx = nxr.createContext(verts, faces)
+//        ctx.solveEigenmodes(300)
+//
+//   2. Six-group nested namespace `nxr.manifold.*` (preferred for new code):
+//        const mctx = nxr.createManifoldContext(verts, faces)
+//        mctx.solve.eigen(300)
+//        mctx.operator.d0()
+//        mctx.measure.distance([0])
+//        mctx.measure.distance.signed([0, 1, 2], true)
+//
+//      Or in functional form:
+//        nxr.nxr.manifold.solve.eigen(mctx, 300)
+//        nxr.nxr.manifold.operator.d0(mctx)
+//
+// Repo / package: `@neurodynamics-xr/nxr-compute` (the engine).
+// JS API namespace: `nxr.manifold.*` (the manifold concepts inside the engine).
+// WASM artifact: `nxr_compute.wasm` (unchanged).
+// C++ embind class: `ContextWrapper` (unchanged, flat).
 
 // build_wasm/ sits at the repo root (set by bindings/wasm/CMakeLists.txt's
 // RUNTIME_OUTPUT_DIRECTORY = ${CMAKE_BINARY_DIR}, with the build invoked
@@ -40,12 +55,12 @@ export async function initNxrCompute(options = {}) {
 
 /** Builds the public surface from the raw Embind module. */
 function wrap(mod) {
-  return {
+  const api = {
     /** @returns {string} the nxr-compute version string, e.g. "nxr-compute 0.1.0" */
     version: () => mod.version(),
 
     /**
-     * Create a ComputeContext for the given mesh.
+     * Create a ComputeContext for the given mesh (flat surface).
      *
      * @param {Float64Array | number[]} vertices — `V × 3` row-major
      *   xyz triples. Float64 is the canonical type; arrays are
@@ -55,19 +70,59 @@ function wrap(mod) {
      * @returns {ComputeContext}
      */
     createContext(vertices, faces) {
-      const v = vertices instanceof Float64Array ? vertices : new Float64Array(vertices)
-      const f = faces    instanceof Int32Array   ? faces    : new Int32Array(faces)
-      if (v.length % 3 !== 0) throw new Error('nxr: vertices length must be a multiple of 3')
-      if (f.length % 3 !== 0) throw new Error('nxr: faces length must be a multiple of 3')
-      // The Embind constructor accepts JS arrays via val; pass typed arrays directly.
-      const raw = new mod.ComputeContext(v, f)
+      const raw = makeRaw(mod, vertices, faces)
       return makeContextWrapper(raw)
+    },
+
+    /**
+     * Create a ManifoldContext for the given mesh — the same compute
+     * context exposed under the six-group `nxr.manifold.*` namespace.
+     * Internally constructs a single ContextWrapper; both
+     * `mctx.solve.eigen(...)` and `mctx._flat.solveEigenmodes(...)`
+     * call into the same C++ object.
+     *
+     * @param {Float64Array | number[]} vertices
+     * @param {Int32Array | number[]} faces
+     * @returns {ManifoldContext}
+     */
+    createManifoldContext(vertices, faces) {
+      const raw = makeRaw(mod, vertices, faces)
+      return makeManifoldContext(raw)
+    },
+
+    /**
+     * Free-function form of the six-group namespace. Each leaf takes a
+     * ManifoldContext as its first argument:
+     *   nxr.nxr.manifold.solve.eigen(mctx, 300)
+     * Backed by the same per-context methods, so behaviour is identical
+     * to `mctx.solve.eigen(300)`.
+     */
+    nxr: {
+      manifold: makeFunctionalNamespace(),
     },
 
     /** Underlying Embind module — escape hatch for advanced use. */
     _raw: mod,
   }
+  return api
 }
+
+/* ---------------------------------------------------------------------- */
+/*                        Raw context construction                        */
+/* ---------------------------------------------------------------------- */
+
+function makeRaw(mod, vertices, faces) {
+  const v = vertices instanceof Float64Array ? vertices : new Float64Array(vertices)
+  const f = faces    instanceof Int32Array   ? faces    : new Int32Array(faces)
+  if (v.length % 3 !== 0) throw new Error('nxr: vertices length must be a multiple of 3')
+  if (f.length % 3 !== 0) throw new Error('nxr: faces length must be a multiple of 3')
+  // The Embind constructor accepts JS arrays via val; pass typed arrays directly.
+  return new mod.ComputeContext(v, f)
+}
+
+/* ---------------------------------------------------------------------- */
+/*                Flat surface (legacy, backward-compatible)              */
+/* ---------------------------------------------------------------------- */
 
 /** Adds JS-side ergonomics on top of the raw Embind ComputeContext. */
 function makeContextWrapper(raw) {
@@ -200,6 +255,278 @@ function makeContextWrapper(raw) {
 
     /** Underlying Embind handle — escape hatch. */
     _raw: raw,
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/*           Six-group nested namespace `nxr.manifold.*` shim             */
+/* ---------------------------------------------------------------------- */
+
+// Module-level dedup set so `console.warn` per stub fires once across
+// the whole process, not once per ManifoldContext instance.
+const _stubWarned = new Set()
+function stubWarn(name) {
+  if (!_stubWarned.has(name)) {
+    _stubWarned.add(name)
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[nxr.manifold] ${name}: round-1 placeholder — full implementation lands in a follow-up round.`,
+    )
+  }
+  return { method: 'todo', name }
+}
+
+function asI32(a) { return a instanceof Int32Array   ? a : new Int32Array(a) }
+function asF64(a) { return a instanceof Float64Array ? a : new Float64Array(a) }
+
+/**
+ * Build a ManifoldContext exposing the six-group nested namespace
+ * (solve / operator / query / measure / uv / interpolate) on top of the
+ * underlying ContextWrapper. Each leaf delegates to a single C++ method;
+ * no math is reimplemented here. The split DEC and mesh operators (e.g.
+ * `operator.d0`, `operator.mass`) are extracted from the cached results
+ * of the bulk `assembleDECOperators` / `assembleMeshOperators` calls.
+ */
+function makeManifoldContext(raw) {
+  // Lazy caches for the bulk operator assemblies. `operator.d0()` and
+  // `operator.d1()` should not call assembleDECOperators twice.
+  let _dec  = null
+  let _mesh = null
+  const dec  = () => (_dec  ??= raw.assembleDECOperators())
+  const mesh = () => (_mesh ??= raw.assembleMeshOperators())
+
+  // ----- solve --------------------------------------------------------
+  const solve = {
+    poisson(sourceVerts, sourceValues) {
+      return raw.solvePoisson(asI32(sourceVerts), asF64(sourceValues))
+    },
+    /**
+     * Heat diffusion on the manifold over the given timesteps.
+     * Consolidates the legacy `generateHeatDiffusion` entry point —
+     * one call returns a TimeSeriesField.
+     */
+    heat(sources, sourceValues, timesteps, alpha = 1.0) {
+      return raw.generateHeatDiffusion(
+        asI32(sources), asF64(sourceValues), asF64(timesteps), alpha,
+      )
+    },
+    eigen(k, sigma = -1e-8) {
+      return raw.solveEigenmodes(k, sigma)
+    },
+    /** Provisional — flag for future re-classification (likely
+     *  `operator.hodgeDecomp` or `interpolate.hodge`). */
+    hodge(omega) {
+      return raw.hodgeDecompose(omega)
+    },
+  }
+
+  // ----- operator -----------------------------------------------------
+  // The split operators are CACHED — the first access of any DEC piece
+  // triggers a single assembleDECOperators() and reuses the result for
+  // every subsequent .d0() / .d1() / .star0() / .star1() / .star2() /
+  // .star1Inverse() call. Same pattern for mass / stiffness / laplacian.
+  const operator = {
+    d0:           () => dec().d0,
+    d1:           () => dec().d1,
+    star0:        () => dec().hodge0,
+    star1:        () => dec().hodge1,
+    star2:        () => dec().hodge2,
+    star1Inverse: () => dec().hodge1Inverse,
+    mass:         () => mesh().mass,
+    stiffness:    () => mesh().stiffness,
+    /** Cotangent Laplacian — same matrix as `operator.stiffness()`. */
+    laplacian:    () => mesh().stiffness,
+    /** Force a fresh assembly on next access (e.g. after geometry edit). */
+    invalidateCache() { _dec = null; _mesh = null },
+  }
+
+  // ----- query --------------------------------------------------------
+  // Most query primitives are round-1 stubs. Where a clean composition
+  // from existing primitives is available (e.g. `query.isoline` from
+  // computeIsolines), we wire it; otherwise emit a one-shot warning and
+  // return a TODO marker.
+  const query = {
+    /** Identity wrapper — useful for the functional form
+     *  `nxr.manifold.query.vertex(mctx, v)` where you want a structured
+     *  representation of a single-vertex selection. */
+    vertex(v) { return { vertexIndex: v } },
+    line(v1, v2)        { return stubWarn('query.line'); /* TODO: trace flip-out geodesic between v1 and v2 */ },
+    circle(v, r)        { return stubWarn('query.circle'); /* TODO: isoline of geodesic distance from v at radius r */ },
+    region(v, r)        { return stubWarn('query.region'); /* TODO: vertex set within geodesic radius r of v */ },
+    /** Single-level isoline of a per-vertex scalar field. */
+    isoline(field, level) {
+      const f = asF64(field)
+      return raw.computeIsolines(f, 1, level, level)
+    },
+    /** Karcher mean of source vertices (vector-heat findCenter, p-th power). */
+    center(sourceVerts, p = 2) {
+      return raw.vectorHeatFindCenter(asI32(sourceVerts), p)
+    },
+  }
+
+  // ----- measure ------------------------------------------------------
+  // `measure.distance` is callable AND has a `.signed` sub-property:
+  //   mctx.measure.distance([0])                  // unsigned heat-method geodesic
+  //   mctx.measure.distance.signed([0,1,2], true) // signed heat distance from a curve
+  function distance(sourceVerts) {
+    return raw.computeGeodesicDistance(asI32(sourceVerts))
+  }
+  distance.signed = function distanceSigned(curveVerts, isLoop = true, levelSet = 1 /* ZeroSet */) {
+    return raw.signedHeatDistance(asI32(curveVerts), isLoop, levelSet)
+  }
+  const measure = {
+    distance,
+    area(region)            { return stubWarn('measure.area'); /* TODO: integrate vertex/face areas over a region selection */ },
+    density(region, field)  { return stubWarn('measure.density'); /* TODO: average a scalar field over a region */ },
+    curvature()             { return raw.computeCurvatures() },
+    normal(type = 0)        { return raw.computeVertexNormals(type) },
+    frame()                 { return raw.computeFaceFrames() },
+  }
+
+  // ----- uv -----------------------------------------------------------
+  const uv = {
+    /** Boundary First Flattening (open meshes only — throws otherwise). */
+    bff() { return raw.computeUVCoordinates() },
+    /** Logarithmic map at one source vertex. */
+    logMap(sourceVertex, strategy = 1 /* AffineLocal */) {
+      return raw.vectorHeatLogMap(sourceVertex, strategy)
+    },
+    /** Sinusoidal stripes aligned to a 2-RoSy field. */
+    stripe(vertexFieldRaw, uniformFrequency, connectOnSingularities = true) {
+      return raw.computeStripePattern(asF64(vertexFieldRaw), uniformFrequency, connectOnSingularities)
+    },
+    /** Stripe pattern with a per-vertex frequency (length V). */
+    stripeFreq(vertexFieldRaw, frequencies, connectOnSingularities = true) {
+      return raw.computeStripePatternFreq(asF64(vertexFieldRaw), asF64(frequencies), connectOnSingularities)
+    },
+  }
+
+  // ----- interpolate --------------------------------------------------
+  const interpolate = {
+    /** Parallel-transport tangent vectors via the vector heat method. */
+    transport(sourceVerts, sourceVectors) {
+      return raw.vectorHeatTransport(asI32(sourceVerts), asF64(sourceVectors))
+    },
+    /** Smoothly extend a sparse scalar from the source vertices to all V. */
+    extend(sourceVerts, sourceValues) {
+      return raw.vectorHeatExtendScalar(asI32(sourceVerts), asF64(sourceValues))
+    },
+    /** Trivial-connection direction field driven by prescribed singularities. */
+    directionField(singVerts, singValues) {
+      return raw.computeDirectionField(asI32(singVerts), asF64(singValues))
+    },
+    /** Smoothest face-based direction field (Knöppel-Crane). */
+    smoothFaceField(nSym = 4, alignToCurvature = false) {
+      return raw.computeSmoothFaceField(nSym, alignToCurvature)
+    },
+    /** Smoothest vertex-based direction field — the `vertexFieldRaw` field
+     *  in the result is what `uv.stripe` consumes. */
+    smoothVertexField(nSym = 2, alignToCurvature = false) {
+      return raw.computeSmoothVertexField(nSym, alignToCurvature)
+    },
+  }
+
+  return {
+    // Mesh sizes
+    nV: () => raw.nV(),
+    nE: () => raw.nE(),
+    nF: () => raw.nF(),
+
+    // Six-group nested namespace
+    solve,
+    operator,
+    query,
+    measure,
+    uv,
+    interpolate,
+
+    /** Release WASM heap memory; the context is invalid after dispose(). */
+    dispose: () => raw.delete(),
+
+    /**
+     * Flat compatibility surface — same methods as `createContext()`'s
+     * return value, sharing the same underlying ContextWrapper. Useful
+     * for code that wants to mix flat and namespaced calls during the
+     * migration.
+     */
+    _flat: makeContextWrapper(raw),
+
+    /** Underlying Embind handle — escape hatch. */
+    _raw: raw,
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/*    Functional form: `nxr.manifold.{group}.{method}(mctx, ...args)`     */
+/* ---------------------------------------------------------------------- */
+
+/**
+ * Build the functional namespace tree once; every leaf forwards into
+ * the corresponding per-context method on the supplied ManifoldContext.
+ * Both APIs share the same caches and underlying ContextWrapper, so
+ *   nxr.nxr.manifold.operator.d0(mctx)
+ * is byte-equivalent to
+ *   mctx.operator.d0()
+ */
+function makeFunctionalNamespace() {
+  const fwd = (group, method) => (mctx, ...args) => {
+    const fn = mctx?.[group]?.[method]
+    if (typeof fn !== 'function') {
+      throw new Error(`nxr.manifold.${group}.${method}: not callable on this context`)
+    }
+    return fn.apply(mctx[group], args)
+  }
+  return {
+    solve: {
+      poisson: fwd('solve', 'poisson'),
+      heat:    fwd('solve', 'heat'),
+      eigen:   fwd('solve', 'eigen'),
+      hodge:   fwd('solve', 'hodge'),
+    },
+    operator: {
+      d0:           fwd('operator', 'd0'),
+      d1:           fwd('operator', 'd1'),
+      star0:        fwd('operator', 'star0'),
+      star1:        fwd('operator', 'star1'),
+      star2:        fwd('operator', 'star2'),
+      star1Inverse: fwd('operator', 'star1Inverse'),
+      mass:         fwd('operator', 'mass'),
+      stiffness:    fwd('operator', 'stiffness'),
+      laplacian:    fwd('operator', 'laplacian'),
+    },
+    query: {
+      vertex:  fwd('query', 'vertex'),
+      line:    fwd('query', 'line'),
+      circle:  fwd('query', 'circle'),
+      region:  fwd('query', 'region'),
+      isoline: fwd('query', 'isoline'),
+      center:  fwd('query', 'center'),
+    },
+    measure: {
+      // distance is special: callable AND has a .signed sub-leaf.
+      distance: Object.assign(
+        (mctx, ...args) => mctx.measure.distance(...args),
+        { signed: (mctx, ...args) => mctx.measure.distance.signed(...args) },
+      ),
+      area:      fwd('measure', 'area'),
+      density:   fwd('measure', 'density'),
+      curvature: fwd('measure', 'curvature'),
+      normal:    fwd('measure', 'normal'),
+      frame:     fwd('measure', 'frame'),
+    },
+    uv: {
+      bff:        fwd('uv', 'bff'),
+      logMap:     fwd('uv', 'logMap'),
+      stripe:     fwd('uv', 'stripe'),
+      stripeFreq: fwd('uv', 'stripeFreq'),
+    },
+    interpolate: {
+      transport:         fwd('interpolate', 'transport'),
+      extend:            fwd('interpolate', 'extend'),
+      directionField:    fwd('interpolate', 'directionField'),
+      smoothFaceField:   fwd('interpolate', 'smoothFaceField'),
+      smoothVertexField: fwd('interpolate', 'smoothVertexField'),
+    },
   }
 }
 

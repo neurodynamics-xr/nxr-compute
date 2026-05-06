@@ -301,10 +301,246 @@ export interface ComputeContext {
 
 export interface NxrCompute {
   version(): string
+  /** Flat surface (legacy). Returns a ComputeContext with the historical
+   *  per-method names (solveEigenmodes, computeGeodesicDistance, …). */
   createContext(
     vertices: Float64Array | number[],
     faces:    Int32Array  | number[],
   ): ComputeContext
+  /** Six-group nested namespace `nxr.manifold.*` over the same compute
+   *  context. Internally constructs a single ContextWrapper. */
+  createManifoldContext(
+    vertices: Float64Array | number[],
+    faces:    Int32Array  | number[],
+  ): ManifoldContext
+  /** Functional form of the six-group namespace. Each leaf takes a
+   *  ManifoldContext as its first argument. Identical behaviour to the
+   *  per-context methods. */
+  nxr: {
+    manifold: ManifoldFunctional
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/*           Six-group nested namespace `nxr.manifold.*` types            */
+/* ---------------------------------------------------------------------- */
+
+/** Solver entry points — Poisson, heat diffusion, eigenmodes, Hodge. */
+export interface SolveGroup {
+  poisson(
+    sourceVerts:  Int32Array  | number[],
+    sourceValues: Float64Array | number[],
+  ): Float64Array
+  /** Heat diffusion over the given timesteps; consolidates the legacy
+   *  `generateHeatDiffusion` entry point. */
+  heat(
+    sources:      Int32Array  | number[],
+    sourceValues: Float64Array | number[],
+    timesteps:    Float64Array | number[],
+    alpha?: number,
+  ): TimeSeriesField
+  eigen(k: number, sigma?: number): EigenResult
+  /** Provisional placement — Hodge–Helmholtz decomposition may be
+   *  reclassified to `operator.hodgeDecomp` in a future round. */
+  hodge(omega: Float64Array): HodgeResult
+}
+
+/** DEC and mesh operators as individual sparse matrices. The first call
+ *  to any DEC piece triggers a single bulk assembly internally; the same
+ *  applies to mass / stiffness / laplacian. */
+export interface OperatorGroup {
+  d0():           SparseMatrixCOO
+  d1():           SparseMatrixCOO
+  star0():        SparseMatrixCOO
+  star1():        SparseMatrixCOO
+  star2():        SparseMatrixCOO
+  star1Inverse(): SparseMatrixCOO
+  mass():         SparseMatrixCOO
+  stiffness():    SparseMatrixCOO
+  /** Cotangent Laplacian — same matrix as `stiffness()`. */
+  laplacian():    SparseMatrixCOO
+  /** Drop the cached DEC and mesh operator results so the next access
+   *  re-runs `assembleDECOperators` / `assembleMeshOperators`. */
+  invalidateCache(): void
+}
+
+/** Geometric selections. Most are round-1 placeholders. */
+export interface QueryGroup {
+  vertex(v: number): { vertexIndex: number }
+  /** TODO (round-1 stub) — flip-out geodesic between two vertices. */
+  line(v1: number, v2: number):    { method: 'todo'; name: string }
+  /** TODO (round-1 stub) — isoline of geodesic distance at radius r. */
+  circle(v: number, r: number):    { method: 'todo'; name: string }
+  /** TODO (round-1 stub) — vertex set within geodesic radius r. */
+  region(v: number, r: number):    { method: 'todo'; name: string }
+  /** Single-level isoline of a per-vertex scalar field. */
+  isoline(field: Float64Array | number[], level: number): SegmentsResult
+  /** Karcher mean of source vertices (vector-heat findCenter). */
+  center(sourceVerts: Int32Array | number[], p?: number): Float64Array
+}
+
+/** `measure.distance` is callable (heat-method geodesic) AND carries a
+ *  `.signed` sub-leaf for the signed heat distance from a curve. */
+export interface DistanceFn {
+  (sourceVerts: Int32Array | number[]): Float64Array
+  signed(
+    curveVerts: Int32Array | number[],
+    isLoop?:    boolean,
+    levelSet?:  SignedHeatLevelSet,
+  ): Float64Array
+}
+
+export interface MeasureGroup {
+  distance: DistanceFn
+  /** TODO (round-1 stub) — area of a region selection. */
+  area(region: unknown):                    { method: 'todo'; name: string }
+  /** TODO (round-1 stub) — average a scalar field over a region. */
+  density(region: unknown, field: unknown): { method: 'todo'; name: string }
+  curvature():                              CurvatureResult
+  normal(type?: NormalType):                Float64Array
+  frame():                                  FaceFrames
+}
+
+export interface UvGroup {
+  /** Boundary First Flattening — throws on closed meshes. */
+  bff(): Float64Array
+  logMap(sourceVertex: number, strategy?: LogMapStrategy): LogMapResult
+  stripe(
+    vertexFieldRaw:           Float64Array,
+    uniformFrequency:         number,
+    connectOnSingularities?:  boolean,
+  ): SegmentsResult
+  stripeFreq(
+    vertexFieldRaw:           Float64Array,
+    frequencies:              Float64Array,
+    connectOnSingularities?:  boolean,
+  ): SegmentsResult
+}
+
+export interface InterpolateGroup {
+  transport(
+    sourceVerts:   Int32Array  | number[],
+    sourceVectors: Float64Array | number[],
+  ): Float64Array
+  extend(
+    sourceVerts:  Int32Array  | number[],
+    sourceValues: Float64Array | number[],
+  ): Float64Array
+  directionField(
+    singVerts:  Int32Array  | number[],
+    singValues: Float64Array | number[],
+  ): DirectionFieldResult
+  smoothFaceField(nSym?: number, alignToCurvature?: boolean): Float64Array
+  smoothVertexField(nSym?: number, alignToCurvature?: boolean): SmoothVertexFieldResult
+}
+
+/** Stateful compute context exposed under the six-group nested
+ *  namespace. Same underlying ContextWrapper as the flat surface; both
+ *  may be used interchangeably during migration via `_flat`. */
+export interface ManifoldContext {
+  nV(): number
+  nE(): number
+  nF(): number
+
+  solve:       SolveGroup
+  operator:    OperatorGroup
+  query:       QueryGroup
+  measure:     MeasureGroup
+  uv:          UvGroup
+  interpolate: InterpolateGroup
+
+  /** Release WASM heap memory; the context is invalid after dispose(). */
+  dispose(): void
+  /** Flat compatibility surface (same as `createContext()`'s return). */
+  _flat: ComputeContext
+}
+
+/** Functional form of the six-group namespace. Each leaf takes the
+ *  ManifoldContext as its first argument and forwards to the matching
+ *  per-context method. */
+export interface ManifoldFunctional {
+  solve: {
+    poisson(mctx: ManifoldContext, sourceVerts: Int32Array | number[], sourceValues: Float64Array | number[]): Float64Array
+    heat(
+      mctx: ManifoldContext,
+      sources: Int32Array | number[],
+      sourceValues: Float64Array | number[],
+      timesteps: Float64Array | number[],
+      alpha?: number,
+    ): TimeSeriesField
+    eigen(mctx: ManifoldContext, k: number, sigma?: number): EigenResult
+    hodge(mctx: ManifoldContext, omega: Float64Array): HodgeResult
+  }
+  operator: {
+    d0(mctx: ManifoldContext):           SparseMatrixCOO
+    d1(mctx: ManifoldContext):           SparseMatrixCOO
+    star0(mctx: ManifoldContext):        SparseMatrixCOO
+    star1(mctx: ManifoldContext):        SparseMatrixCOO
+    star2(mctx: ManifoldContext):        SparseMatrixCOO
+    star1Inverse(mctx: ManifoldContext): SparseMatrixCOO
+    mass(mctx: ManifoldContext):         SparseMatrixCOO
+    stiffness(mctx: ManifoldContext):    SparseMatrixCOO
+    laplacian(mctx: ManifoldContext):    SparseMatrixCOO
+  }
+  query: {
+    vertex(mctx: ManifoldContext, v: number):                    { vertexIndex: number }
+    line(mctx: ManifoldContext, v1: number, v2: number):         { method: 'todo'; name: string }
+    circle(mctx: ManifoldContext, v: number, r: number):         { method: 'todo'; name: string }
+    region(mctx: ManifoldContext, v: number, r: number):         { method: 'todo'; name: string }
+    isoline(mctx: ManifoldContext, field: Float64Array | number[], level: number): SegmentsResult
+    center(mctx: ManifoldContext, sourceVerts: Int32Array | number[], p?: number): Float64Array
+  }
+  measure: {
+    distance: {
+      (mctx: ManifoldContext, sourceVerts: Int32Array | number[]): Float64Array
+      signed(
+        mctx: ManifoldContext,
+        curveVerts: Int32Array | number[],
+        isLoop?: boolean,
+        levelSet?: SignedHeatLevelSet,
+      ): Float64Array
+    }
+    area(mctx: ManifoldContext, region: unknown):                    { method: 'todo'; name: string }
+    density(mctx: ManifoldContext, region: unknown, field: unknown): { method: 'todo'; name: string }
+    curvature(mctx: ManifoldContext):                                CurvatureResult
+    normal(mctx: ManifoldContext, type?: NormalType):                Float64Array
+    frame(mctx: ManifoldContext):                                    FaceFrames
+  }
+  uv: {
+    bff(mctx: ManifoldContext): Float64Array
+    logMap(mctx: ManifoldContext, sourceVertex: number, strategy?: LogMapStrategy): LogMapResult
+    stripe(
+      mctx: ManifoldContext,
+      vertexFieldRaw: Float64Array,
+      uniformFrequency: number,
+      connectOnSingularities?: boolean,
+    ): SegmentsResult
+    stripeFreq(
+      mctx: ManifoldContext,
+      vertexFieldRaw: Float64Array,
+      frequencies: Float64Array,
+      connectOnSingularities?: boolean,
+    ): SegmentsResult
+  }
+  interpolate: {
+    transport(
+      mctx: ManifoldContext,
+      sourceVerts: Int32Array | number[],
+      sourceVectors: Float64Array | number[],
+    ): Float64Array
+    extend(
+      mctx: ManifoldContext,
+      sourceVerts: Int32Array | number[],
+      sourceValues: Float64Array | number[],
+    ): Float64Array
+    directionField(
+      mctx: ManifoldContext,
+      singVerts: Int32Array | number[],
+      singValues: Float64Array | number[],
+    ): DirectionFieldResult
+    smoothFaceField(mctx: ManifoldContext, nSym?: number, alignToCurvature?: boolean): Float64Array
+    smoothVertexField(mctx: ManifoldContext, nSym?: number, alignToCurvature?: boolean): SmoothVertexFieldResult
+  }
 }
 
 export interface InitOptions {

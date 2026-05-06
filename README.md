@@ -55,6 +55,88 @@ identically for native, browser, and MATLAB consumers.
 | MATLAB MEX | `bindings/mex/` | `nxr_compute.mexw64` | ✓ |
 | CLI smoke | `bindings/cli/` | `nxr_compute.exe` | ✓ |
 
+## API namespaces (WASM/JS)
+
+The package is `@neurodynamics-xr/nxr-compute` — the engine. The JS API
+exposes the manifold-DG concepts under a six-group nested namespace
+`nxr.manifold.*`. The C++ embind class (`ContextWrapper`) and the WASM
+artifact (`nxr_compute.wasm`) stay flat; the namespace tree is a thin JS
+shim on top.
+
+```
+nxr.manifold
+├── solve.{poisson, heat, eigen, hodge}
+├── operator.{d0, d1, star0, star1, star2, star1Inverse,
+│             mass, stiffness, laplacian}
+├── query.{vertex, line*, circle*, region*, isoline, center}
+├── measure.{distance, distance.signed, area*, density*,
+│            curvature, normal, frame}
+├── uv.{bff, logMap, stripe, stripeFreq}
+└── interpolate.{transport, extend, directionField,
+                 smoothFaceField, smoothVertexField}
+```
+
+`*` marks round-1 placeholders — see "Stubbed methods" below.
+
+Two equivalent forms are supported:
+
+```js
+import { initNxrCompute } from '@neurodynamics-xr/nxr-compute'
+const nxr  = await initNxrCompute()
+const mctx = nxr.createManifoldContext(verts, faces)
+
+// Per-context (preferred):
+mctx.solve.eigen(300)
+mctx.operator.d0()
+mctx.measure.distance([0])
+mctx.measure.distance.signed([0, 1, 2], true)
+mctx.uv.bff()
+mctx.interpolate.transport([0], [1, 0, 0])
+
+// Functional (same compute context, identical behaviour):
+nxr.nxr.manifold.solve.eigen(mctx, 300)
+nxr.nxr.manifold.operator.d0(mctx)
+
+// Free WASM heap when done:
+mctx.dispose()
+```
+
+One-liner per group:
+
+| Group | Example |
+|---|---|
+| `solve` | `mctx.solve.poisson([0], [1.0])` — solve Δu = f with Dirichlet sources |
+| `operator` | `mctx.operator.laplacian()` — cotangent Laplacian as `SparseMatrixCOO` |
+| `query` | `mctx.query.center([0, 1, 2])` — Karcher mean of three vertices |
+| `measure` | `mctx.measure.curvature()` — Gaussian + mean + principal curvatures |
+| `uv` | `mctx.uv.logMap(0)` — logarithmic map at vertex 0 |
+| `interpolate` | `mctx.interpolate.smoothFaceField(4)` — smooth cross field |
+
+**Caching.** `operator.d0()` … `operator.star1Inverse()` share one
+internal `assembleDECOperators` call; `operator.mass()`, `.stiffness()`,
+and `.laplacian()` share one `assembleMeshOperators` call. Use
+`mctx.operator.invalidateCache()` to force re-assembly.
+
+**Flat surface (legacy).** `nxr.createContext(verts, faces)` is
+unchanged — same method names as before. `mctx._flat` exposes the same
+flat surface on the same underlying ContextWrapper, useful for mixed
+namespaced + flat code during migration.
+
+### Stubbed methods (round 1)
+
+These return a `{ method: 'todo', name }` marker and emit a one-shot
+`console.warn`. Full implementations land in follow-up rounds:
+
+- `query.line(v1, v2)` — flip-out geodesic between two vertices
+- `query.circle(v, r)` — geodesic-distance isoline at radius r
+- `query.region(v, r)` — vertex set within geodesic radius r
+- `measure.area(region)` — integrate vertex/face areas over a selection
+- `measure.density(region, field)` — average a scalar field over a region
+
+`solve.hodge` is wired (delegates to the existing `hodgeDecompose`) but
+its grouping is **provisional** — it may move to `operator.hodgeDecomp`
+or `interpolate.hodge` in a later refactor.
+
 ## Build
 
 ```bash
