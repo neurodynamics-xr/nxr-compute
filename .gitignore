@@ -42,3 +42,6 @@ Thumbs.db
 
 # Test outputs
 .tmp-*/
+
+# Local Claude Code workspace settings
+.claude/

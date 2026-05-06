@@ -34,25 +34,53 @@ target_link_libraries(nxr_compute_wasm PRIVATE nxr_compute)
 # EXPORT_NAME=createNxrComputeModule  Name of the factory
 # EXPORT_ES6                   Emit ES module (`export default`)
 # ALLOW_MEMORY_GROWTH          Linear memory grows on demand (no fixed cap)
-# INITIAL_MEMORY=64MB          Comfortable starting heap
+# INITIAL_MEMORY=512MB         Sized to fit solveEigenmodes(k=1000) on a
+#                              dense mesh without triggering wasmMemory
+#                              .grow(). Each grow() re-binds every HEAP
+#                              view — host code that cached a HEAPF64
+#                              reference would read stale memory after
+#                              a grow. Virtual reservation only; OS
+#                              lazy-commits physical pages on touch.
 # MAXIMUM_MEMORY=2GB           Browser-side cap
 # ENVIRONMENT=web,node,worker  Run in any of these
 # NO_EXIT_RUNTIME=1            Keep the runtime alive after main() (so the
 #                              ComputeContext doesn't get torn down)
 # DISABLE_EXCEPTION_CATCHING=0 Allow C++ exceptions (nxr-compute throws on bad input)
-# EXPORTED_RUNTIME_METHODS     Heap typed-array views the JS wrapper uses
+# EXPORTED_RUNTIME_METHODS     Heap typed-array views + helpers used by:
+#                              • embind's `convertJSArrayToNumberVector`
+#                                (HEAPU8 — required for typed-array → C++
+#                                vector marshalling; missing it makes ALL
+#                                method calls that take typed-array args
+#                                crash with "memory access out of bounds"
+#                                in the Node embind path)
+#                              • exception decoding (UTF8ToString —
+#                                lets JS callers read C++ what() strings
+#                                without manually walking the heap)
+#                              • cancel/progress slots in solveEigenmodes
+#                                (getValue/setValue — generic accessors
+#                                so callers can avoid manual `Module.HEAP32[ptr>>2]`)
+# EXPORTED_FUNCTIONS           _malloc/_free needed by useEigensolve to
+#                              allocate cancel + progress int32 slots in
+#                              the WASM heap and pass their pointers in.
+# STACK_SIZE                   8 MB. Default is 64 KB, which is too small
+#                              for Eigen's SimplicialLLT factorize on a
+#                              ~14k-vertex Laplacian — it traps with
+#                              "memory access out of bounds" because the
+#                              elimination-tree traversal blows the stack.
 target_link_options(nxr_compute_wasm PRIVATE
     "--bind"
     "-sMODULARIZE=1"
     "-sEXPORT_NAME=createNxrComputeModule"
     "-sEXPORT_ES6=1"
     "-sALLOW_MEMORY_GROWTH=1"
-    "-sINITIAL_MEMORY=67108864"
+    "-sINITIAL_MEMORY=536870912"
     "-sMAXIMUM_MEMORY=2147483648"
+    "-sSTACK_SIZE=8388608"
     "-sENVIRONMENT=web,node,worker"
     "-sNO_EXIT_RUNTIME=1"
     "-sDISABLE_EXCEPTION_CATCHING=0"
-    "-sEXPORTED_RUNTIME_METHODS=['HEAPF32','HEAPF64','HEAP32','HEAPU32']"
+    "-sEXPORTED_RUNTIME_METHODS=['HEAP8','HEAPU8','HEAP16','HEAPU16','HEAP32','HEAPU32','HEAPF32','HEAPF64','UTF8ToString','getValue','setValue']"
+    "-sEXPORTED_FUNCTIONS=['_malloc','_free']"
 )
 
 # Release build: -O3 + LTO. Adds a few minutes to link but produces a
