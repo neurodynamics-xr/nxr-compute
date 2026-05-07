@@ -160,8 +160,18 @@ public:
 
     // ── Mesh operators ───────────────────────────────────────
 
-    val assembleMeshOperators() {
-        ensureOps();
+    // Optional `variantName` accepts "voronoi" (default), "barycentric",
+    // or "full". Empty string → default. Switching variants invalidates
+    // the cached MeshOperators (and any cached factor that depended on
+    // the previous mass).
+    val assembleMeshOperators(const std::string& variantName) {
+        nxr::compute::MassMatrixVariant variant = variantName.empty()
+            ? nxr::compute::MassMatrixVariant::Voronoi
+            : nxr::compute::parseMassMatrixVariant(variantName);
+        if (!ops_ || ops_->massVariant != variant) {
+            ops_ = std::make_unique<nxr::compute::MeshOperators>(
+                nxr::compute::assembleMeshOperators(*ctx_, variant));
+        }
         return meshOpsToVal();
     }
 
@@ -625,6 +635,10 @@ private:
         val o = val::object();
         o.set("stiffness",   sparseToVal(ops_->stiffness));
         o.set("mass",        sparseToVal(ops_->mass));
+        o.set("massVariant", std::string(
+            ops_->massVariant == nxr::compute::MassMatrixVariant::Voronoi      ? "voronoi" :
+            ops_->massVariant == nxr::compute::MassMatrixVariant::Barycentric  ? "barycentric" :
+                                                                                 "full"));
         o.set("vertexAreas", eigenVectorToVal(ops_->vertexAreas));
         o.set("normals",     eigenMatrixToVal(ops_->normals));
         o.set("totalArea",   ops_->totalArea);

@@ -147,6 +147,10 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     target_link_libraries(test_graph_agnostic PRIVATE nxr_compute)
     add_test(NAME test_graph_agnostic COMMAND test_graph_agnostic)
 
+    add_executable(test_mass_variants test/test_mass_variants.cpp)
+    target_link_libraries(test_mass_variants PRIVATE nxr_compute)
+    add_test(NAME test_mass_variants COMMAND test_mass_variants)
+
     add_executable(test_geometry_central_extras test/test_geometry_central_extras.cpp)
     target_link_libraries(test_geometry_central_extras PRIVATE nxr_compute)
     add_test(NAME test_geometry_central_extras COMMAND test_geometry_central_extras)
