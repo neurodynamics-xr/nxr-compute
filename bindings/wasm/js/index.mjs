@@ -132,7 +132,8 @@ function makeContextWrapper(raw) {
     nF: () => raw.nF(),
 
     // Operators / geometry
-    assembleMeshOperators: () => raw.assembleMeshOperators(),
+    // `variant` ∈ "voronoi" (default) | "barycentric" | "full".
+    assembleMeshOperators: (variant = "") => raw.assembleMeshOperators(variant),
     assembleDECOperators:  () => raw.assembleDECOperators(),
     computeFaceFrames:     () => raw.computeFaceFrames(),
     computeVertexNormals:  (type = 0) => raw.computeVertexNormals(type),
@@ -293,7 +294,7 @@ function makeManifoldContext(raw) {
   let _dec  = null
   let _mesh = null
   const dec  = () => (_dec  ??= raw.assembleDECOperators())
-  const mesh = () => (_mesh ??= raw.assembleMeshOperators())
+  const mesh = () => (_mesh ??= raw.assembleMeshOperators(""))
 
   // ----- solve --------------------------------------------------------
   const solve = {

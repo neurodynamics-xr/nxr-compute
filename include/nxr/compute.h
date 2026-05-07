@@ -33,6 +33,7 @@
 #include <Eigen/Core>
 #include <Eigen/Sparse>
 #include <memory>
+#include <string>
 #include <vector>
 #include <map>
 
@@ -92,23 +93,62 @@ private:
 
 // ── Operator Assembly ────────────────────────────────────────
 
+/**
+ * Mass-matrix variant for the FEM L² inner product ⟨u, v⟩ = uᵀ M v.
+ *
+ * All three variants conserve total surface area (Σᵢⱼ Mᵢⱼ == totalArea)
+ * and are symmetric. They differ in M's structure and consequently in
+ * the eigenvalues / eigenvectors of the generalized problem K φ = λ M φ.
+ *
+ * - Voronoi (default): diagonal, M_ii = vertex's mixed Voronoi-barycentric
+ *   dual area (Meyer et al. 2003). Robust on obtuse triangles. Matches
+ *   geometry-central's vertexDualAreas. The default for backward-compat.
+ *
+ * - Barycentric: diagonal, M_ii = (Σ adjacent triangle areas) / 3. Pure
+ *   lumped mass, no Voronoi correction. Cheaper to assemble; less
+ *   geometrically accurate than Voronoi on irregular triangulations.
+ *
+ * - ConsistentFEM: full sparse, off-diagonal couplings between adjacent
+ *   vertices. Per-triangle element matrix is (A_T / 12) · [[2 1 1][1 2 1][1 1 2]],
+ *   from L² integrals of piecewise-linear hat functions. This is the
+ *   canonical FEM mass — used by lapy and gptoolbox's `'full'` variant.
+ *   Eigenvalues converge to the continuous Laplace–Beltrami spectrum
+ *   faster than diagonal lumped variants on coarse meshes.
+ */
+enum class MassMatrixVariant {
+    Voronoi,        // diagonal, mixed Voronoi-barycentric (Meyer)
+    Barycentric,    // diagonal, area/3 per vertex
+    ConsistentFEM   // sparse, off-diagonal couplings (full FEM mass)
+};
+
 struct MeshOperators {
     Eigen::SparseMatrix<double> stiffness;  // cotangent Laplacian (PSD, symmetrized)
-    Eigen::SparseMatrix<double> mass;       // lumped Voronoi mass (diagonal, SPD)
-    Eigen::VectorXd vertexAreas;            // dual vertex areas [nV]
+    Eigen::SparseMatrix<double> mass;       // mass matrix per `massVariant` (SPD)
+    MassMatrixVariant massVariant;          // which variant produced `mass`
+    Eigen::VectorXd vertexAreas;            // mixed Voronoi vertex areas [nV] (variant-independent)
     Eigen::MatrixXd normals;                // vertex normals [nV, 3]
     double totalArea;
     int nV, nE, nF;
 };
 
-/** Assemble operators from a context. */
-MeshOperators assembleMeshOperators(ComputeContext& ctx);
+/** Assemble operators from a context. Default mass variant is Voronoi
+ *  (matches the previous behavior and the cortical-flow / mesh-tests
+ *  consumers). */
+MeshOperators assembleMeshOperators(
+    ComputeContext& ctx,
+    MassMatrixVariant variant = MassMatrixVariant::Voronoi);
 
 /** Convenience overload: creates context and assembles operators in one call. */
 MeshOperators assembleMeshOperators(
     const double* vertices, int nV,
-    const int32_t* faces, int nF
+    const int32_t* faces, int nF,
+    MassMatrixVariant variant = MassMatrixVariant::Voronoi
 );
+
+/** String → enum helper for binding shells (WASM, addon).
+ *  Accepts "voronoi", "barycentric", "full". Throws Error(InvalidInput)
+ *  on unknown. Case-sensitive (matches the MATLAB +bct convention). */
+MassMatrixVariant parseMassMatrixVariant(const std::string& name);
 
 // ── DEC Operators ────────────────────────────────────────────
 

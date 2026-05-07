@@ -12,12 +12,19 @@ export interface SparseMatrixCOO {
   nnz:  number
 }
 
+/** FEM mass-matrix variant string passed to assembleMeshOperators(). */
+export type MassMatrixVariant = "voronoi" | "barycentric" | "full"
+
 export interface MeshOperators {
   /** Cotangent Laplacian (PSD, symmetrized), V×V sparse */
   stiffness:   SparseMatrixCOO
-  /** Voronoi mass matrix (SPD, diagonal), V×V sparse */
+  /** Mass matrix, V×V sparse. SPD; diagonal for "voronoi"/"barycentric",
+   *  has off-diagonal couplings for "full". */
   mass:        SparseMatrixCOO
-  /** Per-vertex dual area, V */
+  /** Which variant produced `mass`. */
+  massVariant: MassMatrixVariant
+  /** Per-vertex Voronoi dual area, V (always Voronoi-derived
+   *  regardless of `massVariant`). */
   vertexAreas: Float64Array
   /** Per-vertex normals, V*3 row-major */
   normals:     Float64Array
@@ -174,7 +181,9 @@ export interface ComputeContext {
   nF(): number
 
   // Operators / geometry
-  assembleMeshOperators(): MeshOperators
+  /** Assemble cotangent stiffness + mass matrix.
+   *  @param variant — mass-matrix variant ("voronoi" default, "barycentric", "full"). */
+  assembleMeshOperators(variant?: MassMatrixVariant | ""): MeshOperators
   assembleDECOperators():  DECOperators
   computeFaceFrames():     FaceFrames
   computeVertexNormals(type?: NormalType): Float64Array
