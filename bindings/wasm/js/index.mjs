@@ -60,6 +60,40 @@ function wrap(mod) {
     version: () => mod.version(),
 
     /**
+     * Generalized eigensolve K φ = λ M φ from caller-supplied COO triplets.
+     * Bypasses the halfedge ComputeContext path — use this when K and M
+     * are assembled outside of geometry-central (graph Laplacians, FEM
+     * assemblies on non-manifold meshes, custom regularized matrices).
+     *
+     * @param {object} args
+     * @param {Int32Array | number[]} args.K_rows  COO row indices of K
+     * @param {Int32Array | number[]} args.K_cols  COO col indices of K
+     * @param {Float64Array | number[]} args.K_vals COO values of K
+     * @param {Int32Array | number[]} args.M_rows  COO row indices of M
+     * @param {Int32Array | number[]} args.M_cols  COO col indices of M
+     * @param {Float64Array | number[]} args.M_vals COO values of M
+     * @param {number} args.n        common matrix dimension (square)
+     * @param {number} args.k        number of eigenmodes to compute
+     * @param {number} [args.sigma]  shift-invert center (default -1e-8)
+     * @param {number} [args.cancelAddr]   wasm heap pointer to cancel int32 (0 = none)
+     * @param {number} [args.progressAddr] wasm heap pointer to 3×int32 progress region
+     * @param {number} [args.progressLen]  progress region length, default 0
+     * @returns {{ eigenvectors: Float64Array, eigenvalues: Float64Array, k: number, nConverged: number }}
+     *          eigenvectors are vMajor row-major (Φ[v, k] at offset v*K + k).
+     */
+    solveEigenmodesFromTriplets: ({
+        K_rows, K_cols, K_vals,
+        M_rows, M_cols, M_vals,
+        n, k, sigma = -1e-8,
+        cancelAddr = 0, progressAddr = 0, progressLen = 0,
+    }) => mod.solveEigenmodesFromTriplets(
+        K_rows, K_cols, K_vals,
+        M_rows, M_cols, M_vals,
+        n, k, sigma,
+        cancelAddr, progressAddr, progressLen,
+    ),
+
+    /**
      * Create a ComputeContext for the given mesh (flat surface).
      *
      * @param {Float64Array | number[]} vertices — `V × 3` row-major

@@ -718,6 +718,120 @@ std::string getVersion() {
     return "nxr-compute 0.1.0";
 }
 
+/**
+ * Generalized eigenproblem K φ = λ M φ from JS-supplied COO triplets.
+ *
+ * Mirrors `ContextWrapper::solveEigenmodes` — same Spectra IRAM /
+ * shift-invert path and same cancel/progress contract — but takes K
+ * and M as raw triplet arrays instead of building them through
+ * `assembleMeshOperators`. Useful for callers that compute their own
+ * sparse Laplacians (graph Laplacians, FEM assemblies on non-manifold
+ * face soups, custom regularized matrices, etc.) without going through
+ * the geometry-central halfedge stack.
+ *
+ * Args (all coordinate-format inputs are 0-based):
+ *   K_rows, K_cols  Int32Array (or array of ints), length = K_nnz
+ *   K_vals          Float64Array (or array of numbers), length = K_nnz
+ *   M_rows, M_cols, M_vals  same shape as K
+ *   n               common matrix size for K and M (square)
+ *   k, sigma        eigensolve params (sigma defaults to -1e-8 if
+ *                   the caller passes 0; explicit value preferred).
+ *   cancelAddr, progressAddr, progressLen  same as ContextWrapper.solveEigenmodes
+ *
+ * Returns: { eigenvectors, eigenvalues, k, nConverged } in vMajor
+ * row-major layout, identical to ContextWrapper.solveEigenmodes.
+ *
+ * Triplets with duplicate (row, col) pairs are summed when the sparse
+ * matrix is built (Eigen's setFromTriplets default behavior). This is
+ * the natural assembly order for FEM consistent-mass and cotangent
+ * stiffness, which both accumulate per-triangle contributions.
+ */
+val solveEigenmodesFromTriplets(
+    val K_rows, val K_cols, val K_vals,
+    val M_rows, val M_cols, val M_vals,
+    int n,
+    int k, double sigma,
+    std::intptr_t cancelAddr,
+    std::intptr_t progressAddr,
+    int progressLen)
+{
+    auto Kr = emscripten::convertJSArrayToNumberVector<int32_t>(K_rows);
+    auto Kc = emscripten::convertJSArrayToNumberVector<int32_t>(K_cols);
+    auto Kv = emscripten::convertJSArrayToNumberVector<double>(K_vals);
+    auto Mr = emscripten::convertJSArrayToNumberVector<int32_t>(M_rows);
+    auto Mc = emscripten::convertJSArrayToNumberVector<int32_t>(M_cols);
+    auto Mv = emscripten::convertJSArrayToNumberVector<double>(M_vals);
+
+    if (Kr.size() != Kc.size() || Kr.size() != Kv.size()) {
+        throw std::invalid_argument(
+            "solveEigenmodesFromTriplets: K row/col/val length mismatch");
+    }
+    if (Mr.size() != Mc.size() || Mr.size() != Mv.size()) {
+        throw std::invalid_argument(
+            "solveEigenmodesFromTriplets: M row/col/val length mismatch");
+    }
+    if (n <= 0) {
+        throw std::invalid_argument(
+            "solveEigenmodesFromTriplets: n must be > 0");
+    }
+
+    Eigen::SparseMatrix<double> K(n, n), M(n, n);
+    {
+        std::vector<Eigen::Triplet<double>> Kt;
+        Kt.reserve(Kr.size());
+        for (std::size_t i = 0; i < Kr.size(); ++i) {
+            Kt.emplace_back(Kr[i], Kc[i], Kv[i]);
+        }
+        K.setFromTriplets(Kt.begin(), Kt.end());
+        K.makeCompressed();
+    }
+    {
+        std::vector<Eigen::Triplet<double>> Mt;
+        Mt.reserve(Mr.size());
+        for (std::size_t i = 0; i < Mr.size(); ++i) {
+            Mt.emplace_back(Mr[i], Mc[i], Mv[i]);
+        }
+        M.setFromTriplets(Mt.begin(), Mt.end());
+        M.makeCompressed();
+    }
+
+    nxr::compute::CancellationToken cancel = cancelAddr
+        ? nxr::compute::CancellationToken(
+            reinterpret_cast<const std::atomic<int32_t>*>(cancelAddr))
+        : nxr::compute::CancellationToken{};
+    nxr::compute::ProgressObserver progress;
+    if (progressAddr && progressLen >= 3) {
+        auto* base = reinterpret_cast<std::atomic<int32_t>*>(progressAddr);
+        progress.iteration       = &base[0];
+        progress.totalIterations = &base[1];
+        progress.residualMicro   = &base[2];
+    }
+
+    try {
+        nxr::compute::EigenResult r = nxr::compute::solveEigenmodes(
+            K, M, k, sigma, cancel, progress);
+        // Build the JS return object inline (mirrors ContextWrapper's
+        // eigenResultToVal — that one is a class member, so we replicate
+        // its three-line body here rather than re-host it).
+        val o = val::object();
+        o.set("eigenvectors", eigenMatrixToVal(r.eigenvectors));
+        o.set("eigenvalues",  eigenVectorToVal(r.eigenvalues));
+        o.set("k",            r.k);
+        o.set("nConverged",   r.nConverged);
+        return o;
+    } catch (const nxr::compute::Error& e) {
+        std::string msg = "[";
+        msg += nxr::compute::errorCodeName(e.code());
+        msg += "] ";
+        msg += e.what();
+        if (!e.hint().empty()) {
+            msg += " | hint: ";
+            msg += std::string(e.hint());
+        }
+        throw std::runtime_error(msg);
+    }
+}
+
 // ── Embind module bindings ───────────────────────────────────
 
 EMSCRIPTEN_BINDINGS(nxr_compute_wasm) {
@@ -772,4 +886,6 @@ EMSCRIPTEN_BINDINGS(nxr_compute_wasm) {
         ;
 
     emscripten::function("version", &getVersion);
+    emscripten::function("solveEigenmodesFromTriplets",
+                         &solveEigenmodesFromTriplets);
 }
