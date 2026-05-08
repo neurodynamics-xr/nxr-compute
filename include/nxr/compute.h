@@ -150,6 +150,98 @@ MeshOperators assembleMeshOperators(
  *  on unknown. Case-sensitive (matches the MATLAB +bct convention). */
 MassMatrixVariant parseMassMatrixVariant(const std::string& name);
 
+// ── Connection Laplacian ─────────────────────────────────────
+//
+// Connection Laplacian on a chosen domain (vertex / face / edge).
+// The operator that drives smoothest n-RoSy direction fields,
+// parallel-transport energies, and tangent-bundle eigendecompositions.
+//
+// Mathematically the operator is complex Hermitian on the chosen
+// domain (V, F, or E entries), built from cotangent weights and
+// Levi-Civita transport rotations raised to the nSym power. The
+// `Real2N` format (default) lowers each complex entry a + bi to the
+// 2×2 real block [[a, -b], [b, a]], producing a 2N×2N symmetric real
+// matrix that drops directly into nxr-compute's existing real-only
+// eigensolver (`solveEigenmodes`) when paired with a block-diagonal
+// real mass matrix `blkdiag(M, M)`. The smallest eigenpair then
+// reproduces the smoothest n-direction field that
+// `computeSmoothest{Vertex,Face}DirectionField` returns internally.
+//
+// `Complex` format leaves the matrix as complex Hermitian; bindings
+// surface real and imaginary triplet arrays separately. Useful when
+// callers want to apply a complex-Hermitian eigensolver themselves.
+//
+// MATLAB reference: none in `+bct` today (the existing direction-field
+// reference uses trivial connections; connection-Laplacian-based
+// smoothest fields delegate to geometry-central). When a MATLAB
+// oracle harness lands, mirror it under
+// `+bct.+manifold.+operator.connectionLaplacian`.
+
+enum class ConnectionDomain {
+    Vertex,                  // V × V (intrinsic vertex CL)
+    Face,                    // F × F (intrinsic face CL — geometry-central
+                             // has FIXME on face weights, propagated as a
+                             // doc caveat below)
+    EdgeCrouzeixRaviart      // E × E (intrinsic Crouzeix-Raviart CL)
+};
+
+enum class ConnectionLaplacianFormat {
+    Real2N,                  // 2N × 2N symmetric real (default)
+    Complex                  // N × N complex Hermitian, surfaced as
+                             // parallel real/imag triplet arrays at
+                             // the binding edge
+};
+
+/** Options bag for `assembleConnectionLaplacian`. Each field is
+ *  defaulted; a value-initialized struct produces the default
+ *  vertex / nSym=1 / regularization=1e-8 / Real2N variant. */
+struct ConnectionLaplacianOptions {
+    ConnectionDomain domain          = ConnectionDomain::Vertex;
+    int    nSym                      = 1;       // 1=vector, 2=line, 4=cross
+    double regularization            = 1e-8;    // additive ε·I shift
+    ConnectionLaplacianFormat format = ConnectionLaplacianFormat::Real2N;
+};
+
+/** Result of `assembleConnectionLaplacian`. Exactly one of `K_real`
+ *  / `K_complex` is populated, selected by `options.format`. */
+struct ConnectionLaplacian {
+    Eigen::SparseMatrix<double>                K_real;     // populated iff format == Real2N
+    Eigen::SparseMatrix<std::complex<double>>  K_complex;  // populated iff format == Complex
+    int  baseDim   = 0;                                    // V / F / E
+    int  outputDim = 0;                                    // 2 * baseDim (Real2N) or baseDim (Complex)
+    ConnectionDomain domain          = ConnectionDomain::Vertex;
+    int  nSym                        = 1;
+    double regularization            = 1e-8;
+    ConnectionLaplacianFormat format = ConnectionLaplacianFormat::Real2N;
+};
+
+/** Assemble the connection Laplacian on the chosen domain.
+ *
+ *  Walks halfedges / faces / edges directly using
+ *  `geometry.edgeCotanWeights`, `geometry.transportVectorsAlongHalfedge`,
+ *  `geometry.transportVectorsAcrossHalfedge`, and applies `.pow(nSym)` to
+ *  each transport rotation (mirrors the file-static helpers in
+ *  `geometry-central/src/surface/direction_fields.cpp` that drive
+ *  `computeSmoothest{Vertex,Face}DirectionField`).
+ *
+ *  Throws `Error(InvalidInput)` for `nSym <= 0`. The Crouzeix-Raviart
+ *  variant requires triangle meshes (geometry-central's own assertion).
+ *
+ *  Note: the face variant inherits geometry-central's FIXME on face
+ *  weights (uniform 1.0). The numerical answer is still well-defined
+ *  for nRoSy energy minimization; revisit if a more principled face
+ *  weight emerges upstream. */
+ConnectionLaplacian assembleConnectionLaplacian(
+    ComputeContext& ctx,
+    const ConnectionLaplacianOptions& opts = {}
+);
+
+/** String → enum helpers for binding shells (WASM, addon).
+ *  Domain accepts "vertex", "face", "edge". Format accepts "real2N"
+ *  / "real" / "complex". Throws Error(InvalidInput) on unknown. */
+ConnectionDomain          parseConnectionDomain(const std::string& name);
+ConnectionLaplacianFormat parseConnectionLaplacianFormat(const std::string& name);
+
 // ── DEC Operators ────────────────────────────────────────────
 
 struct DECOperators {

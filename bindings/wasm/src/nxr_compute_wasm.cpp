@@ -99,6 +99,33 @@ val sparseToVal(const Eigen::SparseMatrix<double>& M) {
     return obj;
 }
 
+// Complex sparse → COO with parallel real/imag arrays.
+// Used by the connection-Laplacian "complex" output format.
+val sparseComplexToVal(const Eigen::SparseMatrix<std::complex<double>>& M) {
+    int nnz = static_cast<int>(M.nonZeros());
+    std::vector<int32_t> rows(nnz), cols(nnz);
+    std::vector<double>  re(nnz), im(nnz);
+    int k = 0;
+    for (int outer = 0; outer < M.outerSize(); outer++) {
+        for (Eigen::SparseMatrix<std::complex<double>>::InnerIterator it(M, outer); it; ++it) {
+            rows[k] = static_cast<int32_t>(it.row());
+            cols[k] = static_cast<int32_t>(it.col());
+            re[k]   = it.value().real();
+            im[k]   = it.value().imag();
+            k++;
+        }
+    }
+    val obj = val::object();
+    obj.set("row",       toJsArrayCopy(rows.data(), nnz));
+    obj.set("col",       toJsArrayCopy(cols.data(), nnz));
+    obj.set("realData",  toJsArrayCopy(re.data(), nnz));
+    obj.set("imagData",  toJsArrayCopy(im.data(), nnz));
+    obj.set("rows",      static_cast<int>(M.rows()));
+    obj.set("cols",      static_cast<int>(M.cols()));
+    obj.set("nnz",       nnz);
+    return obj;
+}
+
 // ── Conversion helpers: JS typed arrays → Eigen ──────────────
 
 Eigen::VectorXd valToEigenVector(const val& jsArr) {
@@ -178,6 +205,72 @@ public:
     val assembleDECOperators() {
         ensureDec();
         return decOpsToVal();
+    }
+
+    // Connection Laplacian on the chosen domain (vertex / face / edge).
+    // Result-level cache keyed by (domain, nSym, regularization, format)
+    // — same pattern as computeSmoothFaceField (CLAUDE.md rule 9).
+    //
+    // `opts` is a JS object: { domain?, nSym?, regularization?, format? }.
+    // Defaults: { domain: 'vertex', nSym: 1, regularization: 1e-8, format: 'real2N' }.
+    val assembleConnectionLaplacian(val opts) {
+        nxr::compute::ConnectionLaplacianOptions o;
+        if (!opts.isNull() && !opts.isUndefined()) {
+            val domainV = opts["domain"];
+            val nSymV   = opts["nSym"];
+            val regV    = opts["regularization"];
+            val fmtV    = opts["format"];
+            if (!domainV.isUndefined())
+                o.domain = nxr::compute::parseConnectionDomain(domainV.as<std::string>());
+            if (!nSymV.isUndefined())
+                o.nSym = nSymV.as<int>();
+            if (!regV.isUndefined())
+                o.regularization = regV.as<double>();
+            if (!fmtV.isUndefined())
+                o.format = nxr::compute::parseConnectionLaplacianFormat(fmtV.as<std::string>());
+        }
+
+        const CLKey key{o.domain, o.nSym, o.regularization, o.format};
+        auto it = clCache_.find(key);
+        if (it == clCache_.end()) {
+            try {
+                auto cl = std::make_shared<nxr::compute::ConnectionLaplacian>(
+                    nxr::compute::assembleConnectionLaplacian(*ctx_, o));
+                it = clCache_.emplace(key, std::move(cl)).first;
+            } catch (const nxr::compute::Error& e) {
+                std::string msg = "[";
+                msg += nxr::compute::errorCodeName(e.code());
+                msg += "] ";
+                msg += e.what();
+                if (!e.hint().empty()) {
+                    msg += " | hint: ";
+                    msg += std::string(e.hint());
+                }
+                throw std::runtime_error(msg);
+            }
+        }
+        const nxr::compute::ConnectionLaplacian& cl = *it->second;
+
+        const char* domainStr =
+            cl.domain == nxr::compute::ConnectionDomain::Vertex              ? "vertex" :
+            cl.domain == nxr::compute::ConnectionDomain::Face                ? "face"   :
+            cl.domain == nxr::compute::ConnectionDomain::EdgeCrouzeixRaviart ? "edge"   : "?";
+        const char* formatStr =
+            cl.format == nxr::compute::ConnectionLaplacianFormat::Real2N ? "real2N" : "complex";
+
+        val out = val::object();
+        if (cl.format == nxr::compute::ConnectionLaplacianFormat::Real2N) {
+            out.set("K", sparseToVal(cl.K_real));
+        } else {
+            out.set("K", sparseComplexToVal(cl.K_complex));
+        }
+        out.set("baseDim",        cl.baseDim);
+        out.set("outputDim",      cl.outputDim);
+        out.set("domain",         std::string(domainStr));
+        out.set("nSym",           cl.nSym);
+        out.set("regularization", cl.regularization);
+        out.set("format",         std::string(formatStr));
+        return out;
     }
 
     val computeFaceFrames() {
@@ -707,6 +800,15 @@ private:
     // out to JS via toJsArrayCopy on each return.
     std::map<std::pair<int, bool>, Eigen::MatrixXd>                       smoothFaceFieldCache_;
     std::map<std::pair<int, bool>, nxr::compute::SmoothVertexFieldResult> smoothVertexFieldCache_;
+    // Connection-Laplacian result cache — keyed by all four assembly
+    // options. Stored by shared_ptr so callers can hold references
+    // without keeping the entire ContextWrapper alive longer than
+    // intended.
+    using CLKey = std::tuple<nxr::compute::ConnectionDomain,
+                              int,
+                              double,
+                              nxr::compute::ConnectionLaplacianFormat>;
+    std::map<CLKey, std::shared_ptr<nxr::compute::ConnectionLaplacian>>   clCache_;
     std::vector<double>  verts_;
     std::vector<int>     faces_;
     std::vector<int32_t> faces32_;
@@ -844,6 +946,7 @@ EMSCRIPTEN_BINDINGS(nxr_compute_wasm) {
         // Operators
         .function("assembleMeshOperators",  &ContextWrapper::assembleMeshOperators)
         .function("assembleDECOperators",   &ContextWrapper::assembleDECOperators)
+        .function("assembleConnectionLaplacian", &ContextWrapper::assembleConnectionLaplacian)
         .function("computeFaceFrames",      &ContextWrapper::computeFaceFrames)
         .function("computeVertexNormals",   &ContextWrapper::computeVertexNormals)
         // Spectral

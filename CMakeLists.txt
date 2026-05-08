@@ -59,6 +59,7 @@ add_library(nxr_compute STATIC
   src/signed_heat.cpp
   src/smooth_field.cpp
   src/stripe_patterns.cpp
+  src/connection_laplacian.cpp
 )
 
 target_include_directories(nxr_compute PUBLIC
@@ -154,4 +155,8 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_geometry_central_extras test/test_geometry_central_extras.cpp)
     target_link_libraries(test_geometry_central_extras PRIVATE nxr_compute)
     add_test(NAME test_geometry_central_extras COMMAND test_geometry_central_extras)
+
+    add_executable(test_connection_laplacian test/test_connection_laplacian.cpp)
+    target_link_libraries(test_connection_laplacian PRIVATE nxr_compute)
+    add_test(NAME test_connection_laplacian COMMAND test_connection_laplacian)
 endif()

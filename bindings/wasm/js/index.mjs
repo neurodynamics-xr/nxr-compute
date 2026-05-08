@@ -371,6 +371,41 @@ function makeManifoldContext(raw) {
     stiffness:    () => mesh().stiffness,
     /** Cotangent Laplacian — same matrix as `operator.stiffness()`. */
     laplacian:    () => mesh().stiffness,
+    /**
+     * Connection Laplacian on the chosen domain. Drives smoothest
+     * n-RoSy direction fields, parallel-transport energies, and
+     * tangent-bundle eigendecompositions.
+     *
+     * Default `format: 'real2N'` returns a 2N×2N symmetric real
+     * sparse COO matrix that drops directly into
+     * `solveEigenmodesFromTriplets` together with a block-diagonal
+     * real mass matrix `blkdiag(M, M)`. The smallest eigenpair
+     * reproduces the smoothest n-direction field that
+     * `interpolate.smoothFaceField` / `smoothVertexField` return
+     * internally.
+     *
+     * The `format: 'complex'` form returns a complex Hermitian COO
+     * with parallel `realData` / `imagData` value arrays — useful
+     * when callers want to apply a complex-Hermitian eigensolver
+     * themselves.
+     *
+     * Result-level cache: identical options round-trip in O(1).
+     *
+     * @param {Object}   [options]
+     * @param {'vertex'|'face'|'edge'} [options.domain='vertex']
+     * @param {number}   [options.nSym=1]               1=vector, 2=line, 4=cross
+     * @param {number}   [options.regularization=1e-8]  additive ε·I shift
+     * @param {'real2N'|'complex'} [options.format='real2N']
+     * @returns {{
+     *   K: SparseMatrixCOO | SparseMatrixCOOComplex,
+     *   baseDim: number, outputDim: number,
+     *   domain: 'vertex'|'face'|'edge',
+     *   nSym: number, regularization: number,
+     *   format: 'real2N'|'complex'
+     * }}
+     */
+    connectionLaplacian: (options = {}) =>
+      raw.assembleConnectionLaplacian(options),
     /** Force a fresh assembly on next access (e.g. after geometry edit). */
     invalidateCache() { _dec = null; _mesh = null },
   }
@@ -519,15 +554,16 @@ function makeFunctionalNamespace() {
       hodge:   fwd('solve', 'hodge'),
     },
     operator: {
-      d0:           fwd('operator', 'd0'),
-      d1:           fwd('operator', 'd1'),
-      star0:        fwd('operator', 'star0'),
-      star1:        fwd('operator', 'star1'),
-      star2:        fwd('operator', 'star2'),
-      star1Inverse: fwd('operator', 'star1Inverse'),
-      mass:         fwd('operator', 'mass'),
-      stiffness:    fwd('operator', 'stiffness'),
-      laplacian:    fwd('operator', 'laplacian'),
+      d0:                   fwd('operator', 'd0'),
+      d1:                   fwd('operator', 'd1'),
+      star0:                fwd('operator', 'star0'),
+      star1:                fwd('operator', 'star1'),
+      star2:                fwd('operator', 'star2'),
+      star1Inverse:         fwd('operator', 'star1Inverse'),
+      mass:                 fwd('operator', 'mass'),
+      stiffness:            fwd('operator', 'stiffness'),
+      laplacian:            fwd('operator', 'laplacian'),
+      connectionLaplacian:  fwd('operator', 'connectionLaplacian'),
     },
     query: {
       vertex:  fwd('query', 'vertex'),

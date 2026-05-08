@@ -139,6 +139,46 @@ static Napi::Object sparseToCOO(Napi::Env env, const Eigen::SparseMatrix<double>
     return result;
 }
 
+// Convert a complex sparse matrix to COO with parallel real/imag value arrays.
+// Layout matches `sparseToCOO` for compatibility with the JS-side flatten
+// convention (CLAUDE.md §11), but exposes complex values as two parallel
+// Float64Array streams instead of one. Used for the connection-Laplacian
+// "complex" output format.
+static Napi::Object sparseComplexToCOO(Napi::Env env,
+                                       const Eigen::SparseMatrix<std::complex<double>>& M) {
+    int nnz = static_cast<int>(M.nonZeros());
+
+    auto rowArr     = Napi::Int32Array::New(env, nnz);
+    auto colArr     = Napi::Int32Array::New(env, nnz);
+    auto realArr    = Napi::Float64Array::New(env, nnz);
+    auto imagArr    = Napi::Float64Array::New(env, nnz);
+
+    int32_t* rowData  = rowArr.Data();
+    int32_t* colData  = colArr.Data();
+    double*  realData = realArr.Data();
+    double*  imagData = imagArr.Data();
+
+    int k = 0;
+    for (int outer = 0; outer < M.outerSize(); outer++) {
+        for (Eigen::SparseMatrix<std::complex<double>>::InnerIterator it(M, outer); it; ++it) {
+            rowData[k]  = static_cast<int32_t>(it.row());
+            colData[k]  = static_cast<int32_t>(it.col());
+            realData[k] = it.value().real();
+            imagData[k] = it.value().imag();
+            k++;
+        }
+    }
+
+    auto result = Napi::Object::New(env);
+    result.Set("row",       rowArr);
+    result.Set("col",       colArr);
+    result.Set("realData",  realArr);
+    result.Set("imagData",  imagArr);
+    result.Set("rows",      Napi::Number::New(env, M.rows()));
+    result.Set("cols",      Napi::Number::New(env, M.cols()));
+    return result;
+}
+
 // Convert diagonal of a sparse matrix to Float64Array (for mass matrix compactness)
 static Napi::Float64Array sparseDiagonalToFloat64Array(Napi::Env env, const Eigen::SparseMatrix<double>& M) {
     int n = static_cast<int>(M.rows());
@@ -157,6 +197,12 @@ static Napi::Float64Array sparseDiagonalToFloat64Array(Napi::Env env, const Eige
 // Wraps a shared_ptr<ComputeContext> in a Napi::External so JS can
 // pass the opaque handle around. The finalizer releases the C++ object.
 
+// Connection-Laplacian cache key: (domain, nSym, regularization, format).
+// Result-level cache per CLAUDE.md rule 9 — geometry-central exposes the
+// connection-Laplacian as a free assembly with no Solver class, so we
+// cache the assembled output keyed by all input parameters.
+using CLCacheKey = std::tuple<ConnectionDomain, int, double, ConnectionLaplacianFormat>;
+
 struct ContextHolder {
     std::shared_ptr<ComputeContext> ctx;
     std::shared_ptr<MeshOperators> ops;     // cached after first assemble
@@ -165,6 +211,7 @@ struct ContextHolder {
     std::shared_ptr<EigenResult> eigenmodes; // populated by EigenSolveWorker
     std::shared_ptr<VectorHeatSolver> vhm;   // lazy
     std::shared_ptr<SignedHeatSolver> shs;   // lazy
+    std::map<CLCacheKey, std::shared_ptr<ConnectionLaplacian>> connectionLaplacian;  // result-level cache
 };
 
 static void FinalizeContext(Napi::Env env, ContextHolder* holder) {
@@ -245,6 +292,82 @@ Napi::Value AssembleDECOperators(const Napi::CallbackInfo& info) {
         result.Set("d0", sparseToCOO(env, dec.d0));
         result.Set("d1", sparseToCOO(env, dec.d1));
         result.Set("hodge1", sparseDiagonalToFloat64Array(env, dec.hodge1));
+        return result;
+    });
+}
+
+// ─── assembleConnectionLaplacian(ctx, options) → { K, baseDim, ... } ───
+//
+// Options object: { domain?, nSym?, regularization?, format? }
+//   domain         : 'vertex' (default) | 'face' | 'edge'
+//   nSym           : 1 (default) | 2 | 4 | …  (must be > 0)
+//   regularization : number, default 1e-8
+//   format         : 'real2N' (default) | 'complex'
+//
+// Returns:
+//   {
+//     K: { row, col, data,            rows, cols }   when format == 'real2N'
+//        { row, col, realData, imagData, rows, cols } when format == 'complex'
+//     baseDim, outputDim,
+//     domain  : 'vertex' | 'face' | 'edge',
+//     nSym    : number,
+//     regularization : number,
+//     format  : 'real2N' | 'complex'
+//   }
+//
+// Result-level cached on ContextHolder per (domain, nSym, regularization,
+// format) tuple — repeat calls with identical options are O(1).
+
+Napi::Value AssembleConnectionLaplacian(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);
+    if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        ConnectionLaplacianOptions opts;
+
+        if (info.Length() > 1 && info[1].IsObject()) {
+            Napi::Object o = info[1].As<Napi::Object>();
+            if (o.Has("domain"))
+                opts.domain = parseConnectionDomain(o.Get("domain").As<Napi::String>().Utf8Value());
+            if (o.Has("nSym"))
+                opts.nSym = o.Get("nSym").As<Napi::Number>().Int32Value();
+            if (o.Has("regularization"))
+                opts.regularization = o.Get("regularization").As<Napi::Number>().DoubleValue();
+            if (o.Has("format"))
+                opts.format = parseConnectionLaplacianFormat(o.Get("format").As<Napi::String>().Utf8Value());
+        }
+
+        const CLCacheKey key{opts.domain, opts.nSym, opts.regularization, opts.format};
+        auto it = holder->connectionLaplacian.find(key);
+        if (it == holder->connectionLaplacian.end()) {
+            it = holder->connectionLaplacian.emplace(
+                key,
+                std::make_shared<ConnectionLaplacian>(
+                    assembleConnectionLaplacian(*holder->ctx, opts)
+                )
+            ).first;
+        }
+        const ConnectionLaplacian& cl = *it->second;
+
+        const char* domainStr =
+            cl.domain == ConnectionDomain::Vertex              ? "vertex" :
+            cl.domain == ConnectionDomain::Face                ? "face"   :
+            cl.domain == ConnectionDomain::EdgeCrouzeixRaviart ? "edge"   : "?";
+        const char* formatStr =
+            cl.format == ConnectionLaplacianFormat::Real2N ? "real2N" : "complex";
+
+        auto result = Napi::Object::New(env);
+        if (cl.format == ConnectionLaplacianFormat::Real2N) {
+            result.Set("K", sparseToCOO(env, cl.K_real));
+        } else {
+            result.Set("K", sparseComplexToCOO(env, cl.K_complex));
+        }
+        result.Set("baseDim",        Napi::Number::New(env, cl.baseDim));
+        result.Set("outputDim",      Napi::Number::New(env, cl.outputDim));
+        result.Set("domain",         Napi::String::New(env, domainStr));
+        result.Set("nSym",           Napi::Number::New(env, cl.nSym));
+        result.Set("regularization", Napi::Number::New(env, cl.regularization));
+        result.Set("format",         Napi::String::New(env, formatStr));
         return result;
     });
 }
@@ -961,6 +1084,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("createContext", Napi::Function::New(env, CreateContext));
     exports.Set("assembleMeshOperators", Napi::Function::New(env, AssembleMeshOperators));
     exports.Set("assembleDECOperators", Napi::Function::New(env, AssembleDECOperators));
+    exports.Set("assembleConnectionLaplacian", Napi::Function::New(env, AssembleConnectionLaplacian));
     exports.Set("solveEigenmodes", Napi::Function::New(env, SolveEigenmodes));
     exports.Set("solvePoisson", Napi::Function::New(env, SolvePoisson));
     exports.Set("computeGeodesicDistance", Napi::Function::New(env, ComputeGeodesicDistance));

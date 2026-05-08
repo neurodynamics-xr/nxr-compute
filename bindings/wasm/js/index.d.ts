@@ -12,6 +12,58 @@ export interface SparseMatrixCOO {
   nnz:  number
 }
 
+/** Sparse complex matrix in COO triplet form. Used by the
+ *  connection-Laplacian "complex" output format — `realData` and
+ *  `imagData` carry the real and imaginary parts of each entry. */
+export interface SparseMatrixCOOComplex {
+  row:       Int32Array
+  col:       Int32Array
+  realData:  Float64Array
+  imagData:  Float64Array
+  rows:      number
+  cols:      number
+  nnz:       number
+}
+
+/** Connection-Laplacian assembly options. All fields are optional;
+ *  defaults are { domain: 'vertex', nSym: 1, regularization: 1e-8,
+ *  format: 'real2N' }. */
+export interface ConnectionLaplacianOptions {
+  domain?:         'vertex' | 'face' | 'edge'
+  /** Symmetry order. 1 = vector field, 2 = line field, 4 = cross field. Must be > 0. */
+  nSym?:           number
+  /** Additive ε·I shift. Default 1e-8. */
+  regularization?: number
+  format?:         'real2N' | 'complex'
+}
+
+/** Connection Laplacian on a chosen domain.
+ *  - For `format: 'real2N'`, `K` is a 2N×2N symmetric real COO matrix
+ *    (each complex entry a + bi lowered to the 2×2 block [[a,-b],[b,a]]).
+ *    Drops directly into `solveEigenmodesFromTriplets` with a
+ *    block-diagonal real mass matrix `blkdiag(M, M)`.
+ *  - For `format: 'complex'`, `K` is an N×N complex Hermitian COO
+ *    matrix with parallel `realData` / `imagData` value arrays. */
+export type ConnectionLaplacianResult =
+  | {
+      K:              SparseMatrixCOO
+      baseDim:        number
+      outputDim:      number   // 2 * baseDim
+      domain:         'vertex' | 'face' | 'edge'
+      nSym:           number
+      regularization: number
+      format:         'real2N'
+    }
+  | {
+      K:              SparseMatrixCOOComplex
+      baseDim:        number
+      outputDim:      number   // baseDim
+      domain:         'vertex' | 'face' | 'edge'
+      nSym:           number
+      regularization: number
+      format:         'complex'
+    }
+
 /** FEM mass-matrix variant string passed to assembleMeshOperators(). */
 export type MassMatrixVariant = "voronoi" | "barycentric" | "full"
 
@@ -368,6 +420,10 @@ export interface OperatorGroup {
   stiffness():    SparseMatrixCOO
   /** Cotangent Laplacian — same matrix as `stiffness()`. */
   laplacian():    SparseMatrixCOO
+  /** Connection Laplacian on the chosen domain. Drives smoothest n-RoSy
+   *  direction fields, parallel-transport energies, and tangent-bundle
+   *  eigendecompositions. Result-level cached by all four options. */
+  connectionLaplacian(options?: ConnectionLaplacianOptions): ConnectionLaplacianResult
   /** Drop the cached DEC and mesh operator results so the next access
    *  re-runs `assembleDECOperators` / `assembleMeshOperators`. */
   invalidateCache(): void
@@ -490,6 +546,10 @@ export interface ManifoldFunctional {
     mass(mctx: ManifoldContext):         SparseMatrixCOO
     stiffness(mctx: ManifoldContext):    SparseMatrixCOO
     laplacian(mctx: ManifoldContext):    SparseMatrixCOO
+    connectionLaplacian(
+      mctx:    ManifoldContext,
+      options?: ConnectionLaplacianOptions,
+    ): ConnectionLaplacianResult
   }
   query: {
     vertex(mctx: ManifoldContext, v: number):                    { vertexIndex: number }
