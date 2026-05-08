@@ -13,6 +13,8 @@
 
 #include "nxr/compute.h"
 
+#include <Eigen/Geometry>   // Vector3d::cross — not pulled in by compute.h's Core-only include
+
 #include <cassert>
 #include <cmath>
 #include <cstdint>

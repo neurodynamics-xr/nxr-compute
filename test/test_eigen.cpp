@@ -97,9 +97,13 @@ int main() {
     std::cout << "  φ at sink (v=3):   " << phi(3) << std::endl;
 
     // ── Test 7: Geodesic distance ────────────────────────────
+    // The geodesic API now takes a stateful HeatGeodesicSolver — the
+    // factor pair (M+tA, A) is built at construction and reused across
+    // calls. Mirrors the VectorHeatSolver / SignedHeatSolver pattern.
     std::cout << "\n[Test 7] Geodesic Distance" << std::endl;
     std::vector<int> sources = {0};
-    auto dists = nxr::compute::computeGeodesicDistance(ctx, sources);
+    nxr::compute::HeatGeodesicSolver heatGeo(ctx);
+    auto dists = nxr::compute::computeGeodesicDistance(heatGeo, sources);
     std::cout << "  Distance at source (v=0): " << dists(0) << std::endl;
     std::cout << "  Distance at v=3:          " << dists(3) << std::endl;
     std::cout << "  Max distance:             " << dists.maxCoeff() << std::endl;
