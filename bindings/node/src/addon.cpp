@@ -211,6 +211,7 @@ struct ContextHolder {
     std::shared_ptr<EigenResult> eigenmodes; // populated by EigenSolveWorker
     std::shared_ptr<VectorHeatSolver> vhm;   // lazy
     std::shared_ptr<SignedHeatSolver> shs;   // lazy
+    std::shared_ptr<HeatGeodesicSolver> heatGeo;  // lazy — Cholesky pre-factor at construction
     std::map<CLCacheKey, std::shared_ptr<ConnectionLaplacian>> connectionLaplacian;  // result-level cache
 };
 
@@ -571,7 +572,14 @@ Napi::Value ComputeGeodesicDistance(const Napi::CallbackInfo& info) {
             sources.push_back(sourcesArr[i]);
         }
 
-        Eigen::VectorXd dists = computeGeodesicDistance(*holder->ctx, sources);
+        // Lazy-construct the stateful HeatGeodesicSolver and reuse
+        // across calls — its constructor pre-factors the Cholesky
+        // systems (M+tA, A); subsequent calls do back-substitution
+        // only. Same lifetime model as VectorHeatSolver / SignedHeatSolver.
+        if (!holder->heatGeo) {
+            holder->heatGeo = std::make_shared<HeatGeodesicSolver>(*holder->ctx);
+        }
+        Eigen::VectorXd dists = computeGeodesicDistance(*holder->heatGeo, sources);
         return toFloat64Array(env, dists);
     });
 }
