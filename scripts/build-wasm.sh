@@ -75,3 +75,12 @@ else
     echo "✗ nxr_compute.js / nxr_compute.wasm not produced"
     exit 1
 fi
+
+# Refresh the committed prebuilt artifacts. dist/wasm/ is what the
+# shim (bindings/wasm/js/index.mjs) and downstream git-installed
+# consumers (e.g. nxr-design-system) actually load.
+DIST_DIR="$PROJECT_ROOT/dist/wasm"
+mkdir -p "$DIST_DIR"
+cp "$BUILD_DIR/nxr_compute.js"   "$DIST_DIR/nxr_compute.js"
+cp "$BUILD_DIR/nxr_compute.wasm" "$DIST_DIR/nxr_compute.wasm"
+echo "✓ Refreshed $DIST_DIR/{nxr_compute.js,nxr_compute.wasm}"

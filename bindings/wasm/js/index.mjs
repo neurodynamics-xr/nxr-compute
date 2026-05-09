@@ -28,11 +28,11 @@
 // WASM artifact: `nxr_compute.wasm` (unchanged).
 // C++ embind class: `ContextWrapper` (unchanged, flat).
 
-// build_wasm/ sits at the repo root (set by bindings/wasm/CMakeLists.txt's
-// RUNTIME_OUTPUT_DIRECTORY = ${CMAKE_BINARY_DIR}, with the build invoked
-// from the repo root). index.mjs lives three levels deep at
-// bindings/wasm/js/, so the artifact is `../../../build_wasm/`.
-import createNxrComputeModule from '../../../build_wasm/nxr_compute.js'
+// dist/wasm/ holds the committed prebuilt artifacts (refreshed by
+// scripts/build-wasm.sh from build_wasm/ after a successful build).
+// index.mjs lives three levels deep at bindings/wasm/js/, so the
+// artifact is `../../../dist/wasm/`.
+import createNxrComputeModule from '../../../dist/wasm/nxr_compute.js'
 
 let _modulePromise = null
 

@@ -86,10 +86,21 @@ each binding translates per §4.
 
 ## 4. Per-binding usage
 
-### 4.1 JavaScript via WASM (`@nxr-compute/wasm`)
+### 4.1 JavaScript via WASM (`@neurodynamics-xr/nxr-compute`)
+
+The package ships a prebuilt WASM in `dist/wasm/` and a shim at
+`bindings/wasm/js/index.mjs`. Recommended path is the shim:
 
 ```js
-import createNxrComputeModule from './native/build_wasm/nxr_compute.js'
+import { initNxrCompute } from '@neurodynamics-xr/nxr-compute'
+const nxrCompute = await initNxrCompute()
+```
+
+Or, if you need the raw Emscripten factory (e.g. to override `locateFile`
+in an unusual asset-serving setup), import the artifact directly:
+
+```js
+import createNxrComputeModule from '@neurodynamics-xr/nxr-compute/wasm/nxr_compute.js'
 const nxrCompute = await createNxrComputeModule()
 
 const ctx = new nxrCompute.ComputeContext(verticesFloat64, facesInt32)
@@ -157,8 +168,8 @@ const { eigenvectors, eigenvalues, k, nV } = modes
 
 ```matlab
 % Build (one-time, from project root):
-%   bash scripts/build-native.sh Release
-% then add native/build_node/Release to your MATLAB path.
+%   bash scripts/build.sh Release
+% then add build/Release to your MATLAB path.
 
 V = readSurface('lh.pial').vertices;   % V × 3 double
 F = readSurface('lh.pial').faces;      % F × 3 (1-based)
@@ -257,25 +268,24 @@ nxr-compute precompute --input lh.pial --output session.zarr --k 1000
 
 ```sh
 # All native bindings (addon + cli + mex) — needs Node.js + MATLAB:
-bash scripts/build-native.sh Release
-# Outputs at native/build_node/Release/:
+bash scripts/build.sh Release
+# Outputs at build/Release/:
 #   nxr_compute_addon.node   (also copied to project root)
 #   nxr_compute.exe          (CLI)
 #   nxr_compute.mexw64       (MEX, if MATLAB detected at configure time)
 
 # WASM (separate toolchain — needs emsdk):
-emcmake cmake -B native/build_wasm -S native -G Ninja \
-              -DCMAKE_BUILD_TYPE=Release
-cmake --build native/build_wasm --target nxr_compute_wasm
-# Outputs at native/build_wasm/:
-#   nxr_compute.js   (factory function — `import createNxrComputeModule from './nxr_compute.js'`)
-#   nxr_compute.wasm (binary)
+bash scripts/build-wasm.sh Release
+# Build outputs at build_wasm/, then refreshed into the committed
+# prebuilt at dist/wasm/:
+#   dist/wasm/nxr_compute.js     (factory function — loaded by the shim)
+#   dist/wasm/nxr_compute.wasm   (binary)
 
 # Smoke tests:
-./native/build_node/Release/test_cancellation.exe   # cancellation contract
-./native/build_node/Release/test_progress.exe       # progress observer
-./native/build_node/Release/test_eigen.exe          # end-to-end
-node scripts/_smoke-wasm.mjs                        # WASM round-trip
+./build/Release/test_cancellation       # cancellation contract
+./build/Release/test_progress           # progress observer
+./build/Release/test_eigen              # end-to-end
+node scripts/_smoke-wasm.mjs            # WASM round-trip
 ```
 
 ---

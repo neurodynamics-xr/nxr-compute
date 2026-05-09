@@ -7,37 +7,37 @@ lifecycle and memory management, and complete end-to-end example flows.
 For a viz-by-viz cookbook (every nxr-compute output → three.js technique), see
 [visualization-recipes.md](visualization-recipes.md).
 
-> **Status**: the WASM binding ships. Build it locally with
-> `bash scripts/build-wasm.sh`; the artifacts land at
-> `native/build_wasm/nxr_compute.js` and `native/build_wasm/nxr_compute.wasm`.
-> Smoke-tested end-to-end via `node scripts/_smoke-wasm.mjs`. The API
-> below is exactly what the binding exposes; no `@nxr-compute/wasm` npm
-> publication yet, so consume it locally for now (copy the two files
-> into your project, or `import` directly from a Vite-served path).
+> **Status**: the WASM binding ships. Prebuilt artifacts are committed
+> to the repo at `dist/wasm/nxr_compute.js` and `dist/wasm/nxr_compute.wasm`,
+> refreshed by `bash scripts/build-wasm.sh`. Smoke-tested end-to-end via
+> `node scripts/_smoke-wasm.mjs`. Not on npm yet — install as a git
+> dependency (see below).
 
 ---
 
 ## Installation
 
-When the WASM build is published, install via npm:
+The package isn't published to npm; install it as a git dependency
+pinned to a commit SHA or tag:
 
-```bash
-npm install @nxr-compute/wasm
-# or
-yarn add @nxr-compute/wasm
-# or
-pnpm add @nxr-compute/wasm
+```json
+// package.json
+{
+  "dependencies": {
+    "@neurodynamics-xr/nxr-compute": "github:neurodynamics-xr/nxr-compute#<sha-or-tag>"
+  }
+}
 ```
 
-The package contains:
+The git install ships:
 
-- `nxr_compute.wasm` — the compiled WASM binary (~1-2 MB, gzip ~400-600 KB)
-- `nxr_compute.js` — the JS bootstrap and Embind glue
-- TypeScript declarations (`index.d.ts`)
+- `dist/wasm/nxr_compute.wasm` — the compiled WASM binary (~1.2 MB, gzip ~400-600 KB)
+- `dist/wasm/nxr_compute.js` — the Emscripten factory + Embind glue
+- `bindings/wasm/js/index.mjs` — the JS shim (`initNxrCompute` + the `nxr.manifold.*` namespace)
+- `bindings/wasm/js/index.d.ts` — TypeScript declarations
 
-For ahead-of-publication usage, copy `nxr_compute.wasm` and `nxr_compute.js` from your
-local nxr-compute build (`native/build_node/wasm/Release/`) into your project's
-`public/` or `assets/` directory and import the JS file directly.
+The shim's `import` statement points at `dist/wasm/nxr_compute.js`
+relatively, so consumers don't need to wire the WASM path manually.
 
 ### Vite / webpack configuration
 
@@ -47,21 +47,23 @@ Vite is friendliest:
 ```javascript
 // vite.config.js
 export default {
-  // nxr_compute.wasm should be served as-is; Vite handles this automatically
-  // for files in public/. If using @nxr-compute/wasm from node_modules, set:
-  optimizeDeps: { exclude: ['@nxr-compute/wasm'] }
+  // The shim imports nxr_compute.js, which fetches nxr_compute.wasm at
+  // runtime relative to itself. Vite handles this automatically when
+  // the package is in node_modules; just opt out of optimisation:
+  optimizeDeps: { exclude: ['@neurodynamics-xr/nxr-compute'] }
 }
 ```
 
-For webpack 5 you need the experimental WebAssembly module loader; the
-@nxr-compute/wasm package will document the exact webpack config when published.
+For webpack 5, enable `experiments.asyncWebAssembly = true` and ensure
+`.wasm` is treated as a static asset (`type: 'asset/resource'` in
+the asset module rule).
 
 ---
 
 ## Bootstrap
 
 ```javascript
-import { initNxrCompute } from '@nxr-compute/wasm'
+import { initNxrCompute } from '@neurodynamics-xr/nxr-compute'
 
 const nxrCompute = await initNxrCompute({
   // optional — usually not needed; the loader auto-discovers nxr_compute.wasm
@@ -81,7 +83,7 @@ safe to share across components.
 
 ```jsx
 import { createContext, useContext, useEffect, useState } from 'react'
-import { initNxrCompute } from '@nxr-compute/wasm'
+import { initNxrCompute } from '@neurodynamics-xr/nxr-compute'
 
 const NxrComputeContext = createContext(null)
 
@@ -296,7 +298,7 @@ spectral basis, show one eigenmode as a colormap.
 
 ```javascript
 import * as THREE from 'three'
-import { initNxrCompute } from '@nxr-compute/wasm'
+import { initNxrCompute } from '@neurodynamics-xr/nxr-compute'
 
 const nxrCompute = await initNxrCompute()
 

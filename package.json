@@ -2,8 +2,24 @@
   "name": "@neurodynamics-xr/nxr-compute",
   "version": "0.1.0",
   "description": "Portable C++ math/compute engine — Eigen + Spectra + geometry-central. Bindings: Node N-API, WASM, MATLAB MEX, CLI.",
-  "private": true,
   "type": "module",
+  "main": "bindings/wasm/js/index.mjs",
+  "module": "bindings/wasm/js/index.mjs",
+  "types": "bindings/wasm/js/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./bindings/wasm/js/index.d.ts",
+      "import": "./bindings/wasm/js/index.mjs"
+    },
+    "./wasm/nxr_compute.wasm": "./dist/wasm/nxr_compute.wasm",
+    "./wasm/nxr_compute.js": "./dist/wasm/nxr_compute.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bindings/wasm/js/",
+    "dist/wasm/",
+    "README.md"
+  ],
   "scripts": {
     "build": "bash scripts/build.sh Release",
     "build:wasm": "bash scripts/build-wasm.sh Release",
