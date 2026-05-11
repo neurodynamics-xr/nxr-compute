@@ -1,0 +1,195 @@
+{
+  "$schema": "./field.meta.schema.json",
+  "$id": "https://nxr.dev/schema/field.schema.json",
+  "title": "NXR Field",
+  "version": "0.1.0",
+
+  "attributes": {
+    "description": "A scalar or vector field defined on a manifold. Field instances always reference a manifold (via manifold_ref). The schema describes the data slot (values) plus the operations that can be performed on the field: gradient, divergence, isolines, streamlines, Hodge decomposition, and Poisson solve. Internal heat-method machinery (vector heat, signed heat, heat diffusion) lives under-the-hood and is not exposed as a field.",
+    "manifold_ref": "<URI to the manifold this field lives on, e.g. ./manifold.schema.json>",
+    "kind": "scalar | vector",
+    "domain": "vertex | edge | face",
+    "time_varying": false,
+    "T": null,
+    "units": "field-specific (e.g. 'mV' for cortical activity, 'm/s' for velocity)",
+    "source": "measurement | simulation | generator | derived",
+    "binding_storage_rule": "scalar fields flatten as [D] float64 row-major (D = V|E|F per domain); vector fields flatten as [D, 3] row-major. Time-varying fields use [T, D] (or [T, D, 3]) frame-major float32 — matching the activity time-series convention in include/nxr/compute.h.",
+    "references": [
+      "include/nxr/compute.h",
+      "docs/architecture.md",
+      "docs/superpowers/specs/2026-05-09-manifold-api-schema-design.md"
+    ]
+  },
+
+  "values": {
+    "attributes": {
+      "description": "The field's data buffer. Shape and memory size depend on (kind, domain): scalar+vertex = [V] (the common case for activity / curvature / scalar potentials); scalar+edge = [E] (1-form); scalar+face = [F]; vector+vertex = [V, 3]; vector+face = [F, 3] (face tangent vector field); vector+edge = [E, 3] (rare). The 'shape' attribute below uses 'D' as the polymorphic domain count.",
+      "shape": "[D] (scalar) | [D, 3] (vector)   where D ∈ {V, E, F} per attributes.domain",
+      "dtype": "float64",
+      "storage": "row_major",
+      "memory_bytes": "8 * D (scalar) | 8 * D * 3 (vector)   where D ∈ {V, E, F}",
+      "depends_on": [],
+      "formula": "user-supplied (filled by consumer from measurement, simulation, generator, or another operation's output)",
+      "complexity": "O(1)",
+      "units": "field-specific"
+    }
+  },
+
+  "gradient": {
+    "attributes": {
+      "description": "Gradient of a scalar vertex field, returned as per-face 3D vectors via Whitney interpolation of d0(values). Equivalent to applying the manifold's gradient operator (d0) and lifting to face centroids.",
+      "applies_when": "attributes.kind == 'scalar' && attributes.domain == 'vertex'",
+      "inputs": [],
+      "output": {
+        "shape": "[F, 3]",
+        "dtype": "float64",
+        "storage": "row_major",
+        "memory_bytes": "8 * F * 3",
+        "description": "per-face gradient vectors at face centroids"
+      },
+      "depends_on": ["values"],
+      "formula": "gradient(values) on face f = (1 / 2 A_f) Σ (values_k - values_i) (n × e_ji)",
+      "implemented_by": {
+        "cpp":        "nxr::compute::scalarGradient(ctx, values)",
+        "node_addon": "ctx.scalarGradient(values)",
+        "wasm":       "ctx.scalarGradient(values)",
+        "mex":        "nxr_compute('scalarGradient', V, F, values)"
+      },
+      "complexity": "O(F)",
+      "errors": ["InvalidInput"],
+      "units": "values-units / world units"
+    }
+  },
+
+  "divergence": {
+    "attributes": {
+      "description": "Divergence of a vector or 1-form field, returned as a per-vertex scalar. For a face-vector field, the binding internally projects to an edge 1-form and applies operators/divergence (= d0^T * hodge1). For an edge 1-form input, applies operators/divergence directly.",
+      "applies_when": "attributes.kind == 'vector' || (attributes.kind == 'scalar' && attributes.domain == 'edge')",
+      "inputs": [],
+      "output": {
+        "shape": "[V]",
+        "dtype": "float64",
+        "storage": "row_major",
+        "memory_bytes": "8 * V"
+      },
+      "depends_on": ["values"],
+      "formula": "divergence(values) = d0^T * hodge1 * lift(values)   where lift converts face-vectors to a 1-form when kind=vector",
+      "implemented_by": {
+        "cpp": "nxr::compute::operators::divergence(ctx) * lift(values)   (planned: dense convenience overload)"
+      },
+      "complexity": "O(F)",
+      "units": "values-units / world units"
+    }
+  },
+
+  "isolines": {
+    "attributes": {
+      "description": "Extract isolines (contour polylines) of a scalar vertex field at numLevels evenly-spaced contour values in [minValue, maxValue]. If minValue == maxValue, the binding auto-detects the range from the data.",
+      "applies_when": "attributes.kind == 'scalar' && attributes.domain == 'vertex'",
+      "inputs": [
+        { "name": "num_levels", "type": "int32", "description": "number of evenly-spaced contour levels" },
+        { "name": "min_value",  "type": "float64", "description": "lower bound of contour range; pass max_value=min_value to auto-detect", "optional": true, "default": 0.0 },
+        { "name": "max_value",  "type": "float64", "description": "upper bound of contour range", "optional": true, "default": 0.0 }
+      ],
+      "output": {
+        "shape": "[2*N, 3]",
+        "dtype": "float64",
+        "storage": "row_major",
+        "memory_bytes": "8 * 6 * N",
+        "description": "polyline endpoint pairs; N is the total segment count across all levels"
+      },
+      "depends_on": ["values"],
+      "implemented_by": {
+        "cpp":        "nxr::compute::computeIsolines(ctx, values, num_levels, min_value, max_value)",
+        "node_addon": "ctx.computeIsolines(values, num_levels, min_value, max_value)",
+        "wasm":       "ctx.computeIsolines(values, num_levels, min_value, max_value)",
+        "mex":        "nxr_compute('computeIsolines', V, F, values, num_levels, min_value, max_value)"
+      },
+      "complexity": "O(F + num_levels * F)",
+      "units": "world units"
+    }
+  },
+
+  "streamlines": {
+    "attributes": {
+      "description": "Trace quasi-uniform streamlines through a face vector field via forward Euler with face-crossing detection.",
+      "applies_when": "attributes.kind == 'vector' && attributes.domain == 'face'",
+      "inputs": [
+        { "name": "num_seeds", "type": "int32",   "description": "target number of seed streamlines",        "optional": true, "default": 15 },
+        { "name": "step_coef", "type": "float64", "description": "step length in units of mean edge length", "optional": true, "default": 0.15 },
+        { "name": "max_steps", "type": "int32",   "description": "max integration steps per streamline",     "optional": true, "default": 1000 }
+      ],
+      "output": {
+        "shape": "[2*N, 3]",
+        "dtype": "float64",
+        "storage": "row_major",
+        "memory_bytes": "8 * 6 * N",
+        "description": "polyline segment endpoint pairs; N is the total segment count"
+      },
+      "depends_on": ["values"],
+      "implemented_by": {
+        "cpp":        "nxr::compute::traceStreamlines(ctx, values, num_seeds, step_coef, max_steps)",
+        "node_addon": "ctx.traceStreamlines(values, num_seeds, step_coef, max_steps)",
+        "wasm":       "ctx.traceStreamlines(values, num_seeds, step_coef, max_steps)",
+        "mex":        "nxr_compute('traceStreamlines', V, F, values, num_seeds, step_coef, max_steps)"
+      },
+      "complexity": "O(num_seeds * max_steps)",
+      "units": "world units"
+    }
+  },
+
+  "hodge": {
+    "attributes": {
+      "description": "Hodge / Helmholtz decomposition of an edge 1-form ω: ω = dα + δβ + γ. Returns the three scalar potentials (α at vertices, β at faces, γ harmonic on edges) plus their face-centered vector lifts.",
+      "applies_when": "attributes.domain == 'edge'",
+      "inputs": [],
+      "output": {
+        "shape": "{exact_potential[V], co_exact_potential_v[V], combined_potential[V], d_alpha[E], delta_beta[E], gamma[E], omega_vectors[F,3], d_alpha_vectors[F,3], delta_beta_vectors[F,3], gamma_vectors[F,3]}",
+        "dtype": "float64",
+        "storage": "struct",
+        "memory_bytes": "8 * (3*V + 3*E + 4*3*F)",
+        "description": "scalar potentials + 1-form components + face-centered vector lifts"
+      },
+      "depends_on": ["values"],
+      "formula": "values = d0 * α + hodge1_inverse * d1^T * β + γ   where γ is harmonic (d* γ = d γ = 0)",
+      "implemented_by": {
+        "cpp":        "nxr::compute::hodgeDecompose(ctx, dec, cache, values)",
+        "node_addon": "ctx.hodgeDecompose(values)",
+        "wasm":       "ctx.hodgeDecompose(values)",
+        "mex":        "nxr_compute('hodgeDecompose', V, F, values)"
+      },
+      "complexity": "O(nnz(operators/stiffness))",
+      "errors": ["GeometryDegenerate"],
+      "references": [
+        "Bhatia et al. 2013 (Helmholtz-Hodge survey)",
+        "Crane SIGGRAPH course notes 2013"
+      ]
+    }
+  },
+
+  "poisson": {
+    "attributes": {
+      "description": "Solve the scalar Poisson equation L φ = -M (values - mean(values)) on the manifold. Returns a per-vertex harmonic potential φ. Reuses the manifold's CholeskyCache for the (L + ε I) factor — repeated calls amortise the factorisation cost.",
+      "applies_when": "attributes.kind == 'scalar' && attributes.domain == 'vertex'",
+      "inputs": [],
+      "output": {
+        "shape": "[V]",
+        "dtype": "float64",
+        "storage": "row_major",
+        "memory_bytes": "8 * V",
+        "description": "per-vertex harmonic potential"
+      },
+      "depends_on": ["values"],
+      "formula": "φ = (L + ε I)^-1 * (-M (values - M-weighted_mean(values)))",
+      "implemented_by": {
+        "cpp":        "nxr::compute::solvePoisson(ops, cache, values_as_density_map)",
+        "node_addon": "ctx.solvePoisson(sourceVerts, sourceValues)",
+        "wasm":       "ctx.solvePoisson(sourceVerts, sourceValues)",
+        "mex":        "nxr_compute('solvePoisson', V, F, sourceVerts, sourceValues)"
+      },
+      "complexity": "O(nnz(operators/stiffness))",
+      "errors": ["GeometryDegenerate"],
+      "references": ["Botsch et al. 2010 (Polygon Mesh Processing, §3.4)"]
+    }
+  }
+}

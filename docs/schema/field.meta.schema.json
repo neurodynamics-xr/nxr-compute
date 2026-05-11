@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nxr.dev/schema/field.meta.schema.json",
+  "title": "NXR field meta-schema",
+  "description": "Validates field.schema.json. A field is a scalar or vector quantity defined on a manifold (always references a manifold via attributes.manifold_ref). The schema enumerates the operations that can be performed on a field: gradient, divergence, isolines, streamlines, Hodge decomposition, and Poisson solve. Reuses the cross-namespace primitives from common.meta.schema.json.",
+  "type": "object",
+
+  "properties": {
+
+    "$schema":  { "type": "string" },
+    "$id":      { "type": "string" },
+    "title":    { "type": "string" },
+    "version":  { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(-.+)?$" },
+
+    "attributes": {
+      "description": "Header for the field. Required keys: manifold_ref (URI of the manifold this field lives on), kind ('scalar' | 'vector'), domain ('vertex' | 'edge' | 'face'). Optional: time_varying (bool), T (number of frames if time-varying), units, source ('measurement' | 'simulation' | 'generator' | 'derived').",
+      "$ref": "common.meta.schema.json#/$defs/group_attributes"
+    },
+
+    "values": {
+      "description": "The field's data buffer. Shape depends on (kind, domain).",
+      "$ref": "common.meta.schema.json#/$defs/leaf_slot"
+    },
+
+    "gradient": {
+      "description": "Gradient of a scalar field, returned as per-face 3D vectors via Whitney interpolation of d0(values). Applies only when kind='scalar' and domain='vertex'.",
+      "$ref": "common.meta.schema.json#/$defs/operation_slot"
+    },
+
+    "divergence": {
+      "description": "Divergence of a vector or 1-form field, returned as a per-vertex scalar. Applies when kind='vector' (operating on face vectors lifted to a 1-form internally) or when values are an edge 1-form.",
+      "$ref": "common.meta.schema.json#/$defs/operation_slot"
+    },
+
+    "isolines": {
+      "description": "Extract contour polylines at evenly-spaced levels. Applies only when kind='scalar' and domain='vertex'.",
+      "$ref": "common.meta.schema.json#/$defs/operation_slot"
+    },
+
+    "streamlines": {
+      "description": "Trace streamlines through a face vector field. Applies only when kind='vector' and domain='face'.",
+      "$ref": "common.meta.schema.json#/$defs/operation_slot"
+    },
+
+    "hodge": {
+      "description": "Hodge / Helmholtz decomposition of an edge 1-form into ω = dα + δβ + γ. Applies only when domain='edge' (the field is a 1-form on edges).",
+      "$ref": "common.meta.schema.json#/$defs/operation_slot"
+    },
+
+    "poisson": {
+      "description": "Solve the scalar Poisson equation L φ = -M (values - mean). Applies only when kind='scalar' and domain='vertex'. Returns a per-vertex potential.",
+      "$ref": "common.meta.schema.json#/$defs/operation_slot"
+    }
+
+  },
+
+  "required": [
+    "attributes",
+    "values",
+    "gradient",
+    "divergence",
+    "isolines",
+    "streamlines",
+    "hodge",
+    "poisson"
+  ],
+
+  "additionalProperties": false
+}

@@ -1,0 +1,880 @@
+{
+  "$schema": "./manifold.meta.schema.json",
+  "$id": "https://nxr.dev/schema/manifold.schema.json",
+  "title": "NXR Manifold",
+  "version": "0.1.0",
+
+  "attributes": {
+    "description": "Surface-mesh manifold object — the canonical NXR contract for a triangulated 2-manifold embedded in R^3. Design-time contract by which downstream NXR components (nxr-viewer, future nxr-graph, nxr-recording) are designed against nxr-compute. Not loaded at runtime.",
+    "schema_version": "0.1.0",
+    "fingerprint": "SHA-256 hex of canonicalized vertex+face bytes (computed by consumer)",
+    "nxr_compute_version": "tracks the nxr-compute build that produced any concrete instance",
+    "binding_storage_rule": "row-major flatten for [V,3]/[F,3]/[N,3]; vMajor (row-major) for [V,K] eigenvectors; complex_interleaved for complex types (re/im pairs adjacent). MEX is exempt from the JS flatten rule (uses MATLAB's native column-major storage).",
+    "references": [
+      "include/nxr/compute.h",
+      "docs/architecture.md",
+      "docs/superpowers/specs/2026-05-09-manifold-api-schema-design.md"
+    ]
+  },
+
+  "core": {
+    "attributes": {
+      "description": "Required inputs. Everything else in the schema is derivable from these two buffers."
+    },
+    "vertices": {
+      "attributes": {
+        "description": "World-space vertex positions, row-major xyz triples.",
+        "shape": "[V, 3]",
+        "dtype": "float64",
+        "storage": "row_major",
+        "memory_bytes": "8 * V * 3",
+        "depends_on": [],
+        "implemented_by": {
+          "cpp":        "nxr::compute::ComputeContext(vertices, nV, faces, nF) — first arg",
+          "node_addon": "createContext(vertices, faces) — first arg",
+          "wasm":       "createContext(vertices, faces) — first arg",
+          "mex":        "nxr_compute('createContext', vertices, faces) — second arg"
+        },
+        "complexity": "O(1)",
+        "units": "world units"
+      }
+    },
+    "faces": {
+      "attributes": {
+        "description": "Triangle vertex-index triples (0-based at the nxr-compute boundary; MEX shell converts MATLAB 1-based on entry).",
+        "shape": "[F, 3]",
+        "dtype": "int32",
+        "storage": "row_major",
+        "memory_bytes": "4 * F * 3",
+        "depends_on": [],
+        "implemented_by": {
+          "cpp":        "nxr::compute::ComputeContext(vertices, nV, faces, nF) — third arg",
+          "node_addon": "createContext(vertices, faces) — second arg",
+          "wasm":       "createContext(vertices, faces) — second arg",
+          "mex":        "nxr_compute('createContext', vertices, faces) — third arg"
+        },
+        "complexity": "O(1)",
+        "errors": ["NonManifold", "InvalidInput"]
+      }
+    }
+  },
+
+  "embedding": {
+    "attributes": {
+      "description": "World placement of the manifold (three.js Object3D analogue). Not strictly an nxr-compute concern; downstream consumers (nxr-viewer) compute and store this. Listed in the schema so consumers have a canonical place for it."
+    },
+    "bounding_box": {
+      "attributes": {
+        "description": "Axis-aligned bounding box in local coordinates: { min: [3], max: [3] }.",
+        "shape": "{min[3], max[3]}",
+        "dtype": "float64",
+        "storage": "struct",
+        "memory_bytes": "8 * 6",
+        "depends_on": ["core/vertices"],
+        "formula": "min_c = min_v vertices[v, c]; max_c = max_v vertices[v, c]",
+        "complexity": "O(V)",
+        "units": "world units"
+      }
+    },
+    "transform": {
+      "attributes": {
+        "description": "Affine local-to-world transform (4×4). Default identity. Consumers (nxr-viewer) set this from scene-graph state; nxr-compute does not compute or modify it. Storage matches three.js Matrix4 (column-major in WebGL convention).",
+        "shape": "[4, 4]",
+        "dtype": "float64",
+        "storage": "col_major",
+        "memory_bytes": "8 * 16",
+        "depends_on": [],
+        "formula": "I_4 by default",
+        "complexity": "O(1)"
+      }
+    }
+  },
+
+  "topology": {
+    "attributes": {
+      "description": "Halfedge structure and connectivity counts. Independent of the embedding — depends on faces only.",
+      "n_edges": "derived from halfedge structure",
+      "n_halfedges": "2*E for closed manifold; less for meshes with boundary",
+      "euler_characteristic": "V - E + F",
+      "n_boundary_loops": "count of boundary cycles",
+      "n_connected_components": "discrete components",
+      "orientable": true,
+      "is_closed": "n_boundary_loops == 0"
+    },
+    "halfedge": {
+      "attributes": {
+        "description": "Per-halfedge connectivity arrays. Currently constructed internally by geometry-central; planned for exposure via nxr::compute::topology::halfedge(ctx) (see docs/extensions.md §10)."
+      },
+      "twin": {
+        "attributes": {
+          "description": "Opposite halfedge index. -1 (or self) on boundary halfedges, depending on convention.",
+          "shape": "[H]",
+          "dtype": "int32",
+          "storage": "row_major",
+          "memory_bytes": "4 * H",
+          "depends_on": ["core/faces"],
+          "implemented_by": {
+            "cpp": "nxr::compute::topology::halfedge(ctx).twin (planned; via geometry-central halfedge iteration)"
+          },
+          "complexity": "O(H)"
+        }
+      },
+      "next": {
+        "attributes": {
+          "description": "Next halfedge around the face.",
+          "shape": "[H]",
+          "dtype": "int32",
+          "storage": "row_major",
+          "memory_bytes": "4 * H",
+          "depends_on": ["core/faces"],
+          "implemented_by": {
+            "cpp": "nxr::compute::topology::halfedge(ctx).next (planned)"
+          },
+          "complexity": "O(H)"
+        }
+      },
+      "vertex": {
+        "attributes": {
+          "description": "Tail vertex of each halfedge.",
+          "shape": "[H]",
+          "dtype": "int32",
+          "storage": "row_major",
+          "memory_bytes": "4 * H",
+          "depends_on": ["core/faces"],
+          "implemented_by": {
+            "cpp": "nxr::compute::topology::halfedge(ctx).vertex (planned)"
+          },
+          "complexity": "O(H)"
+        }
+      },
+      "face": {
+        "attributes": {
+          "description": "Incident face index, or -1 on boundary halfedges.",
+          "shape": "[H]",
+          "dtype": "int32",
+          "storage": "row_major",
+          "memory_bytes": "4 * H",
+          "depends_on": ["core/faces"],
+          "implemented_by": {
+            "cpp": "nxr::compute::topology::halfedge(ctx).face (planned)"
+          },
+          "complexity": "O(H)"
+        }
+      },
+      "edge": {
+        "attributes": {
+          "description": "Undirected edge index per halfedge (twin pairs share an edge index).",
+          "shape": "[H]",
+          "dtype": "int32",
+          "storage": "row_major",
+          "memory_bytes": "4 * H",
+          "depends_on": ["core/faces"],
+          "implemented_by": {
+            "cpp": "nxr::compute::topology::halfedge(ctx).edge (planned)"
+          },
+          "complexity": "O(H)"
+        }
+      },
+      "is_boundary": {
+        "attributes": {
+          "description": "1 if the halfedge is on a boundary loop, 0 otherwise.",
+          "shape": "[H]",
+          "dtype": "uint8",
+          "storage": "row_major",
+          "memory_bytes": "1 * H",
+          "depends_on": ["core/faces"],
+          "implemented_by": {
+            "cpp": "nxr::compute::topology::halfedge(ctx).is_boundary (planned)"
+          },
+          "complexity": "O(H)"
+        }
+      }
+    }
+  },
+
+  "geometry": {
+    "attributes": {
+      "description": "Per-element scalars and vectors that depend on the embedding (vertex positions). Distinct from topology, which is connectivity-only.",
+      "total_area": "Σ_f areas[f]"
+    },
+    "face": {
+      "attributes": {
+        "description": "Per-face quantities computed from vertex positions and face indices."
+      },
+      "normals": {
+        "attributes": {
+          "description": "Per-face unit normals (right-hand rule from face winding).",
+          "shape": "[F, 3]",
+          "dtype": "float64",
+          "storage": "row_major",
+          "memory_bytes": "8 * F * 3",
+          "depends_on": ["core/vertices", "core/faces"],
+          "implemented_by": {
+            "cpp":        "nxr::compute::computeFaceFrames(ctx).normals",
+            "node_addon": "ctx.computeFaceFrames().normals",
+            "wasm":       "ctx.computeFaceFrames().normals",
+            "mex":        "nxr_compute('computeFaceFrames', V, F).normals"
+          },
+          "complexity": "O(F)"
+        }
+      },
+      "areas": {
+        "attributes": {
+          "description": "Triangle areas (½ |edge_a × edge_b|).",
+          "shape": "[F]",
+          "dtype": "float64",
+          "storage": "row_major",
+          "memory_bytes": "8 * F",
+          "depends_on": ["core/vertices", "core/faces"],
+          "formula": "areas[f] = (1/2) |(v1 - v0) × (v2 - v0)|",
+          "complexity": "O(F)",
+          "units": "world units²"
+        }
+      },
+      "centroids": {
+        "attributes": {
+          "description": "Triangle centroids (mean of three vertices).",
+          "shape": "[F, 3]",
+          "dtype": "float64",
+          "storage": "row_major",
+          "memory_bytes": "8 * F * 3",
+          "depends_on": ["core/vertices", "core/faces"],
+          "formula": "centroids[f] = (1/3) (v0 + v1 + v2)",
+          "complexity": "O(F)",
+          "units": "world units"
+        }
+      },
+      "frames": {
+        "attributes": {
+          "description": "Per-face orthonormal tangent frame {e1, e2}. e1 is the unit edge vector along f.halfedge(); e2 = normal × e1. Convention matches the trivial-connection direction-field code so transported tangent vectors are interpretable in the same coordinate system across faces.",
+          "shape": "{e1[F,3], e2[F,3]}",
+          "dtype": "float64",
+          "storage": "struct",
+          "memory_bytes": "8 * F * 6",
+          "depends_on": ["core/vertices", "core/faces", "geometry/face/normals"],
+          "implemented_by": {
+            "cpp":        "nxr::compute::computeFaceFrames(ctx)",
+            "node_addon": "ctx.computeFaceFrames()",
+            "wasm":       "ctx.computeFaceFrames()",
+            "mex":        "nxr_compute('computeFaceFrames', V, F)"
+          },
+          "complexity": "O(F)"
+        }
+      }
+    },
+    "vertex": {
+      "attributes": {
+        "description": "Per-vertex quantities. Curvatures live under geometry/curvature/."
+      },
+      "normals": {
+        "attributes": {
+          "description": "Per-vertex normals. Default estimator is angle-weighted (matches geometry-processing-js 'Tip Angle Weighted'). Other estimators selectable via NormalType enum.",
+          "shape": "[V, 3]",
+          "dtype": "float64",
+          "storage": "row_major",
+          "memory_bytes": "8 * V * 3",
+          "depends_on": ["core/vertices", "core/faces", "geometry/face/normals", "geometry/face/areas"],
+          "implemented_by": {
+            "cpp":        "nxr::compute::computeVertexNormals(ctx, NormalType::AngleWeighted)",
+            "node_addon": "ctx.computeVertexNormals(type)",
+            "wasm":       "ctx.computeVertexNormals(type)",
+            "mex":        "nxr_compute('computeVertexNormals', V, F, type)"
+          },
+          "complexity": "O(F)"
+        }
+      },
+      "vertex_areas": {
+        "attributes": {
+          "description": "Per-vertex Voronoi dual areas. Used as the diagonal of the lumped mass matrix.",
+          "shape": "[V]",
+          "dtype": "float64",
+          "storage": "row_major",
+          "memory_bytes": "8 * V",
+          "depends_on": ["core/vertices", "core/faces"],
+          "formula": "vertex_areas = diag(operators/hodge0)",
+          "complexity": "O(F)",
+          "units": "world units²"
+        }
+      }
+    },
+    "edge": {
+      "attributes": {
+        "description": "Per-edge quantities."
+      },
+      "lengths": {
+        "attributes": {
+          "description": "Edge lengths.",
+          "shape": "[E]",
+          "dtype": "float64",
+          "storage": "row_major",
+          "memory_bytes": "8 * E",
+          "depends_on": ["core/vertices", "core/faces"],
+          "formula": "lengths[e] = |v_head(e) - v_tail(e)|",
+          "complexity": "O(E)",
+          "units": "world units"
+        }
+      },
+      "cotangent_weights": {
+        "attributes": {
+          "description": "Per-edge cotangent weights used in the cotan Laplacian. Each edge's weight is (1/2)(cot α + cot β) where α, β are the angles opposite the edge in its two incident triangles (one only on boundary).",
+          "shape": "[E]",
+          "dtype": "float64",
+          "storage": "row_major",
+          "memory_bytes": "8 * E",
+          "depends_on": ["core/vertices", "core/faces"],
+          "formula": "cotangent_weights[e] = (1/2)(cot α_e + cot β_e)",
+          "complexity": "O(F)",
+          "units": "dimensionless",
+          "references": ["Pinkall & Polthier 1993", "Meyer et al. 2003"]
+        }
+      },
+      "dihedral_angles": {
+        "attributes": {
+          "description": "Signed dihedral angle between the two faces incident to each edge (0 on boundary edges).",
+          "shape": "[E]",
+          "dtype": "float64",
+          "storage": "row_major",
+          "memory_bytes": "8 * E",
+          "depends_on": ["geometry/face/normals", "core/faces"],
+          "formula": "dihedral_angles[e] = atan2(sin θ, cos θ) where θ is the angle between adjacent face normals",
+          "complexity": "O(E)",
+          "units": "radians"
+        }
+      }
+    },
+    "curvature": {
+      "attributes": {
+        "description": "Per-vertex discrete curvature quantities (Gaussian via angle defect, mean via cotangent Laplace–Beltrami of position, principal curvatures via the local shape operator)."
+      },
+      "gaussian": {
+        "attributes": {
+          "description": "Discrete Gaussian curvature (angle defect) per vertex: 2π − Σ corner-angles, divided by dual area for a density.",
+          "shape": "[V]",
+          "dtype": "float64",
+          "storage": "row_major",
+          "memory_bytes": "8 * V",
+          "depends_on": ["core/vertices", "core/faces", "geometry/vertex/vertex_areas"],
+          "implemented_by": {
+            "cpp":        "nxr::compute::computeCurvatures(ctx).gaussian",
+            "node_addon": "ctx.computeCurvatures().gaussian",
+            "wasm":       "ctx.computeCurvatures().gaussian",
+            "mex":        "nxr_compute('computeCurvatures', V, F).gaussian"
+          },
+          "complexity": "O(F)",
+          "units": "1 / world units²",
+          "references": ["Meyer et al. 2003"]
+        }
+      },
+      "mean": {
+        "attributes": {
+          "description": "Discrete mean curvature per vertex (½ |Δ_LB X|, with sign by normal alignment).",
+          "shape": "[V]",
+          "dtype": "float64",
+          "storage": "row_major",
+          "memory_bytes": "8 * V",
+          "depends_on": ["operators/stiffness", "geometry/vertex/vertex_areas", "geometry/vertex/normals"],
+          "implemented_by": {
+            "cpp":        "nxr::compute::computeCurvatures(ctx).mean",
+            "node_addon": "ctx.computeCurvatures().mean",
+            "wasm":       "ctx.computeCurvatures().mean",
+            "mex":        "nxr_compute('computeCurvatures', V, F).mean"
+          },
+          "complexity": "O(nnz(operators/stiffness))",
+          "units": "1 / world units"
+        }
+      },
+      "principal_max": {
+        "attributes": {
+          "description": "Larger principal curvature (κ_max = H + √(H² − K)).",
+          "shape": "[V]",
+          "dtype": "float64",
+          "storage": "row_major",
+          "memory_bytes": "8 * V",
+          "depends_on": ["geometry/curvature/gaussian", "geometry/curvature/mean"],
+          "formula": "principal_max = mean + sqrt(mean^2 - gaussian)",
+          "complexity": "O(V)",
+          "units": "1 / world units"
+        }
+      },
+      "principal_min": {
+        "attributes": {
+          "description": "Smaller principal curvature (κ_min = H − √(H² − K)).",
+          "shape": "[V]",
+          "dtype": "float64",
+          "storage": "row_major",
+          "memory_bytes": "8 * V",
+          "depends_on": ["geometry/curvature/gaussian", "geometry/curvature/mean"],
+          "formula": "principal_min = mean - sqrt(mean^2 - gaussian)",
+          "complexity": "O(V)",
+          "units": "1 / world units"
+        }
+      },
+      "principal_dir_max": {
+        "attributes": {
+          "description": "Per-vertex world-space direction of the larger principal curvature, lifted from the local shape operator's eigenvector.",
+          "shape": "[V, 3]",
+          "dtype": "float64",
+          "storage": "row_major",
+          "memory_bytes": "8 * V * 3",
+          "depends_on": ["core/vertices", "core/faces"],
+          "implemented_by": {
+            "cpp":        "nxr::compute::computeCurvatures(ctx).principalDirMax",
+            "node_addon": "ctx.computeCurvatures().principalDir",
+            "wasm":       "ctx.computeCurvatures().principalDir",
+            "mex":        "nxr_compute('computeCurvatures', V, F).principalDir"
+          },
+          "complexity": "O(F)"
+        }
+      }
+    },
+    "singularities": {
+      "attributes": {
+        "description": "Two reference vertex landmarks anchoring the globally consistent reference tangent-frame field. User-specified at construction (or derived by a chosen heuristic upstream); not computed by nxr-compute.",
+        "shape": "[2]",
+        "dtype": "int32",
+        "storage": "row_major",
+        "memory_bytes": "4 * 2",
+        "depends_on": [],
+        "formula": "user-specified (consumer chooses two anchor vertex indices)",
+        "complexity": "O(1)"
+      }
+    }
+  },
+
+  "operators": {
+    "attributes": {
+      "description": "Discrete operators on the manifold. d0, d1, hodge0, hodge1, hodge2, hodge1_inverse are the canonical six DEC operators; stiffness, mass, gradient, divergence are derived compositions. All sparse matrices use sparse_coo storage at the binding boundary; hodge_k are conceptually diagonal (the schema labels them so) but bindings may flatten to sparse_coo for uniformity.",
+      "regularization_epsilon": "1e-8 (added to diagonals of factored matrices in nxr::compute::CholeskyCache)",
+      "references": ["Discrete Exterior Calculus, Hirani 2003", "Crane SIGGRAPH course notes 2013"]
+    },
+    "d0": {
+      "attributes": {
+        "description": "Vertex 0-form → edge 1-form gradient. Signed incidence: d0[e, v_head] = +1, d0[e, v_tail] = -1.",
+        "shape": "[E, V] sparse",
+        "dtype": "float64",
+        "storage": "sparse_coo",
+        "memory_bytes": "12 * nnz(operators/d0)",
+        "depends_on": ["core/faces"],
+        "implemented_by": {
+          "cpp":        "nxr::compute::assembleDECOperators(ctx).d0",
+          "node_addon": "ctx.assembleDECOperators().d0",
+          "wasm":       "ctx.assembleDECOperators().d0",
+          "mex":        "nxr_compute('assembleDECOperators', V, F).d0"
+        },
+        "complexity": "O(E)",
+        "units": "dimensionless"
+      }
+    },
+    "d1": {
+      "attributes": {
+        "description": "Edge 1-form → face 2-form curl. Signed incidence around each face.",
+        "shape": "[F, E] sparse",
+        "dtype": "float64",
+        "storage": "sparse_coo",
+        "memory_bytes": "12 * nnz(operators/d1)",
+        "depends_on": ["core/faces"],
+        "implemented_by": {
+          "cpp":        "nxr::compute::assembleDECOperators(ctx).d1",
+          "node_addon": "ctx.assembleDECOperators().d1",
+          "wasm":       "ctx.assembleDECOperators().d1",
+          "mex":        "nxr_compute('assembleDECOperators', V, F).d1"
+        },
+        "complexity": "O(F)",
+        "units": "dimensionless"
+      }
+    },
+    "hodge0": {
+      "attributes": {
+        "description": "Hodge ★₀: vertex 0-forms → vertex 0-forms. Diagonal, equals lumped Voronoi mass.",
+        "shape": "[V, V] sparse",
+        "dtype": "float64",
+        "storage": "diagonal",
+        "memory_bytes": "8 * V",
+        "depends_on": ["core/vertices", "core/faces"],
+        "implemented_by": {
+          "cpp":        "nxr::compute::assembleDECOperators(ctx).hodge0",
+          "node_addon": "ctx.assembleDECOperators().hodge0",
+          "wasm":       "ctx.assembleDECOperators().hodge0",
+          "mex":        "nxr_compute('assembleDECOperators', V, F).hodge0"
+        },
+        "complexity": "O(F)",
+        "units": "world units²"
+      }
+    },
+    "hodge1": {
+      "attributes": {
+        "description": "Hodge ★₁: edge 1-forms → edge 1-forms. Diagonal; entries are the cotangent weights divided by 2.",
+        "shape": "[E, E] sparse",
+        "dtype": "float64",
+        "storage": "diagonal",
+        "memory_bytes": "8 * E",
+        "depends_on": ["geometry/edge/cotangent_weights"],
+        "implemented_by": {
+          "cpp":        "nxr::compute::assembleDECOperators(ctx).hodge1",
+          "node_addon": "ctx.assembleDECOperators().hodge1",
+          "wasm":       "ctx.assembleDECOperators().hodge1",
+          "mex":        "nxr_compute('assembleDECOperators', V, F).hodge1"
+        },
+        "complexity": "O(F)",
+        "units": "dimensionless"
+      }
+    },
+    "hodge2": {
+      "attributes": {
+        "description": "Hodge ★₂: face 2-forms → face 2-forms. Diagonal; entries are 1/face_area.",
+        "shape": "[F, F] sparse",
+        "dtype": "float64",
+        "storage": "diagonal",
+        "memory_bytes": "8 * F",
+        "depends_on": ["geometry/face/areas"],
+        "implemented_by": {
+          "cpp":        "nxr::compute::assembleDECOperators(ctx).hodge2",
+          "node_addon": "ctx.assembleDECOperators().hodge2",
+          "wasm":       "ctx.assembleDECOperators().hodge2",
+          "mex":        "nxr_compute('assembleDECOperators', V, F).hodge2"
+        },
+        "complexity": "O(F)",
+        "units": "1 / world units²"
+      }
+    },
+    "hodge1_inverse": {
+      "attributes": {
+        "description": "Inverse of hodge1, used in Hodge β-solve (d1 ★₁⁻¹ d1ᵀ).",
+        "shape": "[E, E] sparse",
+        "dtype": "float64",
+        "storage": "diagonal",
+        "memory_bytes": "8 * E",
+        "depends_on": ["operators/hodge1"],
+        "formula": "hodge1^-1",
+        "complexity": "O(E)",
+        "units": "dimensionless"
+      }
+    },
+    "stiffness": {
+      "attributes": {
+        "description": "Cotangent Laplacian (PSD, symmetrized). Acts on vertex 0-forms.",
+        "shape": "[V, V] sparse",
+        "dtype": "float64",
+        "storage": "sparse_coo",
+        "memory_bytes": "12 * nnz(operators/stiffness)",
+        "depends_on": ["operators/d0", "operators/hodge1"],
+        "formula": "d0^T * hodge1 * d0",
+        "implemented_by": {
+          "cpp":        "nxr::compute::assembleMeshOperators(ctx).stiffness",
+          "node_addon": "ctx.assembleMeshOperators().stiffness",
+          "wasm":       "ctx.assembleMeshOperators().stiffness",
+          "mex":        "nxr_compute('assembleMeshOperators', V, F).stiffness"
+        },
+        "complexity": "O(F)",
+        "errors": ["GeometryDegenerate"],
+        "units": "dimensionless",
+        "references": ["Pinkall & Polthier 1993", "Meyer et al. 2003"]
+      }
+    },
+    "mass": {
+      "attributes": {
+        "description": "Lumped Voronoi mass matrix on 0-forms. Alias for hodge0.",
+        "shape": "[V, V] sparse",
+        "dtype": "float64",
+        "storage": "diagonal",
+        "memory_bytes": "8 * V",
+        "depends_on": ["operators/hodge0"],
+        "formula": "hodge0",
+        "implemented_by": {
+          "cpp":        "nxr::compute::assembleMeshOperators(ctx).mass",
+          "node_addon": "ctx.assembleMeshOperators().mass",
+          "wasm":       "ctx.assembleMeshOperators().mass",
+          "mex":        "nxr_compute('assembleMeshOperators', V, F).mass"
+        },
+        "complexity": "O(F)",
+        "units": "world units²"
+      }
+    },
+    "gradient": {
+      "attributes": {
+        "description": "Gradient operator on vertex 0-forms — produces edge 1-forms. Identical to d0 (the exterior derivative on 0-forms IS the gradient in DEC). Listed as a separate slot for API ergonomics; consumers reading 'gradient(scalar)' get the right answer without needing to know the DEC identity.",
+        "shape": "[E, V] sparse",
+        "dtype": "float64",
+        "storage": "sparse_coo",
+        "memory_bytes": "12 * nnz(operators/d0)",
+        "depends_on": ["operators/d0"],
+        "formula": "d0",
+        "complexity": "O(E)",
+        "units": "1 / world units"
+      }
+    },
+    "divergence": {
+      "attributes": {
+        "description": "Divergence operator: edge 1-forms → vertex 0-forms (negative formal adjoint of gradient under the M, ★₁ inner products).",
+        "shape": "[V, E] sparse",
+        "dtype": "float64",
+        "storage": "sparse_coo",
+        "memory_bytes": "12 * nnz(operators/divergence)",
+        "depends_on": ["operators/d0", "operators/hodge1"],
+        "formula": "d0^T * hodge1",
+        "complexity": "O(F)",
+        "units": "1 / world units"
+      }
+    }
+  },
+
+  "eigen": {
+    "attributes": {
+      "description": "Spectral basis of an operator (default: stiffness with mass inner product). Vectors are M-orthonormalized; the DC mode is removed by default.",
+      "K": "number of computed modes (user-specified, < V)",
+      "operator_ref": "operators/stiffness",
+      "inner_product_ref": "operators/mass",
+      "sigma": "shift for shift-invert mode; -1e-8 targets the lowest eigenmodes",
+      "normalized": true,
+      "dc_removed": true,
+      "n_converged": "number of modes that actually converged (≤ K)",
+      "references": ["Spectra IRAM SymGEigsShiftSolver"]
+    },
+    "values": {
+      "attributes": {
+        "description": "Eigenvalues, sorted ascending.",
+        "shape": "[K]",
+        "dtype": "float64",
+        "storage": "row_major",
+        "memory_bytes": "8 * K",
+        "depends_on": ["operators/stiffness", "operators/mass"],
+        "implemented_by": {
+          "cpp":        "nxr::compute::solveEigenmodes(K, M, k).eigenvalues",
+          "node_addon": "ctx.solveEigenmodes(k, sigma).eigenvalues",
+          "wasm":       "ctx.solveEigenmodes(k, sigma).eigenvalues",
+          "mex":        "nxr_compute('solveEigenmodes', V, F, k, sigma).eigenvalues"
+        },
+        "complexity": "O(K * V * iters)",
+        "errors": ["EigensolveInvalidK", "EigensolveNotConverged", "Cancelled"],
+        "cancellable": true,
+        "progress": true,
+        "units": "1 / world units²"
+      }
+    },
+    "vectors": {
+      "attributes": {
+        "description": "Eigenvectors of K · φ = λ M · φ, M-orthonormalized. Stored row-major as vMajor: U[v*K + k] is mode k at vertex v. Matches the cortical-flow Zarr schema and the GPU spectral-synthesis access pattern ('for each vertex, sum across modes'). Internal C++ storage is column-major; the binding transposes at the flatten step.",
+        "shape": "[V, K]",
+        "dtype": "float64",
+        "storage": "row_major",
+        "memory_bytes": "8 * V * K",
+        "depends_on": ["operators/stiffness", "operators/mass"],
+        "implemented_by": {
+          "cpp":        "nxr::compute::solveEigenmodes(K, M, k).eigenvectors",
+          "node_addon": "ctx.solveEigenmodes(k, sigma).eigenvectors",
+          "wasm":       "ctx.solveEigenmodes(k, sigma).eigenvectors",
+          "mex":        "nxr_compute('solveEigenmodes', V, F, k, sigma).eigenvectors"
+        },
+        "complexity": "O(K * V * iters)",
+        "errors": ["EigensolveInvalidK", "EigensolveNotConverged", "Cancelled"],
+        "cancellable": true,
+        "progress": true,
+        "units": "dimensionless"
+      }
+    }
+  },
+
+  "parametrization": {
+    "attributes": {
+      "description": "Coordinate atlases on the manifold. uv is a global parametrization (BFF); cross_field, line_field, stripes are local / anisotropic coordinate systems aligned to per-face or per-vertex frames.",
+      "references": [
+        "Sawhney & Crane TOG 2017 (BFF)",
+        "Knöppel-Crane SIGGRAPH 2013 (n-RoSy)",
+        "Knöppel-Crane SIGGRAPH 2015 (stripe patterns)"
+      ]
+    },
+    "uv": {
+      "attributes": {
+        "description": "Boundary First Flattening UV coordinates. Mesh must have at least one boundary loop.",
+        "shape": "[V, 2]",
+        "dtype": "float64",
+        "storage": "row_major",
+        "memory_bytes": "8 * V * 2",
+        "depends_on": ["core/vertices", "core/faces"],
+        "implemented_by": {
+          "cpp":        "nxr::compute::computeUVCoordinates(ctx)",
+          "node_addon": "ctx.computeUVCoordinates()",
+          "wasm":       "ctx.computeUVCoordinates()",
+          "mex":        "nxr_compute('computeUVCoordinates', V, F)"
+        },
+        "complexity": "O(V^1.5)",
+        "errors": ["OpenMeshRequired"],
+        "units": "dimensionless"
+      }
+    },
+    "cross_field": {
+      "attributes": {
+        "description": "Smoothest 4-RoSy direction field (n_sym=4) as a per-vertex complex number z. The four cross-field directions are the fourth roots of z, lifted into each vertex's tangent basis. Computed by minimizing Dirichlet energy on the connection Laplacian (Knöppel-Crane). Storage at the binding boundary is complex_interleaved — Float64Array of length 2V on the JS side.",
+        "shape": "[V]",
+        "dtype": "complex128",
+        "storage": "complex_interleaved",
+        "memory_bytes": "16 * V",
+        "depends_on": ["core/vertices", "core/faces"],
+        "implemented_by": {
+          "cpp":        "nxr::compute::computeSmoothVertexField(ctx, 4).vertexFieldRaw",
+          "node_addon": "ctx.computeSmoothVertexField(4).vertexFieldRaw",
+          "wasm":       "ctx.computeSmoothVertexField(4).vertexFieldRaw",
+          "mex":        "nxr_compute('computeSmoothVertexField', V, F, 4).vertexFieldRaw"
+        },
+        "complexity": "O(V^1.5)",
+        "references": ["Knöppel-Crane SIGGRAPH 2013"]
+      }
+    },
+    "line_field": {
+      "attributes": {
+        "description": "Smoothest 2-RoSy direction (line) field as a per-vertex complex number z. The two opposite directions are the square roots of z. Used as input to stripe patterns.",
+        "shape": "[V]",
+        "dtype": "complex128",
+        "storage": "complex_interleaved",
+        "memory_bytes": "16 * V",
+        "depends_on": ["core/vertices", "core/faces"],
+        "implemented_by": {
+          "cpp":        "nxr::compute::computeSmoothVertexField(ctx, 2).vertexFieldRaw",
+          "node_addon": "ctx.computeSmoothVertexField(2).vertexFieldRaw",
+          "wasm":       "ctx.computeSmoothVertexField(2).vertexFieldRaw",
+          "mex":        "nxr_compute('computeSmoothVertexField', V, F, 2).vertexFieldRaw"
+        },
+        "complexity": "O(V^1.5)",
+        "references": ["Knöppel-Crane SIGGRAPH 2013"]
+      }
+    },
+    "stripes": {
+      "attributes": {
+        "description": "Sinusoidal stripe pattern aligned to a 2-RoSy line field, returned as the zero level set of a per-corner phase function. N is the number of segments (mesh- and frequency-dependent); each segment is two endpoint xyz triples in row-major order.",
+        "shape": "[2*N, 3]",
+        "dtype": "float64",
+        "storage": "row_major",
+        "memory_bytes": "8 * 6 * N",
+        "depends_on": ["parametrization/line_field"],
+        "implemented_by": {
+          "cpp":        "nxr::compute::computeStripePattern(ctx, vertexFieldRaw, freq).positions",
+          "node_addon": "ctx.computeStripePattern(vertexFieldRaw, freq).positions",
+          "wasm":       "ctx.computeStripePattern(vertexFieldRaw, freq).positions",
+          "mex":        "nxr_compute('computeStripePattern', V, F, vertexFieldRaw, freq).positions"
+        },
+        "complexity": "O(F)",
+        "units": "world units",
+        "references": ["Knöppel-Crane SIGGRAPH 2015"]
+      }
+    }
+  },
+
+  "query": {
+    "attributes": {
+      "description": "Localization on the manifold. Returns geometric loci (a vertex, a polyline, a contour). For metric scalars over those loci, see measure/."
+    },
+    "point": {
+      "attributes": {
+        "description": "Identity / delta-function localization at a vertex. Redundant from a math standpoint but ergonomically valuable as the fundamental localization primitive — a 'point' on the manifold IS a vertex index.",
+        "inputs": [
+          { "name": "v", "type": "vertex_index", "description": "vertex index of the queried point" }
+        ],
+        "output": {
+          "shape": "[]",
+          "dtype": "int32",
+          "storage": "scalar",
+          "memory_bytes": "4",
+          "description": "the input vertex index, returned"
+        },
+        "depends_on": [],
+        "formula": "point(v) = v",
+        "complexity": "O(1)"
+      }
+    },
+    "line": {
+      "attributes": {
+        "description": "Geodesic polyline between two vertices via the edge-flip algorithm (Sharp & Crane 2020). Initialised with a Dijkstra path, then iteratively shortened by edge flips until locally straight.",
+        "inputs": [
+          { "name": "va", "type": "vertex_index" },
+          { "name": "vb", "type": "vertex_index" }
+        ],
+        "output": {
+          "shape": "[N, 3]",
+          "dtype": "float64",
+          "storage": "row_major",
+          "memory_bytes": "8 * N * 3",
+          "description": "row-major xyz triples; N depends on path complexity (typically O(diameter / mean_edge_length))"
+        },
+        "depends_on": ["core/vertices", "core/faces", "topology/halfedge"],
+        "implemented_by": {
+          "cpp":        "nxr::compute::tracePath(ctx, vStart, vEnd)",
+          "node_addon": "ctx.tracePath(vStart, vEnd)",
+          "wasm":       "ctx.tracePath(vStart, vEnd)",
+          "mex":        "nxr_compute('tracePath', V, F, vStart, vEnd)"
+        },
+        "complexity": "O(diameter / mean_edge_length)",
+        "errors": ["InvalidInput"],
+        "references": ["Sharp & Crane SIGGRAPH Asia 2020"]
+      }
+    },
+    "area": {
+      "attributes": {
+        "description": "Closed contour on the manifold formed by the level set { x : D(v, x) = level }, where D is the heat-method geodesic distance from v. Naturally describes 'circles' on the manifold of any radius.",
+        "inputs": [
+          { "name": "v",     "type": "vertex_index" },
+          { "name": "level", "type": "float64", "description": "geodesic radius (world units)" }
+        ],
+        "output": {
+          "shape": "[2*N, 3]",
+          "dtype": "float64",
+          "storage": "row_major",
+          "memory_bytes": "8 * 6 * N",
+          "description": "polyline segments; N is the number of contour segments at the requested level"
+        },
+        "depends_on": ["core/vertices", "core/faces"],
+        "implemented_by": {
+          "cpp":        "compose: nxr::compute::computeGeodesicDistance(ctx, {v}); then nxr::compute::computeIsolines(ctx, distances, 1, level, level)",
+          "node_addon": "ctx.computeGeodesicDistance([v]); ctx.computeIsolines(distances, 1, level, level)",
+          "wasm":       "ctx.computeGeodesicDistance([v]); ctx.computeIsolines(distances, 1, level, level)",
+          "mex":        "nxr_compute('computeGeodesicDistance', V, F, v); nxr_compute('computeIsolines', V, F, distances, 1, level, level)"
+        },
+        "complexity": "O(F)",
+        "references": ["Crane et al. 2013 (heat method)"]
+      }
+    }
+  },
+
+  "measure": {
+    "attributes": {
+      "description": "Metric scalars derived from query results. Where query/ returns a locus, measure/ returns its size."
+    },
+    "distance": {
+      "attributes": {
+        "description": "Metric length (in world units) of the query/line geodesic between two vertices.",
+        "inputs": [
+          { "name": "va", "type": "vertex_index" },
+          { "name": "vb", "type": "vertex_index" }
+        ],
+        "output": {
+          "shape": "[]",
+          "dtype": "float64",
+          "storage": "scalar",
+          "memory_bytes": "8"
+        },
+        "depends_on": ["query/line"],
+        "formula": "distance(va, vb) = Σ_i |line(va, vb)[i+1] - line(va, vb)[i]|",
+        "complexity": "O(diameter / mean_edge_length)",
+        "units": "world units"
+      }
+    },
+    "area": {
+      "attributes": {
+        "description": "Metric area enclosed by the heat-distance level set centered at v at radius level — i.e., the area of the geodesic disc of radius `level` around v.",
+        "inputs": [
+          { "name": "v",     "type": "vertex_index" },
+          { "name": "level", "type": "float64" }
+        ],
+        "output": {
+          "shape": "[]",
+          "dtype": "float64",
+          "storage": "scalar",
+          "memory_bytes": "8"
+        },
+        "depends_on": ["query/area", "geometry/face/areas"],
+        "formula": "area(v, level) = ∫_{D(v, x) ≤ level} dA",
+        "complexity": "O(F)",
+        "units": "world units²"
+      }
+    }
+  }
+}

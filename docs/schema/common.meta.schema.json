@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nxr.dev/schema/common.meta.schema.json",
+  "title": "NXR common meta-schema",
+  "description": "Shared $defs reused by every NXR namespace meta-schema (manifold, field, future graph, recording, volume). The primitives here — dtype, storage, slot_path, leaf_slot, operation_slot, binding_map, group_attributes — are the cross-namespace common language and never change without coordination across all namespaces.",
+
+  "$defs": {
+
+    "dtype": {
+      "description": "Element type. complex* implies complex_interleaved storage. bool is materialized as uint8 everywhere.",
+      "type": "string",
+      "enum": [
+        "float64", "float32",
+        "int32", "int64",
+        "uint8", "uint32",
+        "complex64", "complex128",
+        "bool"
+      ]
+    },
+
+    "storage": {
+      "description": "Memory layout of the buffer.",
+      "type": "string",
+      "enum": [
+        "row_major",
+        "col_major",
+        "sparse_coo",
+        "sparse_csc",
+        "sparse_csr",
+        "diagonal",
+        "complex_interleaved",
+        "struct",
+        "scalar"
+      ]
+    },
+
+    "slot_path": {
+      "description": "Slash-separated path rooted at a top-level section, e.g. 'operators/d0' or 'geometry/face/normals'. Cross-namespace paths use a leading namespace prefix, e.g. 'manifold/operators/d0'.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(/[a-z][a-z0-9_]*)*$"
+    },
+
+    "binding_map": {
+      "description": "Per-binding entry-point references. cpp is required; the other shells are optional.",
+      "type": "object",
+      "properties": {
+        "cpp":        { "type": "string" },
+        "node_addon": { "type": "string" },
+        "wasm":       { "type": "string" },
+        "mex":        { "type": "string" },
+        "cli":        { "type": "string" }
+      },
+      "required": ["cpp"],
+      "additionalProperties": false
+    },
+
+    "input_param": {
+      "description": "Single named input parameter to an operation.",
+      "type": "object",
+      "properties": {
+        "name":        { "type": "string" },
+        "type":        { "type": "string", "description": "Free-form type tag, e.g. 'vertex_index', 'face_index', 'float64', 'int32', 'edge_index_array', 'field_ref'." },
+        "description": { "type": "string" },
+        "optional":    { "type": "boolean", "default": false },
+        "default":     {}
+      },
+      "required": ["name", "type"],
+      "additionalProperties": false
+    },
+
+    "output_spec": {
+      "description": "Output buffer description for an operation. Mirrors leaf-slot shape/dtype/storage.",
+      "type": "object",
+      "properties": {
+        "shape":        { "type": "string" },
+        "dtype":        { "$ref": "#/$defs/dtype" },
+        "storage":      { "$ref": "#/$defs/storage" },
+        "memory_bytes": { "type": "string" },
+        "description":  { "type": "string" }
+      },
+      "required": ["shape", "dtype", "storage"],
+      "additionalProperties": false
+    },
+
+    "leaf_attributes": {
+      "description": "Required attribute set for a data leaf slot. Either formula or implemented_by must be present.",
+      "type": "object",
+      "properties": {
+        "description":    { "type": "string", "minLength": 1 },
+        "shape":          { "type": "string", "minLength": 1 },
+        "dtype":          { "$ref": "#/$defs/dtype" },
+        "storage":        { "$ref": "#/$defs/storage" },
+        "memory_bytes":   { "type": "string", "minLength": 1 },
+        "depends_on":     { "type": "array", "items": { "$ref": "#/$defs/slot_path" } },
+        "complexity":     { "type": "string", "minLength": 1 },
+        "formula":        { "type": "string" },
+        "implemented_by": { "$ref": "#/$defs/binding_map" },
+        "errors":         { "type": "array", "items": { "type": "string" } },
+        "cancellable":    { "type": "boolean" },
+        "progress":       { "type": "boolean" },
+        "units":          { "type": "string" },
+        "references":     { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["description", "shape", "dtype", "storage", "memory_bytes", "depends_on", "complexity"],
+      "anyOf": [
+        { "required": ["formula"] },
+        { "required": ["implemented_by"] }
+      ],
+      "additionalProperties": false
+    },
+
+    "leaf_slot": {
+      "description": "A data slot — exactly one buffer or scalar value.",
+      "type": "object",
+      "properties": {
+        "attributes": { "$ref": "#/$defs/leaf_attributes" }
+      },
+      "required": ["attributes"],
+      "additionalProperties": false
+    },
+
+    "operation_attributes": {
+      "description": "Required attribute set for an operation slot (verbs, not buffers). Either formula or implemented_by must be present.",
+      "type": "object",
+      "properties": {
+        "description":    { "type": "string", "minLength": 1 },
+        "inputs":         { "type": "array",  "items": { "$ref": "#/$defs/input_param" } },
+        "output":         { "$ref": "#/$defs/output_spec" },
+        "depends_on":     { "type": "array", "items": { "$ref": "#/$defs/slot_path" } },
+        "complexity":     { "type": "string", "minLength": 1 },
+        "formula":        { "type": "string" },
+        "implemented_by": { "$ref": "#/$defs/binding_map" },
+        "errors":         { "type": "array", "items": { "type": "string" } },
+        "cancellable":    { "type": "boolean" },
+        "progress":       { "type": "boolean" },
+        "units":          { "type": "string" },
+        "references":     { "type": "array", "items": { "type": "string" } },
+        "applies_when":   { "type": "string", "description": "Optional precondition predicate over the parent object's attributes (e.g., \"kind == 'scalar'\"). Documentation only; not enforced." }
+      },
+      "required": ["description", "inputs", "output", "complexity"],
+      "anyOf": [
+        { "required": ["formula"] },
+        { "required": ["implemented_by"] }
+      ],
+      "additionalProperties": false
+    },
+
+    "operation_slot": {
+      "description": "An operation slot — a verb (query, measure, field operation).",
+      "type": "object",
+      "properties": {
+        "attributes": { "$ref": "#/$defs/operation_attributes" }
+      },
+      "required": ["attributes"],
+      "additionalProperties": false
+    },
+
+    "group_attributes": {
+      "description": "Group-level metadata. Open-ended; group attributes carry only meta facts that apply to the whole group (counts that don't belong to any single leaf, configuration choices that gate the group).",
+      "type": "object",
+      "properties": {
+        "description": { "type": "string" },
+        "references":  { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    }
+
+  }
+}

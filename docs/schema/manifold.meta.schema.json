@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nxr.dev/schema/manifold.meta.schema.json",
+  "title": "NXR manifold meta-schema",
+  "description": "Validates manifold.schema.json. Reuses the cross-namespace primitives from common.meta.schema.json (dtype, storage, leaf_slot, operation_slot, binding_map, group_attributes). Manifold-specific content lives here: the top-level structure (core, embedding, topology, geometry, operators, eigen, parametrization, query, measure) and the slot membership of each section.",
+  "type": "object",
+
+  "properties": {
+
+    "$schema":  { "type": "string" },
+    "$id":      { "type": "string" },
+    "title":    { "type": "string" },
+    "version":  { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(-.+)?$" },
+
+    "attributes": {
+      "description": "Header for the manifold object as a whole.",
+      "$ref": "common.meta.schema.json#/$defs/group_attributes"
+    },
+
+    "core": {
+      "description": "Required inputs; everything else is derivable.",
+      "type": "object",
+      "properties": {
+        "attributes": { "$ref": "common.meta.schema.json#/$defs/group_attributes" },
+        "vertices":   { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+        "faces":      { "$ref": "common.meta.schema.json#/$defs/leaf_slot" }
+      },
+      "required": ["attributes", "vertices", "faces"],
+      "additionalProperties": false
+    },
+
+    "embedding": {
+      "description": "World-space placement (three.js Object3D analogue).",
+      "type": "object",
+      "properties": {
+        "attributes":   { "$ref": "common.meta.schema.json#/$defs/group_attributes" },
+        "bounding_box": { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+        "transform":    { "$ref": "common.meta.schema.json#/$defs/leaf_slot" }
+      },
+      "required": ["attributes"],
+      "additionalProperties": false
+    },
+
+    "topology": {
+      "description": "Halfedge structure and connectivity counts.",
+      "type": "object",
+      "properties": {
+        "attributes": { "$ref": "common.meta.schema.json#/$defs/group_attributes" },
+        "halfedge": {
+          "type": "object",
+          "properties": {
+            "attributes":  { "$ref": "common.meta.schema.json#/$defs/group_attributes" },
+            "twin":        { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+            "next":        { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+            "vertex":      { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+            "face":        { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+            "edge":        { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+            "is_boundary": { "$ref": "common.meta.schema.json#/$defs/leaf_slot" }
+          },
+          "required": ["attributes"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["attributes"],
+      "additionalProperties": false
+    },
+
+    "geometry": {
+      "description": "Per-element scalars and vectors that depend on the embedding.",
+      "type": "object",
+      "properties": {
+        "attributes": { "$ref": "common.meta.schema.json#/$defs/group_attributes" },
+        "face": {
+          "type": "object",
+          "properties": {
+            "attributes": { "$ref": "common.meta.schema.json#/$defs/group_attributes" },
+            "normals":    { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+            "areas":      { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+            "centroids":  { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+            "frames":     { "$ref": "common.meta.schema.json#/$defs/leaf_slot" }
+          },
+          "required": ["attributes"],
+          "additionalProperties": false
+        },
+        "vertex": {
+          "type": "object",
+          "properties": {
+            "attributes":   { "$ref": "common.meta.schema.json#/$defs/group_attributes" },
+            "normals":      { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+            "vertex_areas": { "$ref": "common.meta.schema.json#/$defs/leaf_slot" }
+          },
+          "required": ["attributes"],
+          "additionalProperties": false
+        },
+        "edge": {
+          "type": "object",
+          "properties": {
+            "attributes":         { "$ref": "common.meta.schema.json#/$defs/group_attributes" },
+            "lengths":            { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+            "cotangent_weights":  { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+            "dihedral_angles":    { "$ref": "common.meta.schema.json#/$defs/leaf_slot" }
+          },
+          "required": ["attributes"],
+          "additionalProperties": false
+        },
+        "curvature": {
+          "type": "object",
+          "properties": {
+            "attributes":         { "$ref": "common.meta.schema.json#/$defs/group_attributes" },
+            "gaussian":           { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+            "mean":               { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+            "principal_max":      { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+            "principal_min":      { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+            "principal_dir_max":  { "$ref": "common.meta.schema.json#/$defs/leaf_slot" }
+          },
+          "required": ["attributes"],
+          "additionalProperties": false
+        },
+        "singularities": { "$ref": "common.meta.schema.json#/$defs/leaf_slot" }
+      },
+      "required": ["attributes"],
+      "additionalProperties": false
+    },
+
+    "operators": {
+      "description": "Discrete operators on the manifold. d0, d1, hodge* are canonical; the rest derived.",
+      "type": "object",
+      "properties": {
+        "attributes":     { "$ref": "common.meta.schema.json#/$defs/group_attributes" },
+        "d0":             { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+        "d1":             { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+        "hodge0":         { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+        "hodge1":         { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+        "hodge2":         { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+        "hodge1_inverse": { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+        "stiffness":      { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+        "mass":           { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+        "gradient":       { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+        "divergence":     { "$ref": "common.meta.schema.json#/$defs/leaf_slot" }
+      },
+      "required": ["attributes"],
+      "additionalProperties": false
+    },
+
+    "eigen": {
+      "description": "Spectral basis of an operator.",
+      "type": "object",
+      "properties": {
+        "attributes": { "$ref": "common.meta.schema.json#/$defs/group_attributes" },
+        "values":     { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+        "vectors":    { "$ref": "common.meta.schema.json#/$defs/leaf_slot" }
+      },
+      "required": ["attributes"],
+      "additionalProperties": false
+    },
+
+    "parametrization": {
+      "description": "Coordinate atlases on the manifold (global UV + local frame fields + stripe phase isolines).",
+      "type": "object",
+      "properties": {
+        "attributes":   { "$ref": "common.meta.schema.json#/$defs/group_attributes" },
+        "uv":           { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+        "cross_field":  { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+        "line_field":   { "$ref": "common.meta.schema.json#/$defs/leaf_slot" },
+        "stripes":      { "$ref": "common.meta.schema.json#/$defs/leaf_slot" }
+      },
+      "required": ["attributes"],
+      "additionalProperties": false
+    },
+
+    "query": {
+      "description": "Localization on the manifold (returns geometric loci).",
+      "type": "object",
+      "properties": {
+        "attributes": { "$ref": "common.meta.schema.json#/$defs/group_attributes" },
+        "point":      { "$ref": "common.meta.schema.json#/$defs/operation_slot" },
+        "line":       { "$ref": "common.meta.schema.json#/$defs/operation_slot" },
+        "area":       { "$ref": "common.meta.schema.json#/$defs/operation_slot" }
+      },
+      "required": ["attributes"],
+      "additionalProperties": false
+    },
+
+    "measure": {
+      "description": "Metric scalars derived from query results.",
+      "type": "object",
+      "properties": {
+        "attributes": { "$ref": "common.meta.schema.json#/$defs/group_attributes" },
+        "distance":   { "$ref": "common.meta.schema.json#/$defs/operation_slot" },
+        "area":       { "$ref": "common.meta.schema.json#/$defs/operation_slot" }
+      },
+      "required": ["attributes"],
+      "additionalProperties": false
+    }
+
+  },
+
+  "required": [
+    "attributes",
+    "core",
+    "embedding",
+    "topology",
+    "geometry",
+    "operators",
+    "eigen",
+    "parametrization",
+    "query",
+    "measure"
+  ],
+
+  "additionalProperties": false
+}
