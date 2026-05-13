@@ -735,9 +735,9 @@ private:
         o.set("vertexAreas", eigenVectorToVal(ops_->vertexAreas));
         o.set("normals",     eigenMatrixToVal(ops_->normals));
         o.set("totalArea",   ops_->totalArea);
-        o.set("nV",          ops_->nV);
-        o.set("nE",          ops_->nE);
-        o.set("nF",          ops_->nF);
+        o.set("nV",          ctx_->nV());
+        o.set("nE",          ctx_->nE());
+        o.set("nF",          ctx_->nF());
         return o;
     }
 
@@ -787,6 +787,10 @@ private:
         return r;
     }
 
+    // ops_ and dec_ are view structs over ctx_'s geometry-central
+    // cached matrices (see lifetime contract in compute.h). Declared
+    // after ctx_ so destruction order tears them down first; the
+    // references inside are never left dangling.
     std::unique_ptr<nxr::compute::ComputeContext>     ctx_;
     std::unique_ptr<nxr::compute::MeshOperators>      ops_;
     std::unique_ptr<nxr::compute::DECOperators>       dec_;

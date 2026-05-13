@@ -203,10 +203,16 @@ static Napi::Float64Array sparseDiagonalToFloat64Array(Napi::Env env, const Eige
 // cache the assembled output keyed by all input parameters.
 using CLCacheKey = std::tuple<ConnectionDomain, int, double, ConnectionLaplacianFormat>;
 
+// ContextHolder owns the ComputeContext AND any operator views built on
+// top of it. MeshOperators / DECOperators hold const-references into the
+// context's geometry-central cached matrices (see the lifetime contract
+// in compute.h). Destruction order is shared_ptr-managed: ops/dec are
+// destroyed first when this struct dies, then ctx, so the references
+// are never left dangling.
 struct ContextHolder {
     std::shared_ptr<ComputeContext> ctx;
-    std::shared_ptr<MeshOperators> ops;     // cached after first assemble
-    std::shared_ptr<DECOperators> dec;      // cached after first DEC call
+    std::shared_ptr<MeshOperators> ops;     // view, lazy
+    std::shared_ptr<DECOperators> dec;      // view, lazy
     std::shared_ptr<CholeskyCache> factors;   // pre-factored Cholesky/LU, lazy
     std::shared_ptr<EigenResult> eigenmodes; // populated by EigenSolveWorker
     std::shared_ptr<VectorHeatSolver> vhm;   // lazy
@@ -245,6 +251,9 @@ Napi::Value CreateContext(const Napi::CallbackInfo& info) {
     return Napi::External<ContextHolder>::New(env, holder, FinalizeContext);
 }
 
+// Forward declarations for the lazy-init helpers defined further below.
+static void ensureHeatGeo(ContextHolder* holder);
+
 static ContextHolder* getContext(const Napi::CallbackInfo& info, int argIdx = 0) {
     if (!info[argIdx].IsExternal()) {
         Napi::TypeError::New(info.Env(), "Expected ComputeContext handle as argument").ThrowAsJavaScriptException();
@@ -270,9 +279,9 @@ Napi::Value AssembleMeshOperators(const Napi::CallbackInfo& info) {
         result.Set("massDiag", toFloat64Array(env, ops.vertexAreas));
         result.Set("normals", matrixToFloat64Array(env, ops.normals));
         result.Set("totalArea", Napi::Number::New(env, ops.totalArea));
-        result.Set("nV", Napi::Number::New(env, ops.nV));
-        result.Set("nE", Napi::Number::New(env, ops.nE));
-        result.Set("nF", Napi::Number::New(env, ops.nF));
+        result.Set("nV", Napi::Number::New(env, holder->ctx->nV()));
+        result.Set("nE", Napi::Number::New(env, holder->ctx->nE()));
+        result.Set("nF", Napi::Number::New(env, holder->ctx->nF()));
         return result;
     });
 }
@@ -576,9 +585,7 @@ Napi::Value ComputeGeodesicDistance(const Napi::CallbackInfo& info) {
         // across calls — its constructor pre-factors the Cholesky
         // systems (M+tA, A); subsequent calls do back-substitution
         // only. Same lifetime model as VectorHeatSolver / SignedHeatSolver.
-        if (!holder->heatGeo) {
-            holder->heatGeo = std::make_shared<HeatGeodesicSolver>(*holder->ctx);
-        }
+        ensureHeatGeo(holder);
         Eigen::VectorXd dists = computeGeodesicDistance(*holder->heatGeo, sources);
         return toFloat64Array(env, dists);
     });
@@ -896,6 +903,11 @@ static void ensureVHM(ContextHolder* holder) {
 static void ensureSHS(ContextHolder* holder) {
     if (!holder->shs) {
         holder->shs = std::make_shared<SignedHeatSolver>(*holder->ctx);
+    }
+}
+static void ensureHeatGeo(ContextHolder* holder) {
+    if (!holder->heatGeo) {
+        holder->heatGeo = std::make_shared<HeatGeodesicSolver>(*holder->ctx);
     }
 }
 

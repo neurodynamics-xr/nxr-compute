@@ -13,10 +13,21 @@ the `nxr_compute` static library. The library lives in
 bindings live in `native/src/addon.cpp`. Build with CMake via cmake-js.
 
 The addon is **context-based**: each mesh is bound once via
-`createContext(vertices, faces)` and the resulting opaque handle owns
-its `MeshOperators`, `DECOperators`, and `CholeskyCache` for the rest of
-its lifetime. There are no JS-side handles for individual factors —
-the cache is internal to the C++ side.
+`createContext(vertices, faces)` and the resulting opaque handle holds
+a `MeshOperators` view, a `DECOperators` view, and a `CholeskyCache`
+for the rest of its lifetime. There are no JS-side handles for
+individual factors — the cache is internal to the C++ side.
+
+`MeshOperators` and `DECOperators` are **view structs** with
+const-reference fields bound to geometry-central's cached matrices
+(`cotanLaplacian`, `vertexLumpedMassMatrix`, `d0`, `d1`, `hodge*`).
+They do not own the sparse storage; `assembleMeshOperators` /
+`assembleDECOperators` pin those caches via `require*` and bind the
+references. Lifetime contract: the binding holders
+(`ContextHolder` / `ContextWrapper`) keep the operator structs and the
+owning `ComputeContext` together, and no code path should call
+`unrequire*` on the geometry while the views are alive. See the
+comment block above `MeshOperators` in `include/nxr/compute.h`.
 
 ---
 

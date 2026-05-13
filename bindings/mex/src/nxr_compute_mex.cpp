@@ -92,7 +92,7 @@ void cmdAssembleMeshOperators(int /*nlhs*/, mxArray** plhs,
 
     nxr::compute::ComputeContext ctx(verts.data(), nV, faces.data(), nF);
     auto ops = nxr::compute::assembleMeshOperators(ctx);
-    plhs[0] = meshOperatorsToStruct(ops);
+    plhs[0] = meshOperatorsToStruct(ops, ctx);
 }
 
 // ── solveEigenmodes(K, M, k) → struct ────────────────────────

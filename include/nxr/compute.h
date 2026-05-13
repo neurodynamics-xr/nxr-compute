@@ -121,14 +121,52 @@ enum class MassMatrixVariant {
     ConsistentFEM   // sparse, off-diagonal couplings (full FEM mass)
 };
 
+// MeshOperators / DECOperators mix view and value semantics:
+//
+//   * View fields (const-references into geometry-central's cached matrices):
+//       MeshOperators::stiffness, all DECOperators fields. Bound by
+//       assembleMeshOperators / assembleDECOperators after the relevant
+//       require* call pins them on the geometry.
+//
+//   * Owned field:
+//       MeshOperators::mass — variant-dependent (Voronoi / Barycentric /
+//       ConsistentFEM); non-Voronoi variants don't have a single
+//       geometry-central matrix to view, so mass is materialised by
+//       value regardless of variant for uniform semantics.
+//
+// Lifetime contract: bindings must keep the owning ComputeContext alive
+// for the entire lifetime of any MeshOperators / DECOperators they hold,
+// and must NOT call unrequire* on the underlying geometry while the
+// structs are alive. ContextHolder / ContextWrapper enforce this by
+// keeping the operator structs and the context together.
+//
+// Because of the reference fields, both structs are copy-constructible
+// (refs rebind to the same targets) but not copy-assignable. The
+// bindings hold them via shared_ptr / unique_ptr and never reassign.
+
 struct MeshOperators {
-    Eigen::SparseMatrix<double> stiffness;  // cotangent Laplacian (PSD, symmetrized)
-    Eigen::SparseMatrix<double> mass;       // mass matrix per `massVariant` (SPD)
-    MassMatrixVariant massVariant;          // which variant produced `mass`
-    Eigen::VectorXd vertexAreas;            // mixed Voronoi vertex areas [nV] (variant-independent)
-    Eigen::MatrixXd normals;                // vertex normals [nV, 3]
+    MeshOperators(const Eigen::SparseMatrix<double>& stiffness_,
+                  Eigen::SparseMatrix<double> mass_,
+                  MassMatrixVariant massVariant_,
+                  Eigen::VectorXd vertexAreas_,
+                  Eigen::MatrixXd normals_,
+                  double totalArea_)
+      : stiffness(stiffness_),
+        mass(std::move(mass_)),
+        massVariant(massVariant_),
+        vertexAreas(std::move(vertexAreas_)),
+        normals(std::move(normals_)),
+        totalArea(totalArea_) {}
+
+    const Eigen::SparseMatrix<double>& stiffness;  // view: cotangent Laplacian
+    Eigen::SparseMatrix<double> mass;              // owned: depends on massVariant
+    MassMatrixVariant massVariant;                 // which variant produced `mass`
+    Eigen::VectorXd vertexAreas;                   // [nV] mixed Voronoi (variant-independent)
+    Eigen::MatrixXd normals;                       // [nV, 3] vertex normals
     double totalArea;
-    int nV, nE, nF;
+    // nV / nE / nF intentionally omitted — read from the owning
+    // ComputeContext (ctx.nV(), ctx.nE(), ctx.nF()) to avoid duplicating
+    // mesh metadata that's already canonical on the context.
 };
 
 /** Assemble operators from a context. Default mass variant is Voronoi
@@ -245,12 +283,25 @@ ConnectionLaplacianFormat parseConnectionLaplacianFormat(const std::string& name
 // ── DEC Operators ────────────────────────────────────────────
 
 struct DECOperators {
-    Eigen::SparseMatrix<double> d0;      // vertex → edge
-    Eigen::SparseMatrix<double> d1;      // edge → face
-    Eigen::SparseMatrix<double> hodge0;  // vertex → vertex (diagonal)
-    Eigen::SparseMatrix<double> hodge1;  // edge → edge (diagonal)
-    Eigen::SparseMatrix<double> hodge2;  // face → face (diagonal)
-    Eigen::SparseMatrix<double> hodge1Inverse;
+    DECOperators(const Eigen::SparseMatrix<double>& d0_,
+                 const Eigen::SparseMatrix<double>& d1_,
+                 const Eigen::SparseMatrix<double>& hodge0_,
+                 const Eigen::SparseMatrix<double>& hodge1_,
+                 const Eigen::SparseMatrix<double>& hodge2_,
+                 const Eigen::SparseMatrix<double>& hodge1Inverse_)
+      : d0(d0_), d1(d1_), hodge0(hodge0_), hodge1(hodge1_),
+        hodge2(hodge2_), hodge1Inverse(hodge1Inverse_) {}
+
+    // All fields are views into geometry-central's cached matrices —
+    // see the comment block above MeshOperators for the lifetime
+    // contract. dec.hodge0 is the same matrix as ops.mass (both
+    // are the lumped Voronoi mass).
+    const Eigen::SparseMatrix<double>& d0;      // vertex → edge
+    const Eigen::SparseMatrix<double>& d1;      // edge → face
+    const Eigen::SparseMatrix<double>& hodge0;  // vertex → vertex (diagonal)
+    const Eigen::SparseMatrix<double>& hodge1;  // edge → edge (diagonal)
+    const Eigen::SparseMatrix<double>& hodge2;  // face → face (diagonal)
+    const Eigen::SparseMatrix<double>& hodge1Inverse;
 };
 
 DECOperators assembleDECOperators(ComputeContext& ctx);

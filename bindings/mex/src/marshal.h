@@ -248,7 +248,8 @@ inline std::vector<std::int32_t> mxToFaceBuffer(const mxArray* arr, int& nFOut) 
 
 // ── Struct builders for compound return values ──────────────
 
-inline mxArray* meshOperatorsToStruct(const nxr::compute::MeshOperators& ops) {
+inline mxArray* meshOperatorsToStruct(const nxr::compute::MeshOperators& ops,
+                                      const nxr::compute::ComputeContext& ctx) {
     const char* fields[] = {
         "stiffness", "mass", "vertexAreas", "normals",
         "totalArea", "nV", "nE", "nF",
@@ -265,9 +266,9 @@ inline mxArray* meshOperatorsToStruct(const nxr::compute::MeshOperators& ops) {
     mxSetField(s, 0, "vertexAreas", eigenVectorToMx(ops.vertexAreas));
     mxSetField(s, 0, "normals",     eigenMatrixToMx(normalsT));
     mxSetField(s, 0, "totalArea",   mxCreateDoubleScalar(ops.totalArea));
-    mxSetField(s, 0, "nV",          mxCreateDoubleScalar(ops.nV));
-    mxSetField(s, 0, "nE",          mxCreateDoubleScalar(ops.nE));
-    mxSetField(s, 0, "nF",          mxCreateDoubleScalar(ops.nF));
+    mxSetField(s, 0, "nV",          mxCreateDoubleScalar(ctx.nV()));
+    mxSetField(s, 0, "nE",          mxCreateDoubleScalar(ctx.nE()));
+    mxSetField(s, 0, "nF",          mxCreateDoubleScalar(ctx.nF()));
     return s;
 }
 

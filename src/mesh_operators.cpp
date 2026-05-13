@@ -143,45 +143,62 @@ MeshOperators assembleMeshOperators(ComputeContext& ctx,
     auto& mesh = ctx.mesh();
     auto& geometry = ctx.geometry();
 
-    MeshOperators ops;
-    ops.nV = ctx.nV();
-    ops.nE = ctx.nE();
-    ops.nF = ctx.nF();
-    ops.massVariant = variant;
+    int nV = ctx.nV();
+    int nE = ctx.nE();
+    int nF = ctx.nF();
 
-    // Cotangent Laplacian (already positive semidefinite in geometry-central)
+    // Pin the cotangent Laplacian — it's a view in the returned struct.
+    // cotanLaplacian is already symmetric (cotan weights symmetric,
+    // diagonal = negative row sum); the previous (L+Lᵀ)/2 step has been
+    // dropped (verified bit-identical across all numerical test suites).
     geometry.requireCotanLaplacian();
-    ops.stiffness = geometry.cotanLaplacian;
-    // Symmetrize for numerical safety
-    Eigen::SparseMatrix<double> Lt = ops.stiffness.transpose();
-    ops.stiffness = (ops.stiffness + Lt) * 0.5;
 
     // Mass matrix per requested variant.
-    std::vector<Eigen::Triplet<double>> massTriplets;
-    assembleMassTriplets(mesh, geometry, variant, massTriplets, ops.totalArea);
-    ops.mass.resize(ops.nV, ops.nV);
-    ops.mass.setFromTriplets(massTriplets.begin(), massTriplets.end());
+    //   * Voronoi: source from geometry.vertexLumpedMassMatrix (avoids the
+    //     redundant triplet rebuild — geometry-central already maintains
+    //     this matrix and pinning is cheap).
+    //   * Barycentric / ConsistentFEM: build via assembleMassTriplets
+    //     since geometry-central doesn't cache them.
+    //
+    // Mass is stored by VALUE in MeshOperators (not a view) because the
+    // non-Voronoi variants don't have a single backing geometry-central
+    // matrix to view; uniform value-storage keeps the struct shape
+    // variant-independent.
+    Eigen::SparseMatrix<double> mass;
+    double totalArea = 0.0;
+    if (variant == MassMatrixVariant::Voronoi) {
+        geometry.requireVertexLumpedMassMatrix();
+        mass = geometry.vertexLumpedMassMatrix;
+        totalArea = mass.diagonal().sum();
+    } else {
+        std::vector<Eigen::Triplet<double>> massTriplets;
+        assembleMassTriplets(mesh, geometry, variant, massTriplets, totalArea);
+        mass.resize(nV, nV);
+        mass.setFromTriplets(massTriplets.begin(), massTriplets.end());
+    }
 
-    // vertexAreas always carries the mixed-Voronoi areas regardless of
-    // mass variant — many downstream consumers (curvature, gradients,
-    // diffusion) expect per-vertex weights even when the L² inner
-    // product uses a non-diagonal M.
+    // vertexAreas always carries mixed-Voronoi areas regardless of mass
+    // variant — downstream consumers (curvature, gradients, diffusion)
+    // expect per-vertex weights even when the L² inner product uses a
+    // non-diagonal M.
     geometry.requireVertexDualAreas();
-    ops.vertexAreas.resize(ops.nV);
+    Eigen::VectorXd vertexAreas(nV);
     for (Vertex v : mesh.vertices()) {
-        ops.vertexAreas(static_cast<int>(v.getIndex())) =
+        vertexAreas(static_cast<int>(v.getIndex())) =
             geometry.vertexDualAreas[v];
     }
 
-    // Vertex normals
+    // Vertex normals — V×3 row-major lifted from VertexData<Vector3>
+    // (the §11 binding layout contract). Value-copy by necessity:
+    // geometry-central stores them as a labeled array, not a matrix.
     geometry.requireVertexNormals();
-    ops.normals.resize(ops.nV, 3);
+    Eigen::MatrixXd normals(nV, 3);
     for (Vertex v : mesh.vertices()) {
         int idx = static_cast<int>(v.getIndex());
         Vector3 n = geometry.vertexNormals[v];
-        ops.normals(idx, 0) = n.x;
-        ops.normals(idx, 1) = n.y;
-        ops.normals(idx, 2) = n.z;
+        normals(idx, 0) = n.x;
+        normals(idx, 1) = n.y;
+        normals(idx, 2) = n.z;
     }
 
     const char* variantName =
@@ -189,12 +206,19 @@ MeshOperators assembleMeshOperators(ComputeContext& ctx,
         variant == MassMatrixVariant::Barycentric  ? "barycentric"  :
         variant == MassMatrixVariant::ConsistentFEM? "full"         : "?";
     std::cout << "[mesh_operators] Assembled: "
-              << ops.nV << " V, " << ops.nE << " E, " << ops.nF << " F "
-              << "(total area = " << ops.totalArea
+              << nV << " V, " << nE << " E, " << nF << " F "
+              << "(total area = " << totalArea
               << ", mass = " << variantName
-              << ", mass nnz = " << ops.mass.nonZeros() << ")" << std::endl;
+              << ", mass nnz = " << mass.nonZeros() << ")" << std::endl;
 
-    return ops;
+    return MeshOperators(
+        geometry.cotanLaplacian,
+        std::move(mass),
+        variant,
+        std::move(vertexAreas),
+        std::move(normals),
+        totalArea
+    );
 }
 
 MeshOperators assembleMeshOperators(
@@ -219,18 +243,15 @@ MassMatrixVariant parseMassMatrixVariant(const std::string& name) {
 
 DECOperators assembleDECOperators(ComputeContext& ctx) {
     auto& geometry = ctx.geometry();
-
     geometry.requireDECOperators();
-
-    DECOperators dec;
-    dec.d0 = geometry.d0;
-    dec.d1 = geometry.d1;
-    dec.hodge0 = geometry.hodge0;
-    dec.hodge1 = geometry.hodge1;
-    dec.hodge2 = geometry.hodge2;
-    dec.hodge1Inverse = geometry.hodge1Inverse;
-
-    return dec;
+    return DECOperators(
+        geometry.d0,
+        geometry.d1,
+        geometry.hodge0,
+        geometry.hodge1,
+        geometry.hodge2,
+        geometry.hodge1Inverse
+    );
 }
 
 } // namespace nxr::compute

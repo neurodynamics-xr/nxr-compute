@@ -116,7 +116,7 @@ int cmdSmoke() {
     std::cout << "[smoke]   signedHeat range=[" << sd.minCoeff() << ", " << sd.maxCoeff() << "]\n";
     std::cout << "[smoke]   smoothFaceField nF=" << faceField.rows()
               << "  stripes segs=" << stripes.segmentCount << "\n";
-    std::cout << "[smoke]   nV=" << ops.nV << "  nF=" << ops.nF
+    std::cout << "[smoke]   nV=" << ctx.nV() << "  nF=" << ctx.nF()
               << "  totalArea=" << ops.totalArea << "\n";
     std::cout << "[smoke]   eigenvalues (k=" << eig.k << " post-removeDC):";
     for (int i = 0; i < eig.k; ++i) {
