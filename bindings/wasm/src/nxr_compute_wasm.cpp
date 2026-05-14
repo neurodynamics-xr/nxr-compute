@@ -77,9 +77,19 @@ val eigenMatrixFloat32ToVal(const Eigen::MatrixXf& m) {
 }
 
 val sparseToVal(const Eigen::SparseMatrix<double>& M) {
+    // Note on copies: the canonical Embind pattern for returning typed
+    // arrays from wasm is `typed_memory_view(...)` + `.slice()`, where
+    // slice() detaches the JS array from the wasm heap. The slice step
+    // is structurally required. We sidestep `std::vector<T>(nnz)`'s
+    // unwanted zero-initialization pass by allocating uninitialized
+    // heap buffers via `new T[nnz]` (default-initialization = no-op for
+    // trivial types), then writing each entry exactly once during the
+    // CSC walk. Net cost per sparse return: 3 heap allocs + 3 fills +
+    // 3 slice memcpys.
     int nnz = static_cast<int>(M.nonZeros());
-    std::vector<int32_t> rows(nnz), cols(nnz);
-    std::vector<double>  vals(nnz);
+    std::unique_ptr<int32_t[]> rows{new int32_t[nnz]};
+    std::unique_ptr<int32_t[]> cols{new int32_t[nnz]};
+    std::unique_ptr<double[]>  vals{new double[nnz]};
     int k = 0;
     for (int outer = 0; outer < M.outerSize(); outer++) {
         for (Eigen::SparseMatrix<double>::InnerIterator it(M, outer); it; ++it) {
@@ -90,21 +100,24 @@ val sparseToVal(const Eigen::SparseMatrix<double>& M) {
         }
     }
     val obj = val::object();
-    obj.set("row",  toJsArrayCopy(rows.data(), nnz));
-    obj.set("col",  toJsArrayCopy(cols.data(), nnz));
-    obj.set("data", toJsArrayCopy(vals.data(), nnz));
+    obj.set("row",  toJsArrayCopy(rows.get(), nnz));
+    obj.set("col",  toJsArrayCopy(cols.get(), nnz));
+    obj.set("data", toJsArrayCopy(vals.get(), nnz));
     obj.set("rows", static_cast<int>(M.rows()));
     obj.set("cols", static_cast<int>(M.cols()));
     obj.set("nnz",  nnz);
     return obj;
 }
 
-// Complex sparse → COO with parallel real/imag arrays.
-// Used by the connection-Laplacian "complex" output format.
+// Complex sparse → COO with parallel real/imag arrays. Used by the
+// connection-Laplacian "complex" output format. Same uninitialized-
+// heap-buffer pattern as sparseToVal above.
 val sparseComplexToVal(const Eigen::SparseMatrix<std::complex<double>>& M) {
     int nnz = static_cast<int>(M.nonZeros());
-    std::vector<int32_t> rows(nnz), cols(nnz);
-    std::vector<double>  re(nnz), im(nnz);
+    std::unique_ptr<int32_t[]> rows{new int32_t[nnz]};
+    std::unique_ptr<int32_t[]> cols{new int32_t[nnz]};
+    std::unique_ptr<double[]>  re  {new double [nnz]};
+    std::unique_ptr<double[]>  im  {new double [nnz]};
     int k = 0;
     for (int outer = 0; outer < M.outerSize(); outer++) {
         for (Eigen::SparseMatrix<std::complex<double>>::InnerIterator it(M, outer); it; ++it) {
@@ -116,10 +129,10 @@ val sparseComplexToVal(const Eigen::SparseMatrix<std::complex<double>>& M) {
         }
     }
     val obj = val::object();
-    obj.set("row",       toJsArrayCopy(rows.data(), nnz));
-    obj.set("col",       toJsArrayCopy(cols.data(), nnz));
-    obj.set("realData",  toJsArrayCopy(re.data(), nnz));
-    obj.set("imagData",  toJsArrayCopy(im.data(), nnz));
+    obj.set("row",       toJsArrayCopy(rows.get(), nnz));
+    obj.set("col",       toJsArrayCopy(cols.get(), nnz));
+    obj.set("realData",  toJsArrayCopy(re.get(), nnz));
+    obj.set("imagData",  toJsArrayCopy(im.get(), nnz));
     obj.set("rows",      static_cast<int>(M.rows()));
     obj.set("cols",      static_cast<int>(M.cols()));
     obj.set("nnz",       nnz);

@@ -79,7 +79,10 @@ target_link_options(nxr_compute_wasm PRIVATE
     "-sENVIRONMENT=web,node,worker"
     "-sNO_EXIT_RUNTIME=1"
     "-sDISABLE_EXCEPTION_CATCHING=0"
-    "-sEXPORTED_RUNTIME_METHODS=['HEAP8','HEAPU8','HEAP16','HEAPU16','HEAP32','HEAPU32','HEAPF32','HEAPF64','UTF8ToString','getValue','setValue']"
+    # `getExceptionMessage` is required for Embind exceptions to surface
+    # their .message string to JS catch blocks. Without it, JS consumers
+    # see `[object Object]` instead of `[ERR_CODE] message | hint: ...`.
+    "-sEXPORTED_RUNTIME_METHODS=['HEAP8','HEAPU8','HEAP16','HEAPU16','HEAP32','HEAPU32','HEAPF32','HEAPF64','UTF8ToString','getValue','setValue','getExceptionMessage']"
     "-sEXPORTED_FUNCTIONS=['_malloc','_free']"
 )
 

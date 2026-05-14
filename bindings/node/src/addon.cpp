@@ -76,18 +76,18 @@ static Napi::Float64Array toFloat64Array(Napi::Env env, const Eigen::VectorXd& v
     return arr;
 }
 
-// Convert Eigen::MatrixXd (column-major) to Float64Array (row-major flat [rows*cols])
-// We flatten row-major so JavaScript can index as [v*k + k_idx]
+// Convert Eigen::MatrixXd (column-major) to Float64Array (row-major flat [rows*cols]).
+// We flatten row-major so JavaScript can index as [v*k + k_idx]. The
+// transpose is delegated to Eigen via a RowMajor Map assignment, which
+// dispatches to vectorised copy paths (much faster than a hand-rolled
+// nested loop, especially at the V×K eigenvector sizes we hit).
 static Napi::Float64Array matrixToFloat64Array(Napi::Env env, const Eigen::MatrixXd& m) {
-    int rows = static_cast<int>(m.rows());
-    int cols = static_cast<int>(m.cols());
-    auto arr = Napi::Float64Array::New(env, rows * cols);
-    double* data = arr.Data();
-    for (int r = 0; r < rows; r++) {
-        for (int c = 0; c < cols; c++) {
-            data[r * cols + c] = m(r, c);
-        }
-    }
+    Eigen::Index rows = m.rows();
+    Eigen::Index cols = m.cols();
+    auto arr = Napi::Float64Array::New(env, static_cast<size_t>(rows * cols));
+    using RowMajorMap = Eigen::Map<Eigen::Matrix<
+        double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>;
+    RowMajorMap(arr.Data(), rows, cols) = m;
     return arr;
 }
 
@@ -95,16 +95,14 @@ static Napi::Float64Array matrixToFloat64Array(Napi::Env env, const Eigen::Matri
 // Used by time-varying generators that return [T, V] activity-shaped arrays —
 // row-major flattening matches the Zarr `recordings/.../activity` schema so
 // the renderer can slot the result directly into the activity store.
+// Same Eigen::Map-vectorised transpose pattern as matrixToFloat64Array.
 static Napi::Float32Array matrixToFloat32Array(Napi::Env env, const Eigen::MatrixXf& m) {
-    int rows = static_cast<int>(m.rows());
-    int cols = static_cast<int>(m.cols());
-    auto arr = Napi::Float32Array::New(env, rows * cols);
-    float* data = arr.Data();
-    for (int r = 0; r < rows; r++) {
-        for (int c = 0; c < cols; c++) {
-            data[r * cols + c] = m(r, c);
-        }
-    }
+    Eigen::Index rows = m.rows();
+    Eigen::Index cols = m.cols();
+    auto arr = Napi::Float32Array::New(env, static_cast<size_t>(rows * cols));
+    using RowMajorMap = Eigen::Map<Eigen::Matrix<
+        float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>;
+    RowMajorMap(arr.Data(), rows, cols) = m;
     return arr;
 }
 
@@ -179,7 +177,12 @@ static Napi::Object sparseComplexToCOO(Napi::Env env,
     return result;
 }
 
-// Convert diagonal of a sparse matrix to Float64Array (for mass matrix compactness)
+// Convert diagonal of a sparse matrix to Float64Array. Used for
+// `dec.hodge1` — a strictly-diagonal matrix where nnz == n, so the
+// InnerIterator walk is O(n). Off-diagonal entries (if any) are
+// silently dropped. The CSC-iterator path is faster than
+// `M.diagonal()` here because the latter does a binary search per
+// element (O(n log nnz_per_col)).
 static Napi::Float64Array sparseDiagonalToFloat64Array(Napi::Env env, const Eigen::SparseMatrix<double>& M) {
     int n = static_cast<int>(M.rows());
     auto arr = Napi::Float64Array::New(env, n);
@@ -254,6 +257,23 @@ Napi::Value CreateContext(const Napi::CallbackInfo& info) {
 // Forward declarations for the lazy-init helpers defined further below.
 static void ensureHeatGeo(ContextHolder* holder);
 
+// Inline lazy-init for the operator assemblies. These are the
+// per-context view structs over geometry-central's caches; first
+// access triggers the require* + struct construction, every
+// subsequent access is a no-op.
+static inline void ensureOps(ContextHolder* holder) {
+    if (!holder->ops) {
+        holder->ops = std::make_shared<MeshOperators>(
+            assembleMeshOperators(*holder->ctx));
+    }
+}
+static inline void ensureDec(ContextHolder* holder) {
+    if (!holder->dec) {
+        holder->dec = std::make_shared<DECOperators>(
+            assembleDECOperators(*holder->ctx));
+    }
+}
+
 static ContextHolder* getContext(const Napi::CallbackInfo& info, int argIdx = 0) {
     if (!info[argIdx].IsExternal()) {
         Napi::TypeError::New(info.Env(), "Expected ComputeContext handle as argument").ThrowAsJavaScriptException();
@@ -274,9 +294,7 @@ Napi::Value AssembleMeshOperators(const Napi::CallbackInfo& info) {
     auto holder = getContext(info);
     if (!holder) return env.Null();
     return nxrSyncCall(env, [&]() -> Napi::Value {
-        holder->ops = std::make_shared<MeshOperators>(
-            assembleMeshOperators(*holder->ctx)
-        );
+        ensureOps(holder);
         const auto& ops = *holder->ops;
 
         auto result = Napi::Object::New(env);
@@ -299,9 +317,7 @@ Napi::Value AssembleDECOperators(const Napi::CallbackInfo& info) {
     auto holder = getContext(info);
     if (!holder) return env.Null();
     return nxrSyncCall(env, [&]() -> Napi::Value {
-        holder->dec = std::make_shared<DECOperators>(
-            assembleDECOperators(*holder->ctx)
-        );
+        ensureDec(holder);
         const auto& dec = *holder->dec;
 
         auto result = Napi::Object::New(env);
@@ -429,11 +445,7 @@ public:
 
     void Execute() override {
         try {
-            if (!holder_->ops) {
-                holder_->ops = std::make_shared<MeshOperators>(
-                    assembleMeshOperators(*holder_->ctx)
-                );
-            }
+            ensureOps(holder_);
 
             // Build the cancellation token from the SAB-backed Int32Array.
             // std::atomic<int32_t> is layout/alignment-compatible with int32_t
@@ -557,11 +569,7 @@ Napi::Value SolvePoisson(const Napi::CallbackInfo& info) {
         auto vertsArr = info[1].As<Napi::Int32Array>();
         auto valuesArr = info[2].As<Napi::Float64Array>();
 
-        if (!holder->ops) {
-            holder->ops = std::make_shared<MeshOperators>(
-                assembleMeshOperators(*holder->ctx)
-            );
-        }
+        ensureOps(holder);
 
         std::map<int, double> densityMap;
         for (size_t i = 0; i < vertsArr.ElementLength(); i++) {
@@ -604,11 +612,7 @@ Napi::Value HodgeDecompose(const Napi::CallbackInfo& info) {
     auto holder = getContext(info);
     if (!holder) return env.Null();
     return nxrSyncCall(env, [&]() -> Napi::Value {
-        if (!holder->dec) {
-            holder->dec = std::make_shared<DECOperators>(
-                assembleDECOperators(*holder->ctx)
-            );
-        }
+        ensureDec(holder);
 
         // Use provided omega or generate random
         Eigen::VectorXd omega;
@@ -683,11 +687,7 @@ Napi::Value WhitneyInterpolate(const Napi::CallbackInfo& info) {
         auto oneFormArr = info[1].As<Napi::Float64Array>();
         Eigen::VectorXd oneForm = toVectorXd(oneFormArr);
 
-        if (!holder->dec) {
-            holder->dec = std::make_shared<DECOperators>(
-                assembleDECOperators(*holder->ctx)
-            );
-        }
+        ensureDec(holder);
 
         Eigen::MatrixXd vectors = whitneyInterpolate(*holder->ctx, *holder->dec, oneForm);
         return matrixToFloat64Array(env, vectors);
@@ -742,11 +742,7 @@ Napi::Value ComputeDirectionField(const Napi::CallbackInfo& info) {
         auto vertsArr = info[1].As<Napi::Int32Array>();
         auto valsArr = info[2].As<Napi::Float64Array>();
 
-        if (!holder->dec) {
-            holder->dec = std::make_shared<DECOperators>(
-                assembleDECOperators(*holder->ctx)
-            );
-        }
+        ensureDec(holder);
 
         std::map<int, double> singMap;
         for (size_t i = 0; i < vertsArr.ElementLength(); i++) {
@@ -810,11 +806,7 @@ Napi::Value GenerateHeatDiffusion(const Napi::CallbackInfo& info) {
                 "generateHeatDiffusion: eigenmodes not computed",
                 "call solveEigenmodes first");
         }
-        if (!holder->ops) {
-            holder->ops = std::make_shared<MeshOperators>(
-                assembleMeshOperators(*holder->ctx)
-            );
-        }
+        ensureOps(holder);
 
         // args[1] = options object
         auto opts = info[1].As<Napi::Object>();
