@@ -188,11 +188,14 @@ MeshOperators assembleMeshOperators(ComputeContext& ctx,
             geometry.vertexDualAreas[v];
     }
 
-    // Vertex normals — V×3 row-major lifted from VertexData<Vector3>
-    // (the §11 binding layout contract). Value-copy by necessity:
-    // geometry-central stores them as a labeled array, not a matrix.
+    // Vertex normals — V×3 lifted from VertexData<Vector3>. Stored
+    // row-major (VertexNormalsMatrix alias) so the §11 row-major
+    // output buffer at the binding edge is a direct memcpy of
+    // .data(); no transpose pass needed. Value-copy is unavoidable
+    // either way: geometry-central stores normals as a labeled
+    // array, not a contiguous matrix.
     geometry.requireVertexNormals();
-    Eigen::MatrixXd vertexNormals(nV, 3);
+    VertexNormalsMatrix vertexNormals(nV, 3);
     for (Vertex v : mesh.vertices()) {
         int idx = static_cast<int>(v.getIndex());
         Vector3 n = geometry.vertexNormals[v];

@@ -149,12 +149,22 @@ enum class MassMatrixVariant {
 // (refs rebind to the same targets) but not copy-assignable. The
 // bindings hold them via shared_ptr / unique_ptr and never reassign.
 
+// Row-major V×3 alias. `vertexNormals` is exclusively consumed row-wise
+// (each row is one (x,y,z) triple flattened directly into the §11 V*3
+// row-major output buffer at the binding edge). Storing it row-major
+// here makes the binding-side memcpy direct — no transpose needed,
+// because the in-memory layout already matches the output convention.
+// Eigen kernels read this as `m.row(v)` only; no column ops in any of
+// the existing call sites.
+using VertexNormalsMatrix =
+    Eigen::Matrix<double, Eigen::Dynamic, 3, Eigen::RowMajor>;
+
 struct MeshOperators {
     MeshOperators(const Eigen::SparseMatrix<double>& cotanLaplacian_,
                   Eigen::SparseMatrix<double> mass_,
                   MassMatrixVariant massVariant_,
                   Eigen::VectorXd vertexDualAreas_,
-                  Eigen::MatrixXd vertexNormals_,
+                  VertexNormalsMatrix vertexNormals_,
                   double totalArea_)
       : cotanLaplacian(cotanLaplacian_),
         mass(std::move(mass_)),
@@ -167,7 +177,7 @@ struct MeshOperators {
     Eigen::SparseMatrix<double> mass;                   // owned: depends on massVariant
     MassMatrixVariant massVariant;                      // which variant produced `mass`
     Eigen::VectorXd vertexDualAreas;                    // [nV] mixed Voronoi (variant-independent)
-    Eigen::MatrixXd vertexNormals;                      // [nV, 3] vertex normals
+    VertexNormalsMatrix vertexNormals;                  // [nV, 3] row-major; see alias comment above
     double totalArea;
     // nV / nE / nF intentionally omitted — read from the owning
     // ComputeContext (ctx.nV(), ctx.nE(), ctx.nF()) to avoid duplicating

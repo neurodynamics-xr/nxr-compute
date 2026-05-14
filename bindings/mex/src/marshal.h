@@ -259,11 +259,12 @@ inline mxArray* meshOperatorsToStruct(const nxr::compute::MeshOperators& ops,
     };
     mxArray* s = mxCreateStructMatrix(1, 1, 8, fields);
 
-    // ops.vertexNormals is [nV, 3] (Eigen MatrixXd, column-major). The
-    // shape happens to match MATLAB's expected Vx3 directly; the copy
-    // through here is unavoidable because Eigen's column-major bytes
-    // and MATLAB's column-major bytes coincide only at the matrix level.
-    Eigen::MatrixXd vertexNormalsT = ops.vertexNormals;  // (nV, 3)
+    // ops.vertexNormals is [nV, 3] stored row-major (see
+    // VertexNormalsMatrix alias in compute.h). MATLAB wants column-
+    // major, so the assignment below performs an implicit transpose
+    // copy via Eigen's cross-layout assignment — handled transparently
+    // by Eigen's expression templates.
+    Eigen::MatrixXd vertexNormalsT = ops.vertexNormals;  // (nV, 3), col-major
 
     mxSetField(s, 0, "cotanLaplacian",  eigenSparseToMx(ops.cotanLaplacian));
     mxSetField(s, 0, "mass",            eigenSparseToMx(ops.mass));

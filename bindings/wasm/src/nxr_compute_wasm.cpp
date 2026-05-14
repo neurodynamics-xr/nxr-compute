@@ -53,23 +53,33 @@ val eigenVectorToVal(const Eigen::VectorXd& v) {
     return toJsArrayCopy(v.data(), static_cast<std::size_t>(v.size()));
 }
 
-/** Eigen MatrixXd → row-major flat, suitable for V×3 / F×3 attributes
- *  where each row is one (x, y, z) triple — directly consumable as a
- *  three.js BufferAttribute. */
-val eigenMatrixToVal(const Eigen::MatrixXd& m) {
-    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
+/** Any Eigen matrix expression → row-major flat JS typed array,
+ *  suitable for V×3 / F×3 attributes (each row is one (x, y, z)
+ *  triple — directly consumable as a three.js BufferAttribute) and
+ *  for V×K eigenvectors (the vMajor / §11 layout). Templated so a
+ *  single call site handles both column-major sources (the default
+ *  Eigen::MatrixXd, e.g. eigenvectors) and row-major sources
+ *  (`MeshOperators::vertexNormals`, declared as
+ *  `Matrix<double, Dynamic, 3, RowMajor>`). Eigen short-circuits
+ *  the assignment to a vectorised memcpy when the source layout
+ *  already matches. */
+template <typename Derived>
+val eigenMatrixToVal(const Eigen::MatrixBase<Derived>& m) {
+    using Scalar = typename Derived::Scalar;
+    Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
         rowMajor = m;
     return toJsArrayCopy(rowMajor.data(),
         static_cast<std::size_t>(rowMajor.rows()) * rowMajor.cols());
 }
 
 // Per nxr-compute.h's hard layout rule (vMajor for eigenvectors), all
-// V×K matrices flatten row-major into JS just like V×3 / F×3.
-// Use eigenMatrixToVal above. The previous column-major helper
-// was removed in Phase A — the Zarr schema and renderer both
-// consume vMajor (U[v*K + k]).
-
-val eigenMatrixFloat32ToVal(const Eigen::MatrixXf& m) {
+// V×K matrices flatten row-major into JS just like V×3 / F×3. The
+// previous column-major helper was removed in Phase A — the Zarr
+// schema and renderer both consume vMajor (U[v*K + k]). Float32
+// variant kept as a separate name because Embind's auto-deduction
+// needs a stable function symbol.
+template <typename Derived>
+val eigenMatrixFloat32ToVal(const Eigen::MatrixBase<Derived>& m) {
     Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
         rowMajor = m;
     return toJsArrayCopy(rowMajor.data(),

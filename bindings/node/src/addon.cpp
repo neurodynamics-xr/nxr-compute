@@ -76,12 +76,16 @@ static Napi::Float64Array toFloat64Array(Napi::Env env, const Eigen::VectorXd& v
     return arr;
 }
 
-// Convert Eigen::MatrixXd (column-major) to Float64Array (row-major flat [rows*cols]).
-// We flatten row-major so JavaScript can index as [v*k + k_idx]. The
-// transpose is delegated to Eigen via a RowMajor Map assignment, which
-// dispatches to vectorised copy paths (much faster than a hand-rolled
-// nested loop, especially at the V×K eigenvector sizes we hit).
-static Napi::Float64Array matrixToFloat64Array(Napi::Env env, const Eigen::MatrixXd& m) {
+// Convert any Eigen matrix expression to a Float64Array (row-major
+// flat [rows*cols]) per the §11 binding storage convention. The
+// transpose (if needed) is delegated to Eigen via a RowMajor Map
+// assignment; Eigen dispatches to a vectorised memcpy when the
+// source is already row-major (e.g. MeshOperators::vertexNormals)
+// and to a vectorised transpose copy when it's column-major (eigen-
+// vectors, curvature principal directions, etc.). Templated so a
+// single call site handles both layouts.
+template <typename Derived>
+static Napi::Float64Array matrixToFloat64Array(Napi::Env env, const Eigen::MatrixBase<Derived>& m) {
     Eigen::Index rows = m.rows();
     Eigen::Index cols = m.cols();
     auto arr = Napi::Float64Array::New(env, static_cast<size_t>(rows * cols));
@@ -91,12 +95,14 @@ static Napi::Float64Array matrixToFloat64Array(Napi::Env env, const Eigen::Matri
     return arr;
 }
 
-// Convert Eigen::MatrixXf (column-major) to Float32Array (row-major flat [rows*cols]).
-// Used by time-varying generators that return [T, V] activity-shaped arrays —
-// row-major flattening matches the Zarr `recordings/.../activity` schema so
-// the renderer can slot the result directly into the activity store.
-// Same Eigen::Map-vectorised transpose pattern as matrixToFloat64Array.
-static Napi::Float32Array matrixToFloat32Array(Napi::Env env, const Eigen::MatrixXf& m) {
+// Convert any Eigen float matrix expression to a Float32Array
+// (row-major flat). Used by time-varying generators that return
+// [T, V] activity-shaped arrays — row-major flattening matches the
+// Zarr `recordings/.../activity` schema so the renderer can slot
+// the result directly into the activity store. Same Eigen::Map-
+// dispatched transpose-or-memcpy pattern as matrixToFloat64Array.
+template <typename Derived>
+static Napi::Float32Array matrixToFloat32Array(Napi::Env env, const Eigen::MatrixBase<Derived>& m) {
     Eigen::Index rows = m.rows();
     Eigen::Index cols = m.cols();
     auto arr = Napi::Float32Array::New(env, static_cast<size_t>(rows * cols));
