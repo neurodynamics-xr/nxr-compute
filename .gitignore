@@ -1,5 +1,5 @@
-# Build outputs
-build/
+# Build outputs (glob catches scratch dirs like build2/, build-debug/, …)
+build*/
 build_wasm/
 build_node/
 *.node
