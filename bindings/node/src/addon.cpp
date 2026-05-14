@@ -212,6 +212,15 @@ using CLCacheKey = std::tuple<ConnectionDomain, int, double, ConnectionLaplacian
 // in compute.h). Destruction order is shared_ptr-managed: ops/dec are
 // destroyed first when this struct dies, then ctx, so the references
 // are never left dangling.
+// Smooth-direction-field cache key: (nSym, alignToCurvature). The
+// underlying geometry-central functions
+// (computeSmoothest{Boundary}AlignedFace/VertexDirectionField) are
+// free functions with no Solver class — each call re-factorizes
+// internally. CLAUDE.md rule 9 (Pattern C) dictates caching the
+// OUTPUT at the binding level. Mirrors the existing WASM binding's
+// smoothFaceFieldCache_ / smoothVertexFieldCache_.
+using SmoothFieldKey = std::pair<int, bool>;
+
 struct ContextHolder {
     std::shared_ptr<ComputeContext> ctx;
     std::shared_ptr<MeshOperators> ops;     // view, lazy
@@ -222,6 +231,8 @@ struct ContextHolder {
     std::shared_ptr<SignedHeatSolver> shs;   // lazy
     std::shared_ptr<HeatGeodesicSolver> heatGeo;  // lazy — Cholesky pre-factor at construction
     std::map<CLCacheKey, std::shared_ptr<ConnectionLaplacian>> connectionLaplacian;  // result-level cache
+    std::map<SmoothFieldKey, Eigen::MatrixXd>                    smoothFaceFieldCache;
+    std::map<SmoothFieldKey, SmoothVertexFieldResult>            smoothVertexFieldCache;
 };
 
 static void FinalizeContext(Napi::Env env, ContextHolder* holder) {
@@ -605,42 +616,95 @@ Napi::Value ComputeGeodesicDistance(const Napi::CallbackInfo& info) {
     });
 }
 
-// ─── hodgeDecompose(ctx, omega?) — returns all scalars + vectors ─
+// ─── hodgeDecompose(ctx, omega?) — async, returns Promise<{...}> ─
+//
+// Wall-time at cortical scale (V≈165k, E≈495k) is dominated by the
+// d0ᵀ★₁d0 Cholesky back-substitution and the LU solve on d1★₁⁻¹d1ᵀ,
+// both ~1–2 s with the CholeskyCache warm. Move off the JS thread.
+// Inputs are deep-copied into the worker (omega vector) so the caller
+// can release the originating Float64Array immediately.
+
+class HodgeDecomposeWorker : public Napi::AsyncWorker {
+public:
+    HodgeDecomposeWorker(Napi::Env env, Napi::Value ctxExternal,
+                         ContextHolder* holder, Eigen::VectorXd omega)
+        : Napi::AsyncWorker(env),
+          deferred(Napi::Promise::Deferred::New(env)),
+          ctxRef_(Napi::Persistent(ctxExternal)),
+          holder_(holder),
+          omega_(std::move(omega)) {}
+
+    void Execute() override {
+        try {
+            ensureDec(holder_);
+            if (omega_.size() == 0) {
+                omega_ = generateRandomOmega(holder_->ctx->nE());
+            }
+            result_ = hodgeDecompose(*holder_->ctx, *holder_->dec, *holder_->factors, omega_);
+        } catch (const nxr::compute::Error& e) {
+            errorCode_ = std::string(nxr::compute::errorCodeName(e.code()));
+            errorHint_ = std::string(e.hint());
+            SetError(e.what());
+        } catch (const std::exception& e) {
+            errorCode_ = "INTERNAL_ERROR";
+            SetError(e.what());
+        }
+    }
+
+    void OnOK() override {
+        Napi::Env env = Env();
+        auto obj = Napi::Object::New(env);
+        obj.Set("alpha",            toFloat64Array(env, result_.exactPotential));
+        obj.Set("beta",             toFloat64Array(env, result_.coExactPotentialV));
+        obj.Set("combined",         toFloat64Array(env, result_.combinedPotential));
+        obj.Set("omega",            toFloat64Array(env, result_.omega));
+        obj.Set("dAlpha",           toFloat64Array(env, result_.dAlpha));
+        obj.Set("deltaBeta",        toFloat64Array(env, result_.deltaBeta));
+        obj.Set("gamma",            toFloat64Array(env, result_.gamma));
+        obj.Set("omegaVectors",     matrixToFloat64Array(env, result_.omegaVectors));
+        obj.Set("dAlphaVectors",    matrixToFloat64Array(env, result_.dAlphaVectors));
+        obj.Set("deltaBetaVectors", matrixToFloat64Array(env, result_.deltaBetaVectors));
+        obj.Set("gammaVectors",     matrixToFloat64Array(env, result_.gammaVectors));
+        deferred.Resolve(obj);
+    }
+
+    void OnError(const Napi::Error& e) override {
+        Napi::Env env = Env();
+        Napi::Error err = Napi::Error::New(env, e.Message());
+        if (!errorCode_.empty()) err.Set("code", Napi::String::New(env, errorCode_));
+        if (!errorHint_.empty()) err.Set("hint", Napi::String::New(env, errorHint_));
+        deferred.Reject(err.Value());
+    }
+
+    Napi::Promise GetPromise() { return deferred.Promise(); }
+
+private:
+    Napi::Promise::Deferred deferred;
+    Napi::Reference<Napi::Value> ctxRef_;
+    ContextHolder* holder_;
+    Eigen::VectorXd omega_;
+    HodgeResult result_;
+    std::string errorCode_;
+    std::string errorHint_;
+};
 
 Napi::Value HodgeDecompose(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
-    return nxrSyncCall(env, [&]() -> Napi::Value {
-        ensureDec(holder);
 
-        // Use provided omega or generate random
-        Eigen::VectorXd omega;
-        if (info.Length() > 1 && info[1].IsTypedArray()) {
-            omega = toVectorXd(info[1].As<Napi::Float64Array>());
-        } else {
-            omega = generateRandomOmega(holder->ctx->nE());
-        }
+    // Deep-copy omega off the JS-owned TypedArray. Empty omega signals
+    // "generate random in Execute()" so the RNG cost also moves off the
+    // main thread.
+    Eigen::VectorXd omega;
+    if (info.Length() > 1 && info[1].IsTypedArray()) {
+        omega = toVectorXd(info[1].As<Napi::Float64Array>());
+    }
 
-        HodgeResult result = hodgeDecompose(*holder->ctx, *holder->dec, *holder->factors, omega);
-
-        auto obj = Napi::Object::New(env);
-        // Scalar potentials
-        obj.Set("alpha", toFloat64Array(env, result.exactPotential));
-        obj.Set("beta", toFloat64Array(env, result.coExactPotentialV));
-        obj.Set("combined", toFloat64Array(env, result.combinedPotential));
-        // Input 1-form and its components
-        obj.Set("omega", toFloat64Array(env, result.omega));
-        obj.Set("dAlpha", toFloat64Array(env, result.dAlpha));
-        obj.Set("deltaBeta", toFloat64Array(env, result.deltaBeta));
-        obj.Set("gamma", toFloat64Array(env, result.gamma));
-        // Face-centered vector fields [nF * 3]
-        obj.Set("omegaVectors", matrixToFloat64Array(env, result.omegaVectors));
-        obj.Set("dAlphaVectors", matrixToFloat64Array(env, result.dAlphaVectors));
-        obj.Set("deltaBetaVectors", matrixToFloat64Array(env, result.deltaBetaVectors));
-        obj.Set("gammaVectors", matrixToFloat64Array(env, result.gammaVectors));
-        return obj;
-    });
+    auto* worker = new HodgeDecomposeWorker(env, info[0], holder, std::move(omega));
+    auto promise = worker->GetPromise();
+    worker->Queue();
+    return promise;
 }
 
 // ─── computeCurvatures(ctx) → { gaussian, mean, kMin, kMax, principalDir } ──
@@ -732,33 +796,85 @@ Napi::Value ComputeIsolines(const Napi::CallbackInfo& info) {
     });
 }
 
-// ─── computeDirectionField(ctx, singVerts, singValues) → { ... } ──
+// ─── computeDirectionField(ctx, singVerts, singValues) → Promise<{...}> ──
+//
+// Async for the same reason as hodgeDecompose: the d0ᵀ★₁d0 solve
+// dominates wall-time on cortical-sized meshes. The singularity map
+// is deep-copied into the worker.
+
+class DirectionFieldWorker : public Napi::AsyncWorker {
+public:
+    DirectionFieldWorker(Napi::Env env, Napi::Value ctxExternal,
+                         ContextHolder* holder, std::map<int, double> singMap)
+        : Napi::AsyncWorker(env),
+          deferred(Napi::Promise::Deferred::New(env)),
+          ctxRef_(Napi::Persistent(ctxExternal)),
+          holder_(holder),
+          singMap_(std::move(singMap)) {}
+
+    void Execute() override {
+        try {
+            ensureDec(holder_);
+            result_ = computeDirectionField(*holder_->ctx, *holder_->dec,
+                                            *holder_->factors, singMap_);
+        } catch (const nxr::compute::Error& e) {
+            errorCode_ = std::string(nxr::compute::errorCodeName(e.code()));
+            errorHint_ = std::string(e.hint());
+            SetError(e.what());
+        } catch (const std::exception& e) {
+            errorCode_ = "INTERNAL_ERROR";
+            SetError(e.what());
+        }
+    }
+
+    void OnOK() override {
+        Napi::Env env = Env();
+        auto obj = Napi::Object::New(env);
+        obj.Set("connections",          toFloat64Array(env, result_.connections));
+        obj.Set("directionVectors",     matrixToFloat64Array(env, result_.directionVectors));
+        obj.Set("orthogonalVectors",    matrixToFloat64Array(env, result_.orthogonalVectors));
+        obj.Set("eulerCharacteristic",  Napi::Number::New(env, result_.eulerCharacteristic));
+        obj.Set("gaussBonnetSatisfied", Napi::Boolean::New(env, result_.gaussBonnetSatisfied));
+        deferred.Resolve(obj);
+    }
+
+    void OnError(const Napi::Error& e) override {
+        Napi::Env env = Env();
+        Napi::Error err = Napi::Error::New(env, e.Message());
+        if (!errorCode_.empty()) err.Set("code", Napi::String::New(env, errorCode_));
+        if (!errorHint_.empty()) err.Set("hint", Napi::String::New(env, errorHint_));
+        deferred.Reject(err.Value());
+    }
+
+    Napi::Promise GetPromise() { return deferred.Promise(); }
+
+private:
+    Napi::Promise::Deferred deferred;
+    Napi::Reference<Napi::Value> ctxRef_;
+    ContextHolder* holder_;
+    std::map<int, double> singMap_;
+    DirectionFieldResult result_;
+    std::string errorCode_;
+    std::string errorHint_;
+};
 
 Napi::Value ComputeDirectionField(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
-    return nxrSyncCall(env, [&]() -> Napi::Value {
-        auto vertsArr = info[1].As<Napi::Int32Array>();
-        auto valsArr = info[2].As<Napi::Float64Array>();
 
-        ensureDec(holder);
+    auto vertsArr = info[1].As<Napi::Int32Array>();
+    auto valsArr  = info[2].As<Napi::Float64Array>();
 
-        std::map<int, double> singMap;
-        for (size_t i = 0; i < vertsArr.ElementLength(); i++) {
-            singMap[vertsArr[i]] = valsArr[i];
-        }
+    std::map<int, double> singMap;
+    for (size_t i = 0; i < vertsArr.ElementLength(); i++) {
+        singMap[vertsArr[i]] = valsArr[i];
+    }
 
-        DirectionFieldResult result = computeDirectionField(*holder->ctx, *holder->dec, *holder->factors, singMap);
-
-        auto obj = Napi::Object::New(env);
-        obj.Set("connections", toFloat64Array(env, result.connections));
-        obj.Set("directionVectors", matrixToFloat64Array(env, result.directionVectors));
-        obj.Set("orthogonalVectors", matrixToFloat64Array(env, result.orthogonalVectors));
-        obj.Set("eulerCharacteristic", Napi::Number::New(env, result.eulerCharacteristic));
-        obj.Set("gaussBonnetSatisfied", Napi::Boolean::New(env, result.gaussBonnetSatisfied));
-        return obj;
-    });
+    auto* worker = new DirectionFieldWorker(env, info[0], holder, std::move(singMap));
+    auto promise = worker->GetPromise();
+    worker->Queue();
+    return promise;
 }
 
 // ─── traceStreamlines(ctx, faceField, numSeeds, stepCoef, maxSteps) → { positions, count } ──
@@ -1035,8 +1151,15 @@ Napi::Value ComputeSmoothFaceField(const Napi::CallbackInfo& info) {
         int  nSym             = info.Length() > 1 ? info[1].As<Napi::Number>().Int32Value() : 4;
         bool alignToCurvature = info.Length() > 2 ? info[2].As<Napi::Boolean>().Value()     : false;
 
-        Eigen::MatrixXd v = computeSmoothFaceField(*holder->ctx, nSym, alignToCurvature);
-        return matrixToFloat64Array(env, v);
+        const SmoothFieldKey key{nSym, alignToCurvature};
+        auto it = holder->smoothFaceFieldCache.find(key);
+        if (it == holder->smoothFaceFieldCache.end()) {
+            it = holder->smoothFaceFieldCache.emplace(
+                key,
+                computeSmoothFaceField(*holder->ctx, nSym, alignToCurvature)
+            ).first;
+        }
+        return matrixToFloat64Array(env, it->second);
     });
 }
 
@@ -1048,7 +1171,15 @@ Napi::Value ComputeSmoothVertexField(const Napi::CallbackInfo& info) {
         int  nSym             = info.Length() > 1 ? info[1].As<Napi::Number>().Int32Value() : 2;
         bool alignToCurvature = info.Length() > 2 ? info[2].As<Napi::Boolean>().Value()     : false;
 
-        SmoothVertexFieldResult r = computeSmoothVertexField(*holder->ctx, nSym, alignToCurvature);
+        const SmoothFieldKey key{nSym, alignToCurvature};
+        auto it = holder->smoothVertexFieldCache.find(key);
+        if (it == holder->smoothVertexFieldCache.end()) {
+            it = holder->smoothVertexFieldCache.emplace(
+                key,
+                computeSmoothVertexField(*holder->ctx, nSym, alignToCurvature)
+            ).first;
+        }
+        const auto& r = it->second;
         auto obj = Napi::Object::New(env);
         obj.Set("vertexVectors",  matrixToFloat64Array(env, r.vertexVectors));
         obj.Set("vertexFieldRaw", toFloat64Array(env, r.vertexFieldRaw));

@@ -150,7 +150,33 @@ function makeRaw(mod, vertices, faces) {
   const f = faces    instanceof Int32Array   ? faces    : new Int32Array(faces)
   if (v.length % 3 !== 0) throw new Error('nxr: vertices length must be a multiple of 3')
   if (f.length % 3 !== 0) throw new Error('nxr: faces length must be a multiple of 3')
-  // The Embind constructor accepts JS arrays via val; pass typed arrays directly.
+
+  // Fast path: place buffers on the wasm heap ourselves and call the
+  // pointer-taking factory. One memcpy per buffer (HEAP*.set is a
+  // typed-array memcpy under the hood) vs Embind's
+  // convertJSArrayToNumberVector, which walks element-by-element
+  // through a JS Array bridge — measurable on cortical-scale meshes
+  // (V≈165k). Memory is freed before returning regardless of
+  // success/failure.
+  //
+  // Fallback: older prebuilt WASM artifacts (committed in dist/wasm/
+  // before this rev) don't expose `fromPointers`. Detect and fall
+  // through to the legacy val-taking constructor for back-compat.
+  if (typeof mod.ComputeContext.fromPointers === 'function') {
+    const nV = v.length / 3
+    const nF = f.length / 3
+    const vertsPtr = mod._malloc(v.byteLength)
+    const facesPtr = mod._malloc(f.byteLength)
+    try {
+      mod.HEAPF64.set(v, vertsPtr >>> 3)  // /8: byte offset → Float64 index
+      mod.HEAP32.set(f, facesPtr >>> 2)   // /4: byte offset → Int32 index
+      return mod.ComputeContext.fromPointers(vertsPtr, nV, facesPtr, nF)
+    } finally {
+      mod._free(vertsPtr)
+      mod._free(facesPtr)
+    }
+  }
+  // Legacy val-taking constructor (Embind walks element-by-element).
   return new mod.ComputeContext(v, f)
 }
 

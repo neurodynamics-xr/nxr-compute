@@ -152,10 +152,15 @@ function makeManifoldContext(rawCtx) {
         nConverged:   r.eigenvalues.length,
       }
     },
-    /** Provisional placement — Hodge–Helmholtz decomposition may be
+    /** Async — the addon runs the Hodge solve in a libuv worker
+     *  thread, so the JS event loop stays free during the d0ᵀ★₁d0
+     *  Cholesky back-sub and the d1★₁⁻¹d1ᵀ LU solve. Resolves to
+     *  the same `{ alpha, beta, gamma, omega, dAlpha, deltaBeta,
+     *  omegaVectors, ... }` shape as the previous sync version.
+     *  Provisional placement — Hodge–Helmholtz decomposition may be
      *  reclassified to `operator.hodgeDecomp` in a future round. */
-    hodge(omega) {
-      return addon.hodgeDecompose(rawCtx, asF64(omega))
+    async hodge(omega) {
+      return await addon.hodgeDecompose(rawCtx, asF64(omega))
     },
   }
 
@@ -249,8 +254,11 @@ function makeManifoldContext(rawCtx) {
     extend(sourceVerts, sourceValues) {
       return addon.vectorHeatExtendScalar(rawCtx, asI32(sourceVerts), asF64(sourceValues))
     },
-    directionField(singVerts, singValues) {
-      return addon.computeDirectionField(rawCtx, asI32(singVerts), asF64(singValues))
+    /** Async — addon dispatches the d0ᵀ★₁d0 solve to a worker thread.
+     *  Returns Promise<{ connections, directionVectors, orthogonalVectors,
+     *  eulerCharacteristic, gaussBonnetSatisfied }>. */
+    async directionField(singVerts, singValues) {
+      return await addon.computeDirectionField(rawCtx, asI32(singVerts), asF64(singValues))
     },
     smoothFaceField(nSym = 4, alignToCurvature = false) {
       return addon.computeSmoothFaceField(rawCtx, nSym, alignToCurvature)

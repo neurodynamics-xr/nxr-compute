@@ -167,32 +167,76 @@ std::vector<double> valToDoubleVector(const val& jsArr) {
 
 class ContextWrapper {
 public:
+    // Two constructors. The JS shim picks based on input size:
+    //   - `val`-taking ctor: convenient for small inputs; uses Embind's
+    //     element-by-element `convertJSArrayToNumberVector`.
+    //   - pointer-taking ctor (via `fromPointers` factory): caller has
+    //     already placed the data on the wasm heap (`Module._malloc` +
+    //     `HEAPF64.set(...)`) and passes the address as an integer.
+    //     Single memcpy into the geometry-central internals — the
+    //     fast path for cortical-sized meshes (V≈165k).
+    //
+    // Either way, the input buffers are NOT retained on the wrapper —
+    // `nxr::compute::ComputeContext` copies into its own (geometry-
+    // central VertexData / halfedge) storage during construction, so
+    // the inputs are dead after this. Holding them on the class would
+    // leak ~5–10 MB per cortex-sized context.
     ContextWrapper(val verticesArr, val facesArr) {
-        verts_ = emscripten::convertJSArrayToNumberVector<double>(verticesArr);
-        faces_ = emscripten::convertJSArrayToNumberVector<int>(facesArr);
+        std::vector<double> verts =
+            emscripten::convertJSArrayToNumberVector<double>(verticesArr);
+        std::vector<int>    faces =
+            emscripten::convertJSArrayToNumberVector<int>(facesArr);
 
-        if (verts_.size() % 3 != 0) {
+        if (verts.size() % 3 != 0) {
             throw std::invalid_argument("vertices length must be a multiple of 3");
         }
-        if (faces_.size() % 3 != 0) {
+        if (faces.size() % 3 != 0) {
             throw std::invalid_argument("faces length must be a multiple of 3");
         }
 
-        int nV = static_cast<int>(verts_.size() / 3);
-        int nF = static_cast<int>(faces_.size() / 3);
+        int nV = static_cast<int>(verts.size() / 3);
+        int nF = static_cast<int>(faces.size() / 3);
 
-        // nxr::compute::ComputeContext takes int32_t* for faces; copy into the
-        // canonical type since convertJSArrayToNumberVector<int> may
-        // produce a different underlying integer width on some platforms.
-        faces32_.resize(faces_.size());
-        for (std::size_t i = 0; i < faces_.size(); i++) {
-            faces32_[i] = static_cast<int32_t>(faces_[i]);
+        // nxr::compute::ComputeContext takes int32_t* for faces; convert
+        // since convertJSArrayToNumberVector<int> may use a different
+        // underlying integer width on some platforms.
+        std::vector<int32_t> faces32(faces.size());
+        for (std::size_t i = 0; i < faces.size(); i++) {
+            faces32[i] = static_cast<int32_t>(faces[i]);
         }
 
+        construct_(verts.data(), nV, faces32.data(), nF);
+    }
+
+    // Zero-extra-copy fast path for callers who placed the vertex /
+    // face buffers on the wasm heap themselves. The JS shim wraps this
+    // via `Module._malloc` + `HEAPF64.set`/`HEAP32.set` + free.
+    // `vertsAddr` must point to nV*3 contiguous doubles; `facesAddr`
+    // must point to nF*3 contiguous int32s.
+    static ContextWrapper* fromPointers(uintptr_t vertsAddr, int nV,
+                                        uintptr_t facesAddr, int nF) {
+        if (nV <= 0 || nF <= 0) {
+            throw std::invalid_argument("fromPointers: nV / nF must be positive");
+        }
+        auto* w = new ContextWrapper{};
+        w->construct_(reinterpret_cast<const double*>(vertsAddr),  nV,
+                      reinterpret_cast<const int32_t*>(facesAddr), nF);
+        return w;
+    }
+
+private:
+    // Empty ctor for the static factory path. The val-taking public
+    // ctor uses the regular initialization order.
+    ContextWrapper() = default;
+
+    void construct_(const double* vertsPtr, int nV,
+                    const int32_t* facesPtr, int nF) {
         ctx_ = std::make_unique<nxr::compute::ComputeContext>(
-            verts_.data(), nV, faces32_.data(), nF);
+            vertsPtr, nV, facesPtr, nF);
         cache_ = std::make_unique<nxr::compute::CholeskyCache>();
     }
+
+public:
 
     int nV() const { return ctx_->nV(); }
     int nE() const { return ctx_->nE(); }
@@ -826,9 +870,9 @@ private:
                               double,
                               nxr::compute::ConnectionLaplacianFormat>;
     std::map<CLKey, std::shared_ptr<nxr::compute::ConnectionLaplacian>>   clCache_;
-    std::vector<double>  verts_;
-    std::vector<int>     faces_;
-    std::vector<int32_t> faces32_;
+    // (Note: the input vertex / face buffers used to live here as
+    // class members but were never read after construction — drop, saves
+    // ~5–10 MB on a 165 k-vertex context. See the constructor comment.)
 };
 
 // ── Free functions ───────────────────────────────────────────
@@ -956,6 +1000,12 @@ val solveEigenmodesFromTriplets(
 EMSCRIPTEN_BINDINGS(nxr_compute_wasm) {
     emscripten::class_<ContextWrapper>("ComputeContext")
         .constructor<val, val>()
+        // Fast-path factory: caller has already placed vertex / face
+        // buffers on the wasm heap and supplies their addresses. The
+        // JS shim wraps the malloc + HEAP.set + free dance.
+        .class_function("fromPointers",
+                        &ContextWrapper::fromPointers,
+                        emscripten::allow_raw_pointers())
         // Accessors
         .function("nV", &ContextWrapper::nV)
         .function("nE", &ContextWrapper::nE)
