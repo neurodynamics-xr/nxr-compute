@@ -141,14 +141,14 @@ int main() {
         check(refErr < 1e-10 * std::max(1.0, refArea),
               "totalArea matches Voronoi reference");
 
-        // vertexAreas always Voronoi-derived → match reference run.
-        const double vaErr = (ops.vertexAreas - refOps.vertexAreas).norm();
-        check(vaErr < 1e-12,                              "vertexAreas == refOps.vertexAreas");
+        // vertexDualAreas always Voronoi-derived → match reference run.
+        const double vaErr = (ops.vertexDualAreas - refOps.vertexDualAreas).norm();
+        check(vaErr < 1e-12,                              "vertexDualAreas == refOps.vertexDualAreas");
 
         // Run the eigensolver. Smallest 6 modes; should converge cheaply
         // on 12 vertices.
         const int k = 6;
-        auto eig = nxr::compute::solveEigenmodes(ops.stiffness, ops.mass, k);
+        auto eig = nxr::compute::solveEigenmodes(ops.cotanLaplacian, ops.mass, k);
         check(eig.k == k,                                 "k modes returned");
         check(eig.nConverged == k,                        "all modes converged");
 

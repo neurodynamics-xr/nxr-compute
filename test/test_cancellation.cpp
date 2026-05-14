@@ -157,7 +157,7 @@ void test_SolveCancelledBeforeFactorization() {
     bool threw = false;
     nxr::compute::ErrorCode code = nxr::compute::ErrorCode::InternalError;
     try {
-        nxr::compute::solveEigenmodes(ops.stiffness, ops.mass, 6, -1e-8, tok);
+        nxr::compute::solveEigenmodes(ops.cotanLaplacian, ops.mass, 6, -1e-8, tok);
     } catch (const nxr::compute::Error& e) {
         threw = true;
         code = e.code();
@@ -190,7 +190,7 @@ void test_SolveCancelledMidIteration() {
     bool threw = false;
     nxr::compute::ErrorCode code = nxr::compute::ErrorCode::InternalError;
     try {
-        nxr::compute::solveEigenmodes(ops.stiffness, ops.mass, 20, -1e-8, tok);
+        nxr::compute::solveEigenmodes(ops.cotanLaplacian, ops.mass, 20, -1e-8, tok);
     } catch (const nxr::compute::Error& e) {
         threw = true;
         code = e.code();
@@ -214,7 +214,7 @@ void test_SolveSucceedsWithIdleToken() {
 
     bool ok = false;
     try {
-        auto result = nxr::compute::solveEigenmodes(ops.stiffness, ops.mass, 6, -1e-8, tok);
+        auto result = nxr::compute::solveEigenmodes(ops.cotanLaplacian, ops.mass, 6, -1e-8, tok);
         ok = (result.k > 0);
     } catch (const nxr::compute::Error&) {
         ok = false;

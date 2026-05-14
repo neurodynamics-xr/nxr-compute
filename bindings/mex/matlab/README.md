@@ -75,8 +75,8 @@ Stubs (round-1 placeholders, not exposed in any binding yet):
 
 - **Context is a value-typed struct, not an opaque handle.** Every
   call passes `mctx` by copy. The MEX dispatcher itself is stateless;
-  `mctx` carries `V, F, K, M, nV, nE, nF, totalArea, vertexAreas,
-  normals` so every leaf has what it needs without re-assembling.
+  `mctx` carries `V, F, K, M, nV, nE, nF, totalArea, vertexDualAreas,
+  vertexNormals` so every leaf has what it needs without re-assembling.
 - **`measure.distance.signed` becomes a sibling.** MATLAB doesn't
   support method-attached function dispatch, so the signed-heat leaf
   is renamed to `measure.signedDistance(mctx, ...)`.

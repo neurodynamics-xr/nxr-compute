@@ -104,7 +104,7 @@ int main() {
     // ── 3. Eigenmode field: extract column k ─────────────────
     {
         // Solve a few eigenmodes so we have something to extract from.
-        auto eig = solveEigenmodes(ops.stiffness, ops.mass, 6);
+        auto eig = solveEigenmodes(ops.cotanLaplacian, ops.mass, 6);
         auto phi3 = generateEigenmodeField(eig, 3);
         REQUIRE(phi3.size() == nV, "eigenmode field has nV entries");
         REQUIRE((phi3 - eig.eigenvectors.col(3)).cwiseAbs().maxCoeff() == 0.0,
@@ -203,7 +203,7 @@ int main() {
 
     // ── Solve eigenmodes for the time-varying tests ──────────
     // Pipeline: solve → M-orthonormalize → removeDC. Same as the addon.
-    auto eigRaw = solveEigenmodes(ops.stiffness, ops.mass, 6);
+    auto eigRaw = solveEigenmodes(ops.cotanLaplacian, ops.mass, 6);
     eigRaw.eigenvectors = normalizeEigenmodes(eigRaw.eigenvectors, ops.mass);
     auto eig = removeDC(eigRaw);
     int K = eig.k;

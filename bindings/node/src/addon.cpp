@@ -262,7 +262,12 @@ static ContextHolder* getContext(const Napi::CallbackInfo& info, int argIdx = 0)
     return info[argIdx].As<Napi::External<ContextHolder>>().Data();
 }
 
-// ─── assembleMeshOperators(ctx) → { stiffness, mass, normals, ... } ───
+// ─── assembleMeshOperators(ctx) → { cotanLaplacian, mass, vertexDualAreas, vertexNormals, ... } ───
+//
+// Field names mirror geometry-central's canonical cache names so the JS
+// surface reads as a 1-to-1 viewer over GC. `mass` is variant-aware
+// (Voronoi / Barycentric / ConsistentFEM), exposed as sparse COO
+// uniformly regardless of variant.
 
 Napi::Value AssembleMeshOperators(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -275,13 +280,14 @@ Napi::Value AssembleMeshOperators(const Napi::CallbackInfo& info) {
         const auto& ops = *holder->ops;
 
         auto result = Napi::Object::New(env);
-        result.Set("stiffness", sparseToCOO(env, ops.stiffness));
-        result.Set("massDiag", toFloat64Array(env, ops.vertexAreas));
-        result.Set("normals", matrixToFloat64Array(env, ops.normals));
-        result.Set("totalArea", Napi::Number::New(env, ops.totalArea));
-        result.Set("nV", Napi::Number::New(env, holder->ctx->nV()));
-        result.Set("nE", Napi::Number::New(env, holder->ctx->nE()));
-        result.Set("nF", Napi::Number::New(env, holder->ctx->nF()));
+        result.Set("cotanLaplacian",  sparseToCOO(env, ops.cotanLaplacian));
+        result.Set("mass",            sparseToCOO(env, ops.mass));
+        result.Set("vertexDualAreas", toFloat64Array(env, ops.vertexDualAreas));
+        result.Set("vertexNormals",   matrixToFloat64Array(env, ops.vertexNormals));
+        result.Set("totalArea",       Napi::Number::New(env, ops.totalArea));
+        result.Set("nV",              Napi::Number::New(env, holder->ctx->nV()));
+        result.Set("nE",              Napi::Number::New(env, holder->ctx->nE()));
+        result.Set("nF",              Napi::Number::New(env, holder->ctx->nF()));
         return result;
     });
 }
@@ -445,7 +451,7 @@ public:
                 progress.residualMicro   = reinterpret_cast<std::atomic<int32_t>*>(progressPtr_ + 2);
             }
 
-            result_ = solveEigenmodes(holder_->ops->stiffness, holder_->ops->mass, k_,
+            result_ = solveEigenmodes(holder_->ops->cotanLaplacian, holder_->ops->mass, k_,
                                       -1e-8, cancel, progress);
             // Normalize eigenvectors
             result_.eigenvectors = normalizeEigenmodes(result_.eigenvectors, holder_->ops->mass);

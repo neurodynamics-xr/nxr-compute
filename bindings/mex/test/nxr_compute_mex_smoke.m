@@ -44,16 +44,16 @@ fprintf('  mesh: nV=%d nF=%d\n', nV, nF);
 ops = nxr_compute('assembleMeshOperators', V, F);
 fprintf('  [1] assembleMeshOperators ✓\n');
 assert(ops.nV == 12 && ops.nF == 20, 'unexpected vertex / face count');
-assert(issparse(ops.stiffness), 'stiffness must be sparse');
-assert(issparse(ops.mass),      'mass must be sparse');
-assert(isequal(size(ops.stiffness), [nV nV]), 'stiffness shape');
-assert(isequal(size(ops.mass),      [nV nV]), 'mass shape');
+assert(issparse(ops.cotanLaplacian), 'cotanLaplacian must be sparse');
+assert(issparse(ops.mass),           'mass must be sparse');
+assert(isequal(size(ops.cotanLaplacian), [nV nV]), 'cotanLaplacian shape');
+assert(isequal(size(ops.mass),           [nV nV]), 'mass shape');
 assert(abs(ops.totalArea - 9.5745) < 1e-3, ...
     'icosahedron unit-sphere total area should be ~9.5745, got %g', ops.totalArea);
 
-% Stiffness should be (numerically) symmetric.
-asym = norm(ops.stiffness - ops.stiffness', 'fro');
-assert(asym < 1e-10, 'stiffness asymmetry too large: %g', asym);
+% Cotangent Laplacian should be (numerically) symmetric.
+asym = norm(ops.cotanLaplacian - ops.cotanLaplacian', 'fro');
+assert(asym < 1e-10, 'cotanLaplacian asymmetry too large: %g', asym);
 
 % Mass diagonal entries should sum to totalArea.
 massDiag = full(diag(ops.mass));
@@ -61,7 +61,7 @@ assert(abs(sum(massDiag) - ops.totalArea) < 1e-9, 'mass diagonal sum vs totalAre
 
 % ── 2. solveEigenmodes ───────────────────────────────────────
 K = 6;
-result = nxr_compute('solveEigenmodes', ops.stiffness, ops.mass, K);
+result = nxr_compute('solveEigenmodes', ops.cotanLaplacian, ops.mass, K);
 fprintf('  [2] solveEigenmodes ✓ (k=%d, nConverged=%d)\n', ...
     result.k, result.nConverged);
 assert(result.k == K, 'wrong k returned');

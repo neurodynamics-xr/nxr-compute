@@ -117,7 +117,7 @@ function stubWarn(name) {
 function makeManifoldContext(rawCtx) {
   // Lazy caches for the bulk operator assemblies, identical to the
   // WASM shim. First access of any DEC piece triggers a single
-  // assembleDECOperators(); same for mass / stiffness.
+  // assembleDECOperators(); same for mass / cotanLaplacian.
   let _dec  = null
   let _mesh = null
   const dec  = () => (_dec  ??= addon.assembleDECOperators(rawCtx))
@@ -174,13 +174,13 @@ function makeManifoldContext(rawCtx) {
     star1:        () => dec().hodge1,
     star2:        notWired('operator.star2'),
     star1Inverse: notWired('operator.star1Inverse'),
-    /** Per-vertex Voronoi dual area (diagonal as Float64Array — the
-     *  addon's compact mass form). To get a full sparse mass matrix,
-     *  add a sparse-COO export in addon.cpp. */
-    mass:         () => mesh().massDiag,
-    stiffness:    () => mesh().stiffness,
+    /** Mass matrix (sparse COO), variant-aware: diagonal for
+     *  Voronoi/Barycentric, sparse non-diagonal for ConsistentFEM.
+     *  Mirrors the WASM and MEX bindings' uniform exposure. */
+    mass:         () => mesh().mass,
+    stiffness:    () => mesh().cotanLaplacian,
     /** Cotangent Laplacian — same matrix as `operator.stiffness()`. */
-    laplacian:    () => mesh().stiffness,
+    laplacian:    () => mesh().cotanLaplacian,
     /** Connection Laplacian on the chosen domain. See
      *  bindings/wasm/js/index.d.ts ConnectionLaplacianOptions /
      *  ConnectionLaplacianResult for the option / return shapes. */

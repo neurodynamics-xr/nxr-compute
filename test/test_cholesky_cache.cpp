@@ -90,7 +90,7 @@ int main() {
         CholeskyCache cache;
 
         // Reference for laplacian: SimplicialLLT(L + 1e-8 I)
-        Eigen::SparseMatrix<double> Lref = ops.stiffness;
+        Eigen::SparseMatrix<double> Lref = ops.cotanLaplacian;
         for (int i = 0; i < nV; i++) Lref.coeffRef(i, i) += 1e-8;
         Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> refL;
         refL.compute(Lref);

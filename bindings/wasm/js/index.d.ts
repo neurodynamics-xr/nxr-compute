@@ -68,22 +68,25 @@ export type ConnectionLaplacianResult =
 export type MassMatrixVariant = "voronoi" | "barycentric" | "full"
 
 export interface MeshOperators {
-  /** Cotangent Laplacian (PSD, symmetrized), V×V sparse */
-  stiffness:   SparseMatrixCOO
+  /** Cotangent Laplacian (PSD), V×V sparse. Mirrors
+   *  geometry-central's `geometry.cotanLaplacian`. */
+  cotanLaplacian:   SparseMatrixCOO
   /** Mass matrix, V×V sparse. SPD; diagonal for "voronoi"/"barycentric",
    *  has off-diagonal couplings for "full". */
-  mass:        SparseMatrixCOO
+  mass:             SparseMatrixCOO
   /** Which variant produced `mass`. */
-  massVariant: MassMatrixVariant
+  massVariant:      MassMatrixVariant
   /** Per-vertex Voronoi dual area, V (always Voronoi-derived
-   *  regardless of `massVariant`). */
-  vertexAreas: Float64Array
-  /** Per-vertex normals, V*3 row-major */
-  normals:     Float64Array
-  totalArea:   number
-  nV:          number
-  nE:          number
-  nF:          number
+   *  regardless of `massVariant`). Mirrors GC's
+   *  `geometry.vertexDualAreas`. */
+  vertexDualAreas:  Float64Array
+  /** Per-vertex normals, V*3 row-major. Mirrors GC's
+   *  `geometry.vertexNormals`. */
+  vertexNormals:    Float64Array
+  totalArea:        number
+  nV:               number
+  nE:               number
+  nF:               number
 }
 
 export interface DECOperators {

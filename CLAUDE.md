@@ -61,7 +61,7 @@ declared in `native/include/nxr/compute.h`. Highlights:
 ```cpp
 // Per-mesh state
 class ComputeContext { /* geometry-central mesh + geometry */ };
-struct MeshOperators { stiffness, mass, vertexAreas, normals, totalArea, … };
+struct MeshOperators { cotanLaplacian, mass, vertexDualAreas, vertexNormals, totalArea, … };
 struct DECOperators  { d0, d1, hodge0/1/2, hodge1Inverse };
 
 MeshOperators assembleMeshOperators(ComputeContext&);
@@ -75,7 +75,7 @@ public:
     const Eigen::SimplicialLLT<…>& laplacian   (const Eigen::SparseMatrix<double>& K);
     const Eigen::SimplicialLLT<…>& hodgeExact  (const DECOperators&);  // mesh-only (DEC)
     const Eigen::SparseLU       <…>& hodgeCoExact(const DECOperators&);  // mesh-only (DEC)
-    // Convenience overload: laplacian(MeshOperators&) forwards to laplacian(ops.stiffness).
+    // Convenience overload: laplacian(MeshOperators&) forwards to laplacian(ops.cotanLaplacian).
 };
 
 // Spectral kernel — already agnostic in K, M.
@@ -160,8 +160,8 @@ state, not a missed optimization.
    The `laplacian(K)` slot now takes a raw `const SparseMatrix<double>&`
    so it serves graph Laplacians as well as mesh stiffness. There is an
    inline `laplacian(const MeshOperators&)` overload that forwards to
-   `laplacian(ops.stiffness)` — this preserves source compatibility for
-   every existing call site.
+   `laplacian(ops.cotanLaplacian)` — this preserves source compatibility
+   for every existing call site.
 
 3. **Spectra configuration**: Use `SymGEigsShiftSolver<…, ShiftInvert>`
    for the smallest eigenmodes. Always enforce real + symmetric on the

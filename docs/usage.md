@@ -193,7 +193,7 @@ end
 % ── Step-by-step ───────────────────────────────────────────
 % Same Ctrl-C contract: each long-running call is interruptible.
 ops = nxr_compute('assembleMeshOperators', V, F);
-eig = nxr_compute('solveEigenmodes', ops.stiffness, ops.mass, 500);
+eig = nxr_compute('solveEigenmodes', ops.cotanLaplacian, ops.mass, 500);
 eig.eigenvectors = nxr_compute('normalizeEigenmodes', eig.eigenvectors, ops.mass);
 eig = nxr_compute('removeDC', eig);
 

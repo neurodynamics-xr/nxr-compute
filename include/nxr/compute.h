@@ -121,10 +121,15 @@ enum class MassMatrixVariant {
     ConsistentFEM   // sparse, off-diagonal couplings (full FEM mass)
 };
 
-// MeshOperators / DECOperators mix view and value semantics:
+// MeshOperators / DECOperators mix view and value semantics. Field
+// names follow geometry-central's canonical naming for the underlying
+// cached matrices (cotanLaplacian, vertexDualAreas, vertexNormals,
+// d0/d1/hodge*), so the surface here is a 1-to-1 viewer over GC's
+// cache where the concept exists. Variant-aware quantities (mass)
+// keep a generic name because GC has no single matrix covering them.
 //
 //   * View fields (const-references into geometry-central's cached matrices):
-//       MeshOperators::stiffness, all DECOperators fields. Bound by
+//       MeshOperators::cotanLaplacian, all DECOperators fields. Bound by
 //       assembleMeshOperators / assembleDECOperators after the relevant
 //       require* call pins them on the geometry.
 //
@@ -145,24 +150,24 @@ enum class MassMatrixVariant {
 // bindings hold them via shared_ptr / unique_ptr and never reassign.
 
 struct MeshOperators {
-    MeshOperators(const Eigen::SparseMatrix<double>& stiffness_,
+    MeshOperators(const Eigen::SparseMatrix<double>& cotanLaplacian_,
                   Eigen::SparseMatrix<double> mass_,
                   MassMatrixVariant massVariant_,
-                  Eigen::VectorXd vertexAreas_,
-                  Eigen::MatrixXd normals_,
+                  Eigen::VectorXd vertexDualAreas_,
+                  Eigen::MatrixXd vertexNormals_,
                   double totalArea_)
-      : stiffness(stiffness_),
+      : cotanLaplacian(cotanLaplacian_),
         mass(std::move(mass_)),
         massVariant(massVariant_),
-        vertexAreas(std::move(vertexAreas_)),
-        normals(std::move(normals_)),
+        vertexDualAreas(std::move(vertexDualAreas_)),
+        vertexNormals(std::move(vertexNormals_)),
         totalArea(totalArea_) {}
 
-    const Eigen::SparseMatrix<double>& stiffness;  // view: cotangent Laplacian
-    Eigen::SparseMatrix<double> mass;              // owned: depends on massVariant
-    MassMatrixVariant massVariant;                 // which variant produced `mass`
-    Eigen::VectorXd vertexAreas;                   // [nV] mixed Voronoi (variant-independent)
-    Eigen::MatrixXd normals;                       // [nV, 3] vertex normals
+    const Eigen::SparseMatrix<double>& cotanLaplacian;  // view: GC's cotangent Laplacian
+    Eigen::SparseMatrix<double> mass;                   // owned: depends on massVariant
+    MassMatrixVariant massVariant;                      // which variant produced `mass`
+    Eigen::VectorXd vertexDualAreas;                    // [nV] mixed Voronoi (variant-independent)
+    Eigen::MatrixXd vertexNormals;                      // [nV, 3] vertex normals
     double totalArea;
     // nV / nE / nF intentionally omitted — read from the owning
     // ComputeContext (ctx.nV(), ctx.nE(), ctx.nF()) to avoid duplicating
@@ -360,10 +365,10 @@ public:
     const Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>& laplacian(
         const Eigen::SparseMatrix<double>& K);
 
-    /** Convenience overload: factors ops.stiffness. */
+    /** Convenience overload: factors ops.cotanLaplacian. */
     const Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>& laplacian(
         const MeshOperators& ops) {
-        return laplacian(ops.stiffness);
+        return laplacian(ops.cotanLaplacian);
     }
 
     /** LLT of (d0ᵀ ★₁ d0 + ε·I).
@@ -468,13 +473,13 @@ Eigen::VectorXd solvePoisson(
     const std::map<int, double>& densityMap
 );
 
-/** Convenience overload: forwards to (K, M) using ops.stiffness, ops.mass. */
+/** Convenience overload: forwards to (K, M) using ops.cotanLaplacian, ops.mass. */
 inline Eigen::VectorXd solvePoisson(
     const MeshOperators& ops,
     CholeskyCache& cache,
     const std::map<int, double>& densityMap
 ) {
-    return solvePoisson(ops.stiffness, ops.mass, cache, densityMap);
+    return solvePoisson(ops.cotanLaplacian, ops.mass, cache, densityMap);
 }
 
 // ── Geodesic Distance (Heat Method) ──────────────────────────

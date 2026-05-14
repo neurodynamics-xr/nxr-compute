@@ -368,9 +368,9 @@ function makeManifoldContext(raw) {
     star2:        () => dec().hodge2,
     star1Inverse: () => dec().hodge1Inverse,
     mass:         () => mesh().mass,
-    stiffness:    () => mesh().stiffness,
+    stiffness:    () => mesh().cotanLaplacian,
     /** Cotangent Laplacian — same matrix as `operator.stiffness()`. */
-    laplacian:    () => mesh().stiffness,
+    laplacian:    () => mesh().cotanLaplacian,
     /**
      * Connection Laplacian on the chosen domain. Drives smoothest
      * n-RoSy direction fields, parallel-transport energies, and

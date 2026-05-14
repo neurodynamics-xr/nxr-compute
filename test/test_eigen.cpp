@@ -58,7 +58,7 @@ int main() {
     // ── Test 1: Operator assembly ────────────────────────────
     std::cout << "\n[Test 1] Operator Assembly" << std::endl;
     auto ops = nxr::compute::assembleMeshOperators(ctx);
-    std::cout << "  Stiffness: " << ops.stiffness.nonZeros() << " nnz" << std::endl;
+    std::cout << "  cotanLaplacian: " << ops.cotanLaplacian.nonZeros() << " nnz" << std::endl;
     std::cout << "  Total area: " << ops.totalArea << std::endl;
 
     // ── Test 2: DEC operators ────────────────────────────────
@@ -71,7 +71,7 @@ int main() {
     // ── Test 3: Eigensolver ──────────────────────────────────
     std::cout << "\n[Test 3] Eigensolver" << std::endl;
     int k = 6;
-    auto result = nxr::compute::solveEigenmodes(ops.stiffness, ops.mass, k);
+    auto result = nxr::compute::solveEigenmodes(ops.cotanLaplacian, ops.mass, k);
     std::cout << "  Eigenvalues:" << std::endl;
     for (int i = 0; i < result.k; i++) {
         std::cout << "    λ_" << i << " = " << std::setprecision(6) << result.eigenvalues(i) << std::endl;

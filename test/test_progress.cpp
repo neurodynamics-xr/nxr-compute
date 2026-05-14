@@ -110,7 +110,7 @@ void test_SolveEigenmodesUpdatesProgress() {
     obs.totalIterations = &total;
     obs.residualMicro = &residual;
 
-    auto result = nxr::compute::solveEigenmodes(ops.stiffness, ops.mass, 6, -1e-8,
+    auto result = nxr::compute::solveEigenmodes(ops.cotanLaplacian, ops.mass, 6, -1e-8,
                                        nxr::compute::CancellationToken{}, obs);
 
     EXPECT(result.k > 0);

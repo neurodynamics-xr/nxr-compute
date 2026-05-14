@@ -177,14 +177,14 @@ MeshOperators assembleMeshOperators(ComputeContext& ctx,
         mass.setFromTriplets(massTriplets.begin(), massTriplets.end());
     }
 
-    // vertexAreas always carries mixed-Voronoi areas regardless of mass
-    // variant — downstream consumers (curvature, gradients, diffusion)
-    // expect per-vertex weights even when the L² inner product uses a
-    // non-diagonal M.
+    // vertexDualAreas always carries mixed-Voronoi areas regardless of
+    // mass variant — downstream consumers (curvature, gradients,
+    // diffusion) expect per-vertex weights even when the L² inner
+    // product uses a non-diagonal M.
     geometry.requireVertexDualAreas();
-    Eigen::VectorXd vertexAreas(nV);
+    Eigen::VectorXd vertexDualAreas(nV);
     for (Vertex v : mesh.vertices()) {
-        vertexAreas(static_cast<int>(v.getIndex())) =
+        vertexDualAreas(static_cast<int>(v.getIndex())) =
             geometry.vertexDualAreas[v];
     }
 
@@ -192,13 +192,13 @@ MeshOperators assembleMeshOperators(ComputeContext& ctx,
     // (the §11 binding layout contract). Value-copy by necessity:
     // geometry-central stores them as a labeled array, not a matrix.
     geometry.requireVertexNormals();
-    Eigen::MatrixXd normals(nV, 3);
+    Eigen::MatrixXd vertexNormals(nV, 3);
     for (Vertex v : mesh.vertices()) {
         int idx = static_cast<int>(v.getIndex());
         Vector3 n = geometry.vertexNormals[v];
-        normals(idx, 0) = n.x;
-        normals(idx, 1) = n.y;
-        normals(idx, 2) = n.z;
+        vertexNormals(idx, 0) = n.x;
+        vertexNormals(idx, 1) = n.y;
+        vertexNormals(idx, 2) = n.z;
     }
 
     const char* variantName =
@@ -215,8 +215,8 @@ MeshOperators assembleMeshOperators(ComputeContext& ctx,
         geometry.cotanLaplacian,
         std::move(mass),
         variant,
-        std::move(vertexAreas),
-        std::move(normals),
+        std::move(vertexDualAreas),
+        std::move(vertexNormals),
         totalArea
     );
 }

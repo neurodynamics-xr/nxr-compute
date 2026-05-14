@@ -7,7 +7,7 @@
  *
  * Usage from MATLAB:
  *   ops    = nxr_compute('assembleMeshOperators', V, F);
- *   eig    = nxr_compute('solveEigenmodes', ops.stiffness, ops.mass, k);
+ *   eig    = nxr_compute('solveEigenmodes', ops.cotanLaplacian, ops.mass, k);
  *   eig.eigenvectors = nxr_compute('normalizeEigenmodes', eig.eigenvectors, ops.mass);
  *   eig    = nxr_compute('removeDC', eig);
  *   result = nxr_compute('precompute', V, F, k);   % shorthand for the whole pipeline
@@ -159,7 +159,7 @@ void cmdPrecompute(int /*nlhs*/, mxArray** plhs,
 
     nxr::compute::ComputeContext ctx(verts.data(), nV, faces.data(), nF);
     auto ops = nxr::compute::assembleMeshOperators(ctx);
-    auto eig = nxr::compute::solveEigenmodes(ops.stiffness, ops.mass, k, -1e-8, makeCtrlCToken());
+    auto eig = nxr::compute::solveEigenmodes(ops.cotanLaplacian, ops.mass, k, -1e-8, makeCtrlCToken());
     eig.eigenvectors = nxr::compute::normalizeEigenmodes(eig.eigenvectors, ops.mass);
     eig = nxr::compute::removeDC(eig);
 

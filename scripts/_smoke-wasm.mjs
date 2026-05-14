@@ -67,13 +67,13 @@ console.log(`[smoke] precompute({k: 6}): ${elapsedPrecompute} ms`)
 require(data.operators.nV === 12, 'operators.nV')
 require(Math.abs(data.operators.totalArea - 9.5745) < 1e-3,
   `unit-sphere icosahedron area should be ≈ 9.5745, got ${data.operators.totalArea}`)
-require(data.operators.normals instanceof Float64Array, 'normals is Float64Array')
-require(data.operators.normals.length === 12 * 3, 'normals length nV*3')
-require(data.operators.stiffness.rows === 12, 'stiffness rows = nV')
-require(data.operators.stiffness.cols === 12, 'stiffness cols = nV')
-require(data.operators.stiffness.row instanceof Int32Array, 'stiffness COO.row Int32Array')
+require(data.operators.vertexNormals instanceof Float64Array, 'vertexNormals is Float64Array')
+require(data.operators.vertexNormals.length === 12 * 3, 'vertexNormals length nV*3')
+require(data.operators.cotanLaplacian.rows === 12, 'cotanLaplacian rows = nV')
+require(data.operators.cotanLaplacian.cols === 12, 'cotanLaplacian cols = nV')
+require(data.operators.cotanLaplacian.row instanceof Int32Array, 'cotanLaplacian COO.row Int32Array')
 console.log(`  operators ✓ (totalArea=${data.operators.totalArea.toFixed(4)}, ` +
-            `stiffness nnz=${data.operators.stiffness.nnz})`)
+            `cotanLaplacian nnz=${data.operators.cotanLaplacian.nnz})`)
 
 // DEC
 require(data.dec.d0.rows === 30, 'd0 rows = nE')

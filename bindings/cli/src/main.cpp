@@ -87,7 +87,7 @@ int cmdSmoke() {
     auto t0 = std::chrono::steady_clock::now();
     nxr::compute::ComputeContext ctx(verts, 12, faces, 20);
     auto ops = nxr::compute::assembleMeshOperators(ctx);
-    auto eig = nxr::compute::solveEigenmodes(ops.stiffness, ops.mass, 6, -1e-8, ctrlCToken());
+    auto eig = nxr::compute::solveEigenmodes(ops.cotanLaplacian, ops.mass, 6, -1e-8, ctrlCToken());
     eig.eigenvectors = nxr::compute::normalizeEigenmodes(eig.eigenvectors, ops.mass);
     eig = nxr::compute::removeDC(eig);
 

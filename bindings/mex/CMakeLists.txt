@@ -6,7 +6,7 @@
 #
 # Usage from MATLAB:
 #   ops = nxr_compute('assembleMeshOperators', V, F);
-#   eig = nxr_compute('solveEigenmodes', ops.stiffness, ops.mass, 300);
+#   eig = nxr_compute('solveEigenmodes', ops.cotanLaplacian, ops.mass, 300);
 
 find_package(Matlab COMPONENTS MX_LIBRARY MAIN_PROGRAM)
 

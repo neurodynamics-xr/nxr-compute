@@ -324,7 +324,7 @@ public:
 
         try {
             nxr::compute::EigenResult r = nxr::compute::solveEigenmodes(
-                ops_->stiffness, ops_->mass, k, sigma, cancel, progress);
+                ops_->cotanLaplacian, ops_->mass, k, sigma, cancel, progress);
             return eigenResultToVal(r);
         } catch (const nxr::compute::Error& e) {
             // Prefix the message with the code so JS consumers can
@@ -372,7 +372,7 @@ public:
         ensureDec();
 
         nxr::compute::EigenResult eig = nxr::compute::solveEigenmodes(
-            ops_->stiffness, ops_->mass, k, sigma);
+            ops_->cotanLaplacian, ops_->mass, k, sigma);
         eig.eigenvectors = nxr::compute::normalizeEigenmodes(eig.eigenvectors, ops_->mass);
         eig = nxr::compute::removeDC(eig);
         eigCache_ = std::make_unique<nxr::compute::EigenResult>(eig);
@@ -726,18 +726,18 @@ private:
     val meshOpsToVal() {
         ensureOps();
         val o = val::object();
-        o.set("stiffness",   sparseToVal(ops_->stiffness));
-        o.set("mass",        sparseToVal(ops_->mass));
+        o.set("cotanLaplacian",  sparseToVal(ops_->cotanLaplacian));
+        o.set("mass",            sparseToVal(ops_->mass));
         o.set("massVariant", std::string(
             ops_->massVariant == nxr::compute::MassMatrixVariant::Voronoi      ? "voronoi" :
             ops_->massVariant == nxr::compute::MassMatrixVariant::Barycentric  ? "barycentric" :
                                                                                  "full"));
-        o.set("vertexAreas", eigenVectorToVal(ops_->vertexAreas));
-        o.set("normals",     eigenMatrixToVal(ops_->normals));
-        o.set("totalArea",   ops_->totalArea);
-        o.set("nV",          ctx_->nV());
-        o.set("nE",          ctx_->nE());
-        o.set("nF",          ctx_->nF());
+        o.set("vertexDualAreas", eigenVectorToVal(ops_->vertexDualAreas));
+        o.set("vertexNormals",   eigenMatrixToVal(ops_->vertexNormals));
+        o.set("totalArea",       ops_->totalArea);
+        o.set("nV",              ctx_->nV());
+        o.set("nE",              ctx_->nE());
+        o.set("nF",              ctx_->nF());
         return o;
     }
 

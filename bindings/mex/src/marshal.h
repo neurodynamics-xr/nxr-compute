@@ -250,25 +250,29 @@ inline std::vector<std::int32_t> mxToFaceBuffer(const mxArray* arr, int& nFOut) 
 
 inline mxArray* meshOperatorsToStruct(const nxr::compute::MeshOperators& ops,
                                       const nxr::compute::ComputeContext& ctx) {
+    // Field names mirror geometry-central's canonical cache names so
+    // the MATLAB struct reads as a 1-to-1 viewer over GC. `mass` is
+    // variant-aware (Voronoi / Barycentric / ConsistentFEM).
     const char* fields[] = {
-        "stiffness", "mass", "vertexAreas", "normals",
+        "cotanLaplacian", "mass", "vertexDualAreas", "vertexNormals",
         "totalArea", "nV", "nE", "nF",
     };
     mxArray* s = mxCreateStructMatrix(1, 1, 8, fields);
 
-    // ops.normals is [nV, 3] row-major (Eigen MatrixXd, but stored as
-    // (nV, 3)) — return a Vx3 matrix to MATLAB. Eigen::MatrixXd is
-    // column-major, so the bytes are not the same; copy through.
-    Eigen::MatrixXd normalsT = ops.normals;  // already (nV, 3)
+    // ops.vertexNormals is [nV, 3] (Eigen MatrixXd, column-major). The
+    // shape happens to match MATLAB's expected Vx3 directly; the copy
+    // through here is unavoidable because Eigen's column-major bytes
+    // and MATLAB's column-major bytes coincide only at the matrix level.
+    Eigen::MatrixXd vertexNormalsT = ops.vertexNormals;  // (nV, 3)
 
-    mxSetField(s, 0, "stiffness",   eigenSparseToMx(ops.stiffness));
-    mxSetField(s, 0, "mass",        eigenSparseToMx(ops.mass));
-    mxSetField(s, 0, "vertexAreas", eigenVectorToMx(ops.vertexAreas));
-    mxSetField(s, 0, "normals",     eigenMatrixToMx(normalsT));
-    mxSetField(s, 0, "totalArea",   mxCreateDoubleScalar(ops.totalArea));
-    mxSetField(s, 0, "nV",          mxCreateDoubleScalar(ctx.nV()));
-    mxSetField(s, 0, "nE",          mxCreateDoubleScalar(ctx.nE()));
-    mxSetField(s, 0, "nF",          mxCreateDoubleScalar(ctx.nF()));
+    mxSetField(s, 0, "cotanLaplacian",  eigenSparseToMx(ops.cotanLaplacian));
+    mxSetField(s, 0, "mass",            eigenSparseToMx(ops.mass));
+    mxSetField(s, 0, "vertexDualAreas", eigenVectorToMx(ops.vertexDualAreas));
+    mxSetField(s, 0, "vertexNormals",   eigenMatrixToMx(vertexNormalsT));
+    mxSetField(s, 0, "totalArea",       mxCreateDoubleScalar(ops.totalArea));
+    mxSetField(s, 0, "nV",              mxCreateDoubleScalar(ctx.nV()));
+    mxSetField(s, 0, "nE",              mxCreateDoubleScalar(ctx.nE()));
+    mxSetField(s, 0, "nF",              mxCreateDoubleScalar(ctx.nF()));
     return s;
 }
 

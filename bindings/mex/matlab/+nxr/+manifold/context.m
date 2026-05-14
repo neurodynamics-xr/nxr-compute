@@ -41,12 +41,12 @@ function mctx = context(V, F)
     mctx        = struct();
     mctx.V      = V;
     mctx.F      = F;
-    mctx.K      = ops.stiffness;
+    mctx.K      = ops.cotanLaplacian;
     mctx.M      = ops.mass;
     mctx.nV     = ops.nV;
     mctx.nE     = ops.nE;
     mctx.nF     = ops.nF;
-    mctx.totalArea  = ops.totalArea;
-    mctx.vertexAreas = ops.vertexAreas;
-    mctx.normals     = ops.normals;
+    mctx.totalArea       = ops.totalArea;
+    mctx.vertexDualAreas = ops.vertexDualAreas;
+    mctx.vertexNormals   = ops.vertexNormals;
 end
