@@ -1,33 +1,53 @@
-# CLAUDE.md — Native C++ Addon (nxr_compute_addon.node)
+# CLAUDE.md — nxr-compute
 
-Read the root `CLAUDE.md` first. This file contains C++-specific
-instructions for the native addon.
+C++ compute engine for cortical surface analysis, shipped with four
+bindings (N-API addon, WASM/Embind, MATLAB MEX, CLI). All four wrap
+the same `nxr_compute` static library — same source, same numerical
+contract.
 
 ---
 
 ## Overview
 
-The native addon (`nxr_compute_addon.node`) is a thin N-API wrapper around
-the `nxr_compute` static library. The library lives in
-`native/src/` and `native/include/nxr/compute.h`; the N-API
-bindings live in `native/src/addon.cpp`. Build with CMake via cmake-js.
+The library lives in `src/` and `include/nxr/compute.h`. The four
+binding shells live under `bindings/`:
 
-The addon is **context-based**: each mesh is bound once via
+| Path | Artifact |
+|---|---|
+| `bindings/node/src/addon.cpp` | `nxr_compute_addon.node` (N-API) |
+| `bindings/wasm/src/nxr_compute_wasm.cpp` | `nxr_compute.wasm` (Embind) |
+| `bindings/mex/src/nxr_compute_mex.cpp` | `nxr_compute.mexw64` (MATLAB MEX) |
+| `bindings/cli/src/main.cpp` | `nxr_compute.exe` (CLI smoke harness) |
+
+All four are **context-based**: each mesh is bound once via
 `createContext(vertices, faces)` and the resulting opaque handle holds
-a `MeshOperators` view, a `DECOperators` view, and a `CholeskyCache`
-for the rest of its lifetime. There are no JS-side handles for
-individual factors — the cache is internal to the C++ side.
+the assembled operator structs and a `CholeskyCache` for the rest of
+its lifetime. There are no JS-side handles for individual factors —
+the cache is internal to the C++ side.
 
-`MeshOperators` and `DECOperators` are **view structs** with
-const-reference fields bound to geometry-central's cached matrices
-(`cotanLaplacian`, `vertexLumpedMassMatrix`, `d0`, `d1`, `hodge*`).
-They do not own the sparse storage; `assembleMeshOperators` /
-`assembleDECOperators` pin those caches via `require*` and bind the
-references. Lifetime contract: the binding holders
-(`ContextHolder` / `ContextWrapper`) keep the operator structs and the
-owning `ComputeContext` together, and no code path should call
-`unrequire*` on the geometry while the views are alive. See the
-comment block above `MeshOperators` in `include/nxr/compute.h`.
+`MeshOperators` and `DECOperators` mix view and value semantics. Field
+names match geometry-central's canonical cache names where the concept
+maps directly (`cotanLaplacian`, `vertexDualAreas`, `vertexNormals`,
+all `DECOperators` fields):
+
+- **View fields** — const-references into geometry-central's cached
+  matrices: `MeshOperators::cotanLaplacian` and every field on
+  `DECOperators`. `assembleMeshOperators` / `assembleDECOperators`
+  pin the caches via `require*` and bind the references.
+- **Value-owned fields** — `MeshOperators::mass` is variant-aware
+  (Voronoi / Barycentric / ConsistentFEM). Non-Voronoi variants don't
+  have a single geometry-central matrix to view, so mass is
+  materialised by value regardless of variant for uniform semantics.
+  `vertexDualAreas` and `vertexNormals` are also value-owned (geometry-
+  central stores normals as a `VertexData<Vector3>`, not a matrix;
+  `vertexNormals` uses the row-major `VertexNormalsMatrix` alias so
+  the §11 row-major binding output is a direct memcpy).
+
+Lifetime contract: the binding holders (`ContextHolder` /
+`ContextWrapper`) keep the operator structs and the owning
+`ComputeContext` together, and no code path should call `unrequire*`
+on the geometry while the views are alive. See the comment block
+above `MeshOperators` in `include/nxr/compute.h`.
 
 ---
 
@@ -55,8 +75,8 @@ When implementing or debugging, consult these files:
 
 ## C++ API Surface
 
-The compute library API (callable from `addon.cpp` and from CLI) is
-declared in `native/include/nxr/compute.h`. Highlights:
+The compute library API (callable from every binding) is declared in
+`include/nxr/compute.h`. Highlights:
 
 ```cpp
 // Per-mesh state
@@ -97,10 +117,31 @@ CurvatureResult     computeCurvatures(ComputeContext&);
 …
 ```
 
-The N-API bindings in `addon.cpp` expose these as `native:*` IPC
-methods (see `electron/CLAUDE.md` for the IPC list). The bindings
-hold the `ContextHolder { ctx, ops, dec, factors }` per JS handle and
-plumb each call through.
+The N-API bindings in `bindings/node/src/addon.cpp` hold a
+`ContextHolder` per JS handle and plumb each call through. The holder
+fields:
+
+```cpp
+struct ContextHolder {
+    std::shared_ptr<ComputeContext>     ctx;
+    std::shared_ptr<MeshOperators>      ops;        // view, lazy via ensureOps()
+    std::shared_ptr<DECOperators>       dec;        // view, lazy via ensureDec()
+    std::shared_ptr<CholeskyCache>      factors;    // pre-factored Cholesky/LU
+    std::shared_ptr<EigenResult>        eigenmodes; // populated by EigenSolveWorker
+    std::shared_ptr<VectorHeatSolver>   vhm;        // lazy via ensureVHM()
+    std::shared_ptr<SignedHeatSolver>   shs;        // lazy via ensureSHS()
+    std::shared_ptr<HeatGeodesicSolver> heatGeo;    // lazy via ensureHeatGeo()
+    std::map<CLCacheKey,
+        std::shared_ptr<ConnectionLaplacian>> connectionLaplacian;     // Pattern-C
+    std::map<SmoothFieldKey, Eigen::MatrixXd>             smoothFaceFieldCache;   // Pattern-C
+    std::map<SmoothFieldKey, SmoothVertexFieldResult>     smoothVertexFieldCache; // Pattern-C
+};
+```
+
+The WASM `ContextWrapper` (`bindings/wasm/src/nxr_compute_wasm.cpp`)
+holds an equivalent set. Both lazy-initialise solver PIMPLs on first
+use; both cache stateless free-function results (connection-Laplacian,
+smooth-direction-field) keyed by all input parameters.
 
 ---
 
@@ -122,7 +163,7 @@ and reuse for the same reason.
 - Each cached factor is built by the same matrix-assembly +
   factorization sequence the previous inline solvers used. Solves on
   the cached factor are bit-for-bit identical to fresh inline factor +
-  solve. Verified by `native/test/test_factor_cache.cpp`.
+  solve. Verified by `test/test_cholesky_cache.cpp`.
 - Lifetime: owned by `ContextHolder` in `addon.cpp`; the cache is
   destroyed when the JS handle releases (i.e. when the mesh changes).
 - Single-threaded. The addon is invoked from Node's main thread; no
@@ -181,11 +222,23 @@ state, not a missed optimization.
    `code()` per their idiom — see §11 below.  Don't catch and silently
    zero out — failing loud is the contract.
 
-7. **Thread safety / async**: The eigensolver is wrapped in
-   `Napi::AsyncWorker` (see `EigenSolveWorker` in `addon.cpp`) so it
-   doesn't block the event loop. Other heavy ops (Hodge, Poisson) run
-   synchronously today; promote to AsyncWorker only if profiling shows
-   they freeze the UI on real meshes.
+7. **Thread safety / async**: Three N-API addon methods are wrapped
+   in `Napi::AsyncWorker` so they don't block the event loop:
+   - `EigenSolveWorker` for `solveEigenmodes`
+   - `HodgeDecomposeWorker` for `hodgeDecompose`
+   - `DirectionFieldWorker` for `computeDirectionField`
+
+   All three return Promises (the JS shim's `solve.eigen`,
+   `solve.hodge`, `interpolate.directionField` are `async`). Inputs
+   are deep-copied into the worker so the caller can release the
+   originating TypedArrays immediately. Smooth-field methods are
+   sync — the Pattern-C cache (rule 9) makes warm calls instant.
+   Other heavy ops (Poisson, etc.) run synchronously; promote to
+   AsyncWorker only if profiling shows they freeze the UI on real
+   meshes. The WASM binding has no AsyncWorker analogue — consumers
+   that need off-thread WASM dispatch must host the module in a
+   Web Worker (see `docs/wasm-web-worker.md` for the recipe +
+   `bindings/wasm/js/nxr_compute_wasm.worker.template.mjs`).
 
 8. **Solver-instance caching for stateful geometry-central solvers.**
    Whenever you bind one of geometry-central's `*Solver` classes
@@ -205,11 +258,14 @@ state, not a missed optimization.
    free functions with no Solver class — each call rebuilds and
    factorizes internally. Adding a Solver wrapper here would require
    reimplementing the algorithm. Instead, cache the **output** at the
-   binding level, keyed by all input parameters (commit `6313bc7`
-   used `std::map<std::pair<int, bool>, Eigen::MatrixXd>` keyed by
-   `(nSym, alignToCurvature)`). The trade-off: parameter changes
-   pay the full cold cost once per new key, identical-parameter
-   repeats are cache-hit fast. See `docs/integration-lessons.md` §C.
+   binding level, keyed by all input parameters. Both the N-API
+   addon and the WASM `ContextWrapper` carry parallel slots:
+   `smoothFaceFieldCache` / `smoothVertexFieldCache` (keyed by
+   `(nSym, alignToCurvature)`) and `connectionLaplacian` (keyed by
+   `(domain, nSym, regularization, format)`). The trade-off:
+   parameter changes pay the full cold cost once per new key,
+   identical-parameter repeats are cache-hit fast. See
+   `docs/integration-lessons.md` §C.
 
 10. **Eigensolve K ceiling on browser/WASM.** `solveEigenmodes` throws
     `EigensolveInvalidK` for `k > 1000`. Spectra's Krylov basis size
@@ -251,13 +307,11 @@ the May-2026 bench round. Quick callouts that bit us already:
   that bundle an eigensolve (e.g. `precompute({k})`) will look like
   they're "no caching" in bench output even when everything else IS
   cached. Document this on the new method, don't try to fix it.
-- **Embind exception `.message` is empty in JS** because
-  `getExceptionMessage` isn't in the WASM build's
-  `EXPORTED_RUNTIME_METHODS`. JS consumers see `[object Object]`
-  instead of `[CODE_NAME] msg | hint: …`. Fix is a one-line
-  addition to `bindings/wasm/CMakeLists.txt` — tracked as
-  cleanup in nxr-design-system's bench-roadmap. The
-  throw-vs-no-throw behaviour is intact regardless.
+- **Embind exception `.message`** is wired correctly as of commit
+  `a0cbabe`: `getExceptionMessage` is in
+  `bindings/wasm/CMakeLists.txt`'s `EXPORTED_RUNTIME_METHODS`, so
+  JS consumers catching nxr-compute exceptions see
+  `[CODE_NAME] msg | hint: …` instead of `[object Object]`.
 - **emscripten 5.x needs Python 3.10+.** macOS default
   `/Library/Developer/CommandLineTools/usr/bin/python3` is 3.9 and
   fails the assertion. Prefix `PATH="/opt/homebrew/bin:$PATH"` (or
@@ -268,42 +322,48 @@ the May-2026 bench round. Quick callouts that bit us already:
 ## Build & Test
 
 ```sh
-bash scripts/build-native.sh Release
-# Outputs (cmake-js flat layout):
-#   native/build_node/Release/nxr_compute_addon.node          (copied to project root)
-#   native/build_node/Release/nxr_compute.exe                 (CLI)
-#   native/build_node/Release/nxr_compute.mexw64              (MATLAB MEX)
-#   native/build_node/Release/test_eigen.exe          (end-to-end smoke)
-#   native/build_node/Release/test_cholesky_cache.exe (cache contract)
-#   native/build_node/Release/test_field_generators.exe
-#   native/build_node/Release/test_visualization_primitives.exe
-#   native/build_node/Release/test_cancellation.exe   (Phase A)
-#   native/build_node/Release/test_progress.exe       (Phase A)
+bash scripts/build.sh Release
+# Outputs (build/ at repo root):
+#   build/Release/nxr_compute_addon.node          (N-API; also copied to repo root)
+#   build/Release/nxr_compute.exe                 (CLI smoke harness)
+#   build/Release/nxr_compute.mexw64              (MATLAB MEX)
+#   build/Release/test_eigen.exe                  (end-to-end smoke, 14 tests)
+#   build/Release/test_cholesky_cache.exe         (cache contract canary)
+#   build/Release/test_mass_variants.exe          (Voronoi/Barycentric/ConsistentFEM)
+#   build/Release/test_connection_laplacian.exe   (vertex/face/edge CL)
+#   build/Release/test_field_generators.exe       (eigenmode / heat / wave)
+#   build/Release/test_graph_agnostic.exe         (K/M-agnostic solvers on graphs)
+#   build/Release/test_geometry_central_extras.exe(GC solver wrappers)
+#   build/Release/test_visualization_primitives.exe(isolines, streamlines, BFF)
+#   build/Release/test_cancellation.exe           (CancellationToken)
+#   build/Release/test_progress.exe               (ProgressObserver)
 ```
 
-WASM build (separate toolchain):
+WASM build (separate toolchain — emscripten):
 
 ```sh
-emcmake cmake -B native/build_wasm -S native -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build native/build_wasm --target nxr_compute_wasm
+bash scripts/build-wasm.sh
 node scripts/_smoke-wasm.mjs   # Embind round-trip, ~10 ms on icosahedron
 ```
 
 Run the standalone native tests directly:
 
 ```sh
-./native/build_node/Release/test_eigen.exe          # 14 tests, end-to-end
-./native/build_node/Release/test_cholesky_cache.exe # cache contract
-./native/build_node/Release/test_cancellation.exe   # CancellationToken
-./native/build_node/Release/test_progress.exe       # ProgressObserver
+./build/Release/test_eigen.exe
+./build/Release/test_cholesky_cache.exe
+./build/Release/test_cancellation.exe
+./build/Release/test_progress.exe
 ```
 
-`test_cholesky_cache.cpp` is the canary for the bit-for-bit cache contract.
-Any change to `CholeskyCache` or the solvers that consume it must keep
-this test passing. `test_cancellation.cpp` and `test_progress.cpp`
-guard the §12 cancel/progress contract.
+`test_cholesky_cache.cpp` is the canary for the bit-for-bit cache
+contract. Any change to `CholeskyCache` or the solvers that consume
+it must keep this test passing. `test_cancellation.cpp` and
+`test_progress.cpp` guard the §12 cancel/progress contract.
+`test_mass_variants.cpp` validates that all three mass variants
+return the same Voronoi reference `vertexDualAreas` and that
+ConsistentFEM produces a different λ₁ from Voronoi/Barycentric.
 
-`native/deps/` carries `geometry-central` (operator assembly) and
+`deps/` carries `geometry-central` (operator assembly) and
 `polyscope` (debug-only viewer used during native development; not
 shipped in the addon).
 
@@ -326,10 +386,17 @@ honour this layout when flattening Eigen matrices to typed arrays:
 `U(:,k)` for mode k contiguously. The flatten rule applies only when
 crossing into a JS typed array.
 
-**Internal C++ storage is unchanged** — `Eigen::MatrixXd` keeps its
-default column-major layout. The bindings transpose at the flatten
-step (e.g. via `Eigen::Matrix<double, Dynamic, Dynamic, RowMajor>
-rowMajor = m;` in `eigenMatrixToVal`).
+**Internal C++ storage is mostly column-major** — `Eigen::MatrixXd`
+keeps its default column-major layout for most outputs (eigenvectors,
+principal directions, isolines), and the binding helpers transpose
+at the flatten step via an `Eigen::Map<RowMajor>` assignment that
+Eigen vectorises into a SIMD memcpy + transpose. The one exception
+is `MeshOperators::vertexNormals`, declared row-major via the
+`VertexNormalsMatrix` alias (`Matrix<double, Dynamic, 3, RowMajor>`)
+because it's consumed row-wise only and the binding-side memcpy
+becomes a direct copy. Helper signatures (`matrixToFloat64Array`,
+`eigenMatrixToVal`) are templated on `Eigen::MatrixBase<Derived>`
+so both layouts share one code path.
 
 ## §12 Cancellation and progress contract
 
@@ -360,14 +427,20 @@ Bindings translate `Error` per their idiom:
 | Binding | Error surface |
 |---|---|
 | N-API addon | JS `Error` with `.code` (string-named enumerator, e.g. `"CANCELLED"`) and `.hint`. |
-| WASM | JS `Error` whose `.message` is `"[CODE_NAME] message [\| hint: ...]"`. Phase B will add a richer mapping via Embind exception registration. |
+| WASM | JS `Error` whose `.message` is `"[CODE_NAME] message [\| hint: ...]"`. `getExceptionMessage` is in `EXPORTED_RUNTIME_METHODS` as of commit `a0cbabe`, so the `.message` is actually populated. Phase B may add a richer mapping via Embind exception registration. |
 | MEX | `MException` with identifier `nxr-compute:cancelled`, `nxr-compute:nonManifold`, etc. (`toMatlabIdentifier` turns the enumerator name into camelCase). |
 | CLI | Exit code: `130` for `Cancelled` (POSIX 128+SIGINT), `1` otherwise. |
 
 The cancellation poll point inside nxr-compute is once per Spectra
 `perform_op` call, giving sub-second cancel latency on
 cortical-sized meshes. The wrapper that drives this is
-`CancelProgressOp` in `nxr-compute/src/eigensolver.cpp`.
+`CancelProgressOp` in `src/eigensolver.cpp`. Only `solveEigenmodes`
+plumbs cancel + progress through today; `hodgeDecompose` and
+`computeDirectionField` inherit the C++ contract but the addon's
+worker classes (`HodgeDecomposeWorker`, `DirectionFieldWorker`)
+don't expose cancel/progress slots yet — those calls complete in
+1–3 s on cortical meshes and the async wrapping alone keeps the
+UI thread responsive.
 
 ---
 
@@ -382,7 +455,7 @@ For any numerical function, create a test that:
 
 The MATLAB MCP server (`reference_matlab_mcp` in personal memory) can
 be used to generate fixtures from the `+bct` toolbox. Test fixtures
-should live in `native/test/fixtures/` once the harness exists. As of
+should live in `test/fixtures/` once the harness exists. As of
 2026-04-27 there is **no** MATLAB-oracle test harness; this is the
 single biggest gap in numerical confidence and the next step in the
 correctness program.
