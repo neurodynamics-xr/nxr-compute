@@ -4,6 +4,17 @@
 **Author:** Diellor Basha (with Claude as scribe)
 **Repository:** `nxr-compute`
 
+> **Note (2026-05-13):** the `implemented_by` examples below show
+> `ctx.assembleMeshOperators().stiffness` because they predate the
+> field-rename pass (commit `2dbb95b`). In the current bindings the
+> path is `ctx.assembleMeshOperators().cotanLaplacian`; similarly
+> `.vertexAreas` → `.vertexDualAreas`, `.normals` → `.vertexNormals`.
+> The schema slot names themselves (`stiffness`, `mass`, etc.) are
+> mathematical concept names and remain unchanged in
+> `manifold.schema.json`. This spec is preserved as design rationale;
+> the live schema and `docs/schema/CONVENTIONS.md` have the current
+> examples.
+
 ## Files produced
 
 | File | Role |

@@ -55,10 +55,10 @@ Every node in the slot tree — group or leaf — carries an
       "depends_on": ["operators/d0", "operators/hodge1"],
       "formula": "d0^T * hodge1 * d0",
       "implemented_by": {
-        "cpp":        "nxr::compute::assembleMeshOperators().stiffness",
-        "node_addon": "ctx.assembleMeshOperators().stiffness",
-        "wasm":       "ctx.assembleMeshOperators().stiffness",
-        "mex":        "nxr_compute('assembleMeshOperators', V, F).stiffness"
+        "cpp":        "nxr::compute::assembleMeshOperators().cotanLaplacian",
+        "node_addon": "ctx.assembleMeshOperators().cotanLaplacian",
+        "wasm":       "ctx.assembleMeshOperators().cotanLaplacian",
+        "mex":        "nxr_compute('assembleMeshOperators', V, F).cotanLaplacian"
       },
       "complexity": "O(F)"
     }
@@ -190,10 +190,10 @@ complex128 is `24 * V` bytes (each component is one complex pair).
 
 ```json
 {
-  "cpp":        "nxr::compute::assembleMeshOperators().stiffness",
-  "node_addon": "ctx.assembleMeshOperators().stiffness",
-  "wasm":       "ctx.assembleMeshOperators().stiffness",
-  "mex":        "nxr_compute('assembleMeshOperators', V, F).stiffness"
+  "cpp":        "nxr::compute::assembleMeshOperators().cotanLaplacian",
+  "node_addon": "ctx.assembleMeshOperators().cotanLaplacian",
+  "wasm":       "ctx.assembleMeshOperators().cotanLaplacian",
+  "mex":        "nxr_compute('assembleMeshOperators', V, F).cotanLaplacian"
 }
 ```
 

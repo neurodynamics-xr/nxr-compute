@@ -1,6 +1,32 @@
 # nxr API refactor proposal: flat → namespace-modular
 
-**Status:** proposal — not yet approved
+> **Status (2026-05-13): abandoned.** The full namespace-tree refactor
+> proposed here — renaming `nxr::compute::*` to a domain-aligned tree
+> with `nxr::manifold::ops::`, `nxr::manifold::eigen::`, `nxr::field::*`
+> etc. — was not pursued. Two lighter alignment passes landed instead
+> and addressed the most important motivating concerns:
+>
+> 1. **`MeshOperators` / `DECOperators` field names aligned to
+>    geometry-central** (commit `2dbb95b`): `stiffness` →
+>    `cotanLaplacian`, `vertexAreas` → `vertexDualAreas`, `normals` →
+>    `vertexNormals`. DEC fields already matched GC. This addresses
+>    the cross-binding consumer's mental-translation cost without
+>    moving every C++ symbol.
+> 2. **View-struct dedup** (commit `b59779e`): the operator structs
+>    are now views over geometry-central's cached matrices instead
+>    of value-owning copies. Addresses the structural concern that
+>    the old `MeshOperators` was an opaque value blob.
+>
+> The full +bct-mirroring rename (`assembleMeshOperators` →
+> `manifold::ops::assembleMesh`, etc.) was judged not worth the
+> migration cost for downstream consumers (nxr-design-system,
+> cortical-flow, MATLAB +bct users) given that the naming-and-shape
+> wins above ship 80% of the perceived benefit. The MATLAB side
+> continues to live at `+bct.+manifold.+eigen.solve` etc. while
+> the C++ side stays flat at `nxr::compute::*`.
+>
+> Preserved as historical design rationale. Do not implement.
+
 **Scope:** rename and reorganize the public API of `nxr-compute` (and its
 four bindings) from a single flat namespace to a domain-aligned namespace
 tree that mirrors the MATLAB `+bct` toolbox.

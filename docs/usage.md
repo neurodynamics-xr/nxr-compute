@@ -252,6 +252,30 @@ console.log(`solved ${iter}/${tot} units, residual ≈ ${res.toExponential(2)}`)
 `'NON_MANIFOLD'`, …). `e.hint` carries an optional human-readable
 remediation string when present.
 
+### Other async functions
+
+`solveEigenmodes` is one of three N-API addon methods wrapped in
+`Napi::AsyncWorker` — they run on a libuv worker thread so the JS
+event loop stays free during the C++ solve. All three are
+`await`-shaped:
+
+```js
+const eig    = await ctx.solveEigenmodes(300, cancelArr, progressArr)
+const hodge  = await ctx.hodgeDecompose(omega)              // 1-form Hodge–Helmholtz decomposition
+const dir    = await ctx.computeDirectionField(singVerts, singVals)  // trivial-connection N-RoSy field
+```
+
+The latter two don't accept cancel/progress arrays yet; the addon
+inherits the `CancellationToken` / `ProgressObserver` contract from
+nxr-compute but only `solveEigenmodes` plumbs them through today
+(Hodge and direction-field complete in 1–3 s on cortical meshes; the
+async wrapping alone keeps the UI thread responsive).
+
+All other addon methods are synchronous — typical wall-time is
+< 100 ms on cortical-sized meshes once `assembleMeshOperators` /
+`assembleDECOperators` have run once (subsequent calls reuse the
+cached operators and CholeskyCache factors).
+
 ### 4.4 CLI (`nxr-compute precompute`)
 
 ```sh

@@ -97,6 +97,24 @@ interpolate.smoothFaceField(nSym)       → 'interpolate.smoothFaceField', args:
 
 See `bindings/wasm/js/index.d.ts` for the complete surface.
 
+### Methods that are inherently async on the binding side
+
+These are the calls where moving to a worker actually changes anything
+— the C++ wall-time is long enough that the JS thread blocks
+noticeably:
+
+| Method (in-process surface) | Native (N-API addon) | WASM (in-process) | Worker RPC |
+|---|---|---|---|
+| `solve.eigen(k)` | `Promise` (Napi::AsyncWorker) | sync (blocks) | `await rpc('solve.eigen', [k])` |
+| `solve.hodge(omega?)` | `Promise` (Napi::AsyncWorker) | sync (blocks) | `await rpc('solve.hodge', [omega])` |
+| `interpolate.directionField(v, s)` | `Promise` (Napi::AsyncWorker) | sync (blocks) | `await rpc('interpolate.directionField', [v, s])` |
+| `interpolate.smoothFaceField(n)` | sync; cached by `(nSym, alignToCurvature)` | sync; same cache | RPC fine but warm-cache hits make the worker overhead net-negative |
+| All `operator.*`, `query.*`, `measure.curvature`, `measure.normal` | sync (< 50 ms after warm cache) | sync | Don't worker; RPC round-trip dominates |
+
+The template's dispatcher uses `await target.apply(host, args)` which
+handles both Promise-returning and immediate-returning leaves
+uniformly — no caller-side branching needed.
+
 ---
 
 ## Transferables

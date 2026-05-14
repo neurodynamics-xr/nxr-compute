@@ -18,15 +18,15 @@ created (`const ctx = nxrCompute.createContext(verticesF64, facesI32)`), and
 
 | Visualization                 | nxr-compute call                                | Output shape           | three.js delivery                   |
 |------------------------------|----------------------------------------|------------------------|-------------------------------------|
-| Lit mesh                      | `data.operators.normals`                | `[V × 3]` float64      | `BufferAttribute('normal', 3)`      |
+| Lit mesh                      | `data.operators.vertexNormals`          | `[V × 3]` float64      | `BufferAttribute('normal', 3)`      |
 | Eigenmode colormap            | `data.eigenmodes.eigenvectors[k]`       | `[V]` float64 (column) | `BufferAttribute('scalar', 1)`      |
 | Curvature colormap            | `ctx.computeCurvatures().mean`          | `[V]` float64          | `BufferAttribute('scalar', 1)`      |
 | Geodesic distance             | `ctx.computeGeodesicDistance(srcs)`     | `[V]` float64          | `BufferAttribute('scalar', 1)`      |
 | Geodesic path                 | `ctx.tracePath(vA, vB)`                 | `[N × 3]` float64      | `LineSegments` / `Line`             |
 | Gradient arrows               | `ctx.scalarGradient(scalar)`            | `[F × 3]` float64      | `InstancedMesh` of arrows           |
 | Time-varying activity         | `ctx.generateHeatDiffusion(...)`        | `[T × V]` float32      | `DataArrayTexture` + TSL            |
-| Hodge: exact / co-exact / harmonic | `ctx.hodgeDecompose(ω)`            | 3 × `[F × 3]` float64  | 3 layered `InstancedMesh` arrows    |
-| Trivial-connection field      | `ctx.computeDirectionField(sing)`       | `[F × 3]` per-face     | per-face short oriented lines       |
+| Hodge: exact / co-exact / harmonic | `await ctx.hodgeDecompose(ω)`      | 3 × `[F × 3]` float64  | 3 layered `InstancedMesh` arrows    |
+| Trivial-connection field      | `await ctx.computeDirectionField(sing)` | `[F × 3]` per-face     | per-face short oriented lines       |
 | Streamlines                   | `ctx.traceStreamlines(faceField, …)`    | `[2N × 3]` float64     | `LineSegments`                      |
 | Particle advection            | `data.faceFrames` (e1, e2, n) + flow    | `[F × 6]` + `[F × 3]`  | InstancedMesh + TSL compute pass    |
 | LIC textures                  | `ctx.computeUVCoordinates()` + flow     | `[V × 2]` + `[F × 3]`  | UV map + flow texture + LIC shader  |
@@ -45,7 +45,7 @@ const geometry = new THREE.BufferGeometry()
 geometry.setAttribute('position', new THREE.BufferAttribute(
   new Float32Array(verticesF64), 3))
 geometry.setAttribute('normal', new THREE.BufferAttribute(
-  new Float32Array(data.operators.normals), 3))
+  new Float32Array(data.operators.vertexNormals), 3))
 geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(facesI32), 1))
 
 const mesh = new THREE.Mesh(
@@ -399,7 +399,10 @@ const omega = ctx.generateRandomDecomposed1Form({
   seed: 42,
 })
 
-const result = ctx.hodgeDecompose(omega)
+// N-API addon dispatches the Hodge solve to a libuv worker thread —
+// returns a Promise. WASM is sync today (will be async via Web Worker
+// per docs/wasm-web-worker.md).
+const result = await ctx.hodgeDecompose(omega)
 // Per-vertex scalar potentials
 //   result.exactPotential       — α (gradient potential)
 //   result.coExactPotentialV    — β (curl potential, averaged to vertices)
@@ -445,7 +448,9 @@ direction" visualization.
 const singularityVerts  = new Int32Array([0, 100])
 const singularityValues = new Float64Array([1.0, 1.0])
 
-const dir = ctx.computeDirectionField(singularityVerts, singularityValues)
+// Async on the N-API addon (Napi::AsyncWorker); resolves to the same
+// shape as the previous sync version.
+const dir = await ctx.computeDirectionField(singularityVerts, singularityValues)
 // dir.connections        — Float64Array [E] — per-edge angles
 // dir.directionVectors   — Float64Array [F × 3] — per-face directions
 // dir.orthogonalVectors  — Float64Array [F × 3] — per-face orthogonals

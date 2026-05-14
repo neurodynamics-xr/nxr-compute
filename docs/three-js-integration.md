@@ -157,8 +157,8 @@ outputs in one call:
 ```javascript
 const data = ctx.precompute({ k: 300 })
 
-// data.operators  — { stiffness, mass, vertexAreas, normals,
-//                     totalArea, nV, nE, nF }
+// data.operators  — { cotanLaplacian, mass, vertexDualAreas,
+//                     vertexNormals, totalArea, nV, nE, nF }
 // data.dec        — { d0, d1, hodge0, hodge1, hodge1Inverse, hodge2 }
 // data.eigenmodes — { eigenvectors [V*K float64],
 //                     eigenvalues  [K   float64], k, nConverged }
@@ -185,7 +185,11 @@ const path = ctx.tracePath(vStart, vEnd)
 // → Float64Array [N * 3] of polyline points
 
 // Hodge decomposition of a 1-form ω on edges
-const hodge = ctx.hodgeDecompose(omegaFloat64)
+// On the N-API addon, hodgeDecompose returns a Promise — the solve
+// runs in a libuv worker thread so the JS event loop stays free.
+// WASM is sync today; wrap in a Web Worker per docs/wasm-web-worker.md
+// if you need it off the main thread in the browser.
+const hodge = await ctx.hodgeDecompose(omegaFloat64)
 // → { exactPotential, coExactPotentialV, gamma,
 //     dAlphaVectors, deltaBetaVectors, gammaVectors, … }
 
@@ -271,7 +275,7 @@ eigenmodes computed:
 | What | Size |
 |---|---|
 | ManifoldSurfaceMesh + VertexPositionGeometry | ~10 MB |
-| MeshOperators (sparse L, M, vertexAreas, normals) | ~5 MB |
+| MeshOperators (sparse L, M, vertexDualAreas, vertexNormals) | ~5 MB |
 | DECOperators (sparse d0, d1, hodge stars) | ~10 MB |
 | CholeskyCache (3 sparse factors) | ~30 MB |
 | Eigenvectors (40k × 300 × 8 bytes float64) | ~96 MB |
@@ -316,7 +320,7 @@ const geometry = new THREE.BufferGeometry()
 geometry.setAttribute('position', new THREE.BufferAttribute(
   new Float32Array(verticesF64), 3))
 geometry.setAttribute('normal',   new THREE.BufferAttribute(
-  new Float32Array(data.operators.normals), 3))
+  new Float32Array(data.operators.vertexNormals), 3))
 geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(facesI32), 1))
 
 // Pick eigenmode 5 (the 5th non-DC mode, indices are 0-based)

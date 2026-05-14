@@ -560,10 +560,10 @@
         "depends_on": ["operators/d0", "operators/hodge1"],
         "formula": "d0^T * hodge1 * d0",
         "implemented_by": {
-          "cpp":        "nxr::compute::assembleMeshOperators(ctx).stiffness",
-          "node_addon": "ctx.assembleMeshOperators().stiffness",
-          "wasm":       "ctx.assembleMeshOperators().stiffness",
-          "mex":        "nxr_compute('assembleMeshOperators', V, F).stiffness"
+          "cpp":        "nxr::compute::assembleMeshOperators(ctx).cotanLaplacian",
+          "node_addon": "ctx.assembleMeshOperators().cotanLaplacian",
+          "wasm":       "ctx.assembleMeshOperators().cotanLaplacian",
+          "mex":        "nxr_compute('assembleMeshOperators', V, F).cotanLaplacian"
         },
         "complexity": "O(F)",
         "errors": ["GeometryDegenerate"],
