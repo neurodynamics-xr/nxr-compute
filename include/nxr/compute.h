@@ -655,7 +655,81 @@ Eigen::MatrixXd tracePath(
     int vEnd
 );
 
+// ── Locus primitives (D11) ───────────────────────────────────
+//
+// `query::*` returns the geometric locus itself (the "where"); the
+// paired `measure::*` (below) returns its scalar metric (the "how
+// much"). Three loci: a point, a polyline, a region of faces.
+
+struct PointLocus {
+    int vertex;  // vertex index in the owning Manifold
+};
+
+struct PolylineLocus {
+    Eigen::MatrixXd points;  // [N, 3] world-space points along the polyline
+};
+
+struct RegionLocus {
+    std::vector<int> faces;  // face indices covered by the region
+};
+
+/** Trivial point query — echoes the input vertex after a range check.
+ *  Throws Error(InvalidInput) on `v < 0 || v >= m.nV()`. */
+PointLocus point(Manifold& m, int v);
+
+/** Polyline between two vertices via the edge-flip geodesic algorithm
+ *  (Sharp & Crane 2020). Identical to `tracePath` but typed as a
+ *  PolylineLocus so it pairs with `measure::line`. */
+PolylineLocus line(Manifold& m, int vStart, int vEnd);
+
+/** Region of faces inside the geodesic ball of radius `level` around
+ *  vertex `v`. A face is included iff all three of its vertices have
+ *  heat-method geodesic distance `<= level` from `v` — conservative,
+ *  slightly underestimates the true region area, but well-defined and
+ *  free of barycentric interpolation.
+ *
+ *  Constructs a fresh `solve::HeatGeodesicSolver` per call (pays one
+ *  Cholesky factor). For repeated queries on the same mesh, callers
+ *  that want the cached path should compute the heat-distance scalar
+ *  field themselves via the cached solver on `Manifold` and then
+ *  threshold it manually.
+ *
+ *  Throws Error(InvalidInput) on `v` out of range or `level <= 0`. */
+RegionLocus area(Manifold& m, int v, double level);
+
 } // namespace nxr::manifold::query
+
+namespace nxr::manifold::measure {
+
+// ── Scalar metrics of query loci (D11) ───────────────────────
+//
+// Paired with `query::*`: each `measure::*` here takes the same
+// inputs as the matching `query::*` and returns the scalar value
+// (coordinate, length, area). Locus-input overloads avoid re-running
+// the query when the caller already has the locus.
+
+/** 3D position of vertex `v`, taken from the manifold's vertex
+ *  positions. Throws Error(InvalidInput) on out-of-range `v`. */
+Eigen::Vector3d point(Manifold& m, int v);
+
+/** Polyline length along the edge-flip geodesic from `vStart` to `vEnd`.
+ *  Equivalent to `line(query::line(m, vStart, vEnd))`. */
+double line(Manifold& m, int vStart, int vEnd);
+
+/** Polyline length of a pre-computed `PolylineLocus`. Sum of Euclidean
+ *  distances between consecutive points. Returns 0 for empty / single-
+ *  point polylines. */
+double line(const query::PolylineLocus& locus);
+
+/** Total face area of the geodesic-ball region of radius `level` around
+ *  vertex `v`. Equivalent to `area(m, query::area(m, v, level))`. */
+double area(Manifold& m, int v, double level);
+
+/** Total face area of a pre-computed `RegionLocus`, summed from
+ *  geometry-central's cached face areas. */
+double area(Manifold& m, const query::RegionLocus& locus);
+
+} // namespace nxr::manifold::measure
 
 namespace nxr::manifold::transport {
 

@@ -60,6 +60,7 @@ add_library(nxr_compute STATIC
   src/smooth_field.cpp
   src/stripe_patterns.cpp
   src/connection_laplacian.cpp
+  src/query_measure.cpp
 )
 
 target_include_directories(nxr_compute PUBLIC
@@ -163,4 +164,8 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_passthrough_accessors test/test_passthrough_accessors.cpp)
     target_link_libraries(test_passthrough_accessors PRIVATE nxr_compute)
     add_test(NAME test_passthrough_accessors COMMAND test_passthrough_accessors)
+
+    add_executable(test_query_measure test/test_query_measure.cpp)
+    target_link_libraries(test_query_measure PRIVATE nxr_compute)
+    add_test(NAME test_query_measure COMMAND test_query_measure)
 endif()
