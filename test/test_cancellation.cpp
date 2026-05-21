@@ -4,9 +4,9 @@
  * Validates that:
  *   1. CancellationToken::requested() reads the atomic flag.
  *   2. CancellationToken::requested() invokes the function poller.
- *   3. solveEigenmodes throws Error(Cancelled) when the flag is
+ *   3. solve throws Error(Cancelled) when the flag is
  *      pre-set (cancel before factorization).
- *   4. solveEigenmodes throws Error(Cancelled) when the flag flips
+ *   4. solve throws Error(Cancelled) when the flag flips
  *      mid-solve (cancel during IRAM iteration).
  *   5. Default-constructed token is a no-op.
  *
@@ -48,20 +48,20 @@ Mesh makeIcosahedron() {
          0, -1,  t,   0,  1,  t,   0, -1, -t,   0,  1, -t,
          t,  0, -1,   t,  0,  1,  -t,  0, -1,  -t,  0,  1,
     };
-    Mesh m;
+    Mesh mesh;
     for (int i = 0; i < 36; i += 3) {
         double len = std::sqrt(raw[i]*raw[i] + raw[i+1]*raw[i+1] + raw[i+2]*raw[i+2]);
-        m.vertices.push_back(raw[i] / len);
-        m.vertices.push_back(raw[i+1] / len);
-        m.vertices.push_back(raw[i+2] / len);
+        mesh.vertices.push_back(raw[i] / len);
+        mesh.vertices.push_back(raw[i+1] / len);
+        mesh.vertices.push_back(raw[i+2] / len);
     }
-    m.faces = {
+    mesh.faces = {
         0,11,5,  0,5,1,   0,1,7,   0,7,10,  0,10,11,
         1,5,9,   5,11,4,  11,10,2, 10,7,6,  7,1,8,
         3,9,4,   3,4,2,   3,2,6,   3,6,8,   3,8,9,
         4,9,5,   2,4,11,  6,2,10,  8,6,7,   9,8,1,
     };
-    return m;
+    return mesh;
 }
 
 // Replace each face with 4 by inserting midpoints, then renormalize
@@ -114,14 +114,14 @@ static int testsFailed = 0;
 
 void test_DefaultTokenIsNotCancelled() {
     std::cout << "[1] Default token is not cancelled" << std::endl;
-    nxr::compute::CancellationToken tok;
+    nxr::core::CancellationToken tok;
     EXPECT(tok.requested() == false);
 }
 
 void test_AtomicFlagFlipsRequested() {
     std::cout << "[2] Atomic flag drives requested()" << std::endl;
     std::atomic<int32_t> flag{0};
-    nxr::compute::CancellationToken tok(&flag);
+    nxr::core::CancellationToken tok(&flag);
     EXPECT(tok.requested() == false);
     flag.store(1, std::memory_order_relaxed);
     EXPECT(tok.requested() == true);
@@ -132,7 +132,7 @@ void test_AtomicFlagFlipsRequested() {
 void test_FunctionPollerIsInvoked() {
     std::cout << "[3] Function poller is invoked" << std::endl;
     int callCount = 0;
-    nxr::compute::CancellationToken tok([&callCount]() {
+    nxr::core::CancellationToken tok([&callCount]() {
         callCount++;
         return callCount >= 3;
     });
@@ -143,43 +143,43 @@ void test_FunctionPollerIsInvoked() {
 }
 
 void test_SolveCancelledBeforeFactorization() {
-    std::cout << "[4] solveEigenmodes throws Cancelled when flag pre-set" << std::endl;
-    auto m = makeIcosahedron();
-    int nV = static_cast<int>(m.vertices.size() / 3);
-    int nF = static_cast<int>(m.faces.size() / 3);
+    std::cout << "[4] solve throws Cancelled when flag pre-set" << std::endl;
+    auto mesh = makeIcosahedron();
+    int nV = static_cast<int>(mesh.vertices.size() / 3);
+    int nF = static_cast<int>(mesh.faces.size() / 3);
 
-    nxr::compute::ComputeContext ctx(m.vertices.data(), nV, m.faces.data(), nF);
-    auto ops = nxr::compute::assembleMeshOperators(ctx);
+    nxr::manifold::Manifold m(mesh.vertices.data(), nV, mesh.faces.data(), nF);
+    auto ops = nxr::manifold::ops::assembleManifoldOperators(m);
 
     std::atomic<int32_t> flag{1};  // already cancelled
-    nxr::compute::CancellationToken tok(&flag);
+    nxr::core::CancellationToken tok(&flag);
 
     bool threw = false;
-    nxr::compute::ErrorCode code = nxr::compute::ErrorCode::InternalError;
+    nxr::core::ErrorCode code = nxr::core::ErrorCode::InternalError;
     try {
-        nxr::compute::solveEigenmodes(ops.cotanLaplacian, ops.mass, 6, -1e-8, tok);
-    } catch (const nxr::compute::Error& e) {
+        nxr::manifold::solve::eigen(ops.cotanLaplacian, ops.mass, 6, -1e-8, /*normalize=*/false, /*removeDC=*/false, tok);
+    } catch (const nxr::core::Error& e) {
         threw = true;
         code = e.code();
     }
     EXPECT(threw);
-    EXPECT(code == nxr::compute::ErrorCode::Cancelled);
+    EXPECT(code == nxr::core::ErrorCode::Cancelled);
 }
 
 void test_SolveCancelledMidIteration() {
-    std::cout << "[5] solveEigenmodes throws Cancelled when flag flips mid-solve" << std::endl;
-    auto m = subdivide(makeIcosahedron());  // 162 verts, enough for measurable solve
-    int nV = static_cast<int>(m.vertices.size() / 3);
-    int nF = static_cast<int>(m.faces.size() / 3);
+    std::cout << "[5] solve throws Cancelled when flag flips mid-solve" << std::endl;
+    auto mesh = subdivide(makeIcosahedron());  // 162 verts, enough for measurable solve
+    int nV = static_cast<int>(mesh.vertices.size() / 3);
+    int nF = static_cast<int>(mesh.faces.size() / 3);
 
-    nxr::compute::ComputeContext ctx(m.vertices.data(), nV, m.faces.data(), nF);
-    auto ops = nxr::compute::assembleMeshOperators(ctx);
+    nxr::manifold::Manifold m(mesh.vertices.data(), nV, mesh.faces.data(), nF);
+    auto ops = nxr::manifold::ops::assembleManifoldOperators(m);
 
     // Function-based token: returns true after the first perform_op call,
     // so cancellation fires inside Spectra's iteration. This isolates the
     // test from threading races and is bit-deterministic.
     int callCount = 0;
-    nxr::compute::CancellationToken tok([&callCount]() {
+    nxr::core::CancellationToken tok([&callCount]() {
         // The eigensolver checks once before factorization; let that pass.
         // Then the wrapper checks once per perform_op; cancel on the
         // first such check.
@@ -188,35 +188,35 @@ void test_SolveCancelledMidIteration() {
     });
 
     bool threw = false;
-    nxr::compute::ErrorCode code = nxr::compute::ErrorCode::InternalError;
+    nxr::core::ErrorCode code = nxr::core::ErrorCode::InternalError;
     try {
-        nxr::compute::solveEigenmodes(ops.cotanLaplacian, ops.mass, 20, -1e-8, tok);
-    } catch (const nxr::compute::Error& e) {
+        nxr::manifold::solve::eigen(ops.cotanLaplacian, ops.mass, 20, -1e-8, /*normalize=*/false, /*removeDC=*/false, tok);
+    } catch (const nxr::core::Error& e) {
         threw = true;
         code = e.code();
     }
     EXPECT(threw);
-    EXPECT(code == nxr::compute::ErrorCode::Cancelled);
+    EXPECT(code == nxr::core::ErrorCode::Cancelled);
     std::cout << "    poller calls before cancel: " << callCount << std::endl;
 }
 
 void test_SolveSucceedsWithIdleToken() {
-    std::cout << "[6] solveEigenmodes succeeds when token is never set" << std::endl;
-    auto m = makeIcosahedron();
-    int nV = static_cast<int>(m.vertices.size() / 3);
-    int nF = static_cast<int>(m.faces.size() / 3);
+    std::cout << "[6] solve succeeds when token is never set" << std::endl;
+    auto mesh = makeIcosahedron();
+    int nV = static_cast<int>(mesh.vertices.size() / 3);
+    int nF = static_cast<int>(mesh.faces.size() / 3);
 
-    nxr::compute::ComputeContext ctx(m.vertices.data(), nV, m.faces.data(), nF);
-    auto ops = nxr::compute::assembleMeshOperators(ctx);
+    nxr::manifold::Manifold m(mesh.vertices.data(), nV, mesh.faces.data(), nF);
+    auto ops = nxr::manifold::ops::assembleManifoldOperators(m);
 
     std::atomic<int32_t> flag{0};
-    nxr::compute::CancellationToken tok(&flag);
+    nxr::core::CancellationToken tok(&flag);
 
     bool ok = false;
     try {
-        auto result = nxr::compute::solveEigenmodes(ops.cotanLaplacian, ops.mass, 6, -1e-8, tok);
+        auto result = nxr::manifold::solve::eigen(ops.cotanLaplacian, ops.mass, 6, -1e-8, /*normalize=*/false, /*removeDC=*/false, tok);
         ok = (result.k > 0);
-    } catch (const nxr::compute::Error&) {
+    } catch (const nxr::core::Error&) {
         ok = false;
     }
     EXPECT(ok);

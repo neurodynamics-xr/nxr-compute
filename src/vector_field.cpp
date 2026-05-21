@@ -5,10 +5,12 @@
 
 #include <iostream>
 
-namespace nxr::compute {
+namespace nxr::field::interp {
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
+using nxr::manifold::Manifold;
+using nxr::manifold::ops::DECOperators;
 
 // ─── Whitney interpolation: 1-form (edges) → face vectors ────
 //
@@ -25,14 +27,14 @@ using namespace geometrycentral::surface;
 // and c_* are the oriented 1-form values on each edge (with sign flipped
 // if the halfedge traversal direction is opposite to the edge's canonical
 // direction).
-Eigen::MatrixXd whitneyInterpolate(
-    ComputeContext& ctx,
+Eigen::MatrixXd whitney(
+    Manifold& m,
     const DECOperators& /*dec*/,  // unused here; we use raw halfedge iteration
     const Eigen::VectorXd& oneForm
 ) {
-    auto& mesh = ctx.mesh();
-    auto& geom = ctx.geometry();
-    int nF = ctx.nF();
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
+    int nF = m.nF();
 
     geom.requireFaceNormals();
     geom.requireFaceAreas();
@@ -82,6 +84,14 @@ Eigen::MatrixXd whitneyInterpolate(
     return out;
 }
 
+} // namespace nxr::field::interp
+
+namespace nxr::field::op {
+
+using namespace geometrycentral;
+using namespace geometrycentral::surface;
+using nxr::manifold::Manifold;
+
 // ─── Scalar gradient: vertex scalar field → face vectors ─────
 //
 // For a triangle with vertices (i, j, k) and face normal N, area A:
@@ -89,13 +99,13 @@ Eigen::MatrixXd whitneyInterpolate(
 // Equivalently, the gradient is constant on each triangle:
 //   ∇u = (1 / 2A) [ u_i (N × e_jk) + u_j (N × e_ki) + u_k (N × e_ij) ]
 // where e_jk, e_ki, e_ij are edges OPPOSITE to vertex i, j, k respectively.
-Eigen::MatrixXd scalarGradient(
-    ComputeContext& ctx,
+Eigen::MatrixXd gradient(
+    Manifold& m,
     const Eigen::VectorXd& u
 ) {
-    auto& mesh = ctx.mesh();
-    auto& geom = ctx.geometry();
-    int nF = ctx.nF();
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
+    int nF = m.nF();
 
     geom.requireFaceNormals();
     geom.requireFaceAreas();
@@ -136,8 +146,8 @@ Eigen::MatrixXd scalarGradient(
         out(fi, 2) = grad.z;
     }
 
-    std::cout << "[vector_field] scalarGradient: " << nF << " face vectors" << std::endl;
+    std::cout << "[vector_field] gradient: " << nF << " face vectors" << std::endl;
     return out;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::field::op

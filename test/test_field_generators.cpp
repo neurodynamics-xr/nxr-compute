@@ -4,12 +4,12 @@
  *
  * The headline test (Section 4) is the geometry-processing-js demo
  * pattern: synthesize ω from independent α and β contributions, run
- * hodgeDecompose, verify the algorithm recovers what was put in.
+ * hodge, verify the algorithm recovers what was put in.
  * This is the first piece of correctness validation we have for
- * hodgeDecompose itself — until now the test exercised it without
+ * hodge itself — until now the test exercised it without
  * checking the answer.
  *
- * Tolerance note: hodgeDecompose uses regularized factors
+ * Tolerance note: hodge uses regularized factors
  * (CholeskyCache::kRegularization = 1e-8). The recovered components
  * differ from truth by O(ε / λ_1) in the eigenbasis of the
  * vertex Laplacian A = d0ᵀ★₁d0. For the icosahedron λ_1 = 2, so
@@ -26,7 +26,20 @@
 #include <iostream>
 #include <vector>
 
-using namespace nxr::compute;
+using namespace nxr::manifold;
+using namespace nxr::manifold::solve;
+using namespace nxr::manifold::ops;
+using namespace nxr::manifold::ops::laplacian::connection;
+using namespace nxr::manifold::transport;
+using namespace nxr::manifold::connection;
+using namespace nxr::manifold::parametrization;
+using namespace nxr::manifold::parametrization::stripes;
+using namespace nxr::manifold::geometry;
+using namespace nxr::manifold::query;
+using namespace nxr::field::generate;
+using namespace nxr::field::interp;
+using namespace nxr::field::op;
+using namespace nxr::field::extract;
 
 #define REQUIRE(cond, msg) do { \
     if (!(cond)) { \
@@ -66,35 +79,35 @@ int main() {
     int nV = static_cast<int>(V.size() / 3);
     int nF = static_cast<int>(F.size() / 3);
 
-    ComputeContext ctx(V.data(), nV, F.data(), nF);
-    auto ops = assembleMeshOperators(ctx);
-    auto dec = assembleDECOperators(ctx);
-    int nE = ctx.nE();
+    Manifold m(V.data(), nV, F.data(), nF);
+    auto ops = assembleManifoldOperators(m);
+    auto dec = assembleDECOperators(m);
+    int nE = m.nE();
 
     // ── 1. Delta ─────────────────────────────────────────────
     {
         std::map<int, double> sources = {{0, 1.0}, {3, -1.0}};
-        auto d = generateDelta(nV, sources);
+        auto d = delta(nV, sources);
         REQUIRE(d.size() == nV, "delta has correct size");
         REQUIRE(d(0) == 1.0, "delta source value");
         REQUIRE(d(3) == -1.0, "delta sink value");
         REQUIRE(d(1) == 0.0 && d(2) == 0.0, "delta zero elsewhere");
         REQUIRE(d.norm() == std::sqrt(2.0), "delta norm");
-        std::cout << "  [1] generateDelta ✓" << std::endl;
+        std::cout << "  [1] delta ✓" << std::endl;
     }
 
     // ── 2. Random scalars: bounds + reproducibility ──────────
     {
-        auto a1 = generateRandomVertexScalar(nV, 7);
-        auto a2 = generateRandomVertexScalar(nV, 7);
-        auto a3 = generateRandomVertexScalar(nV, 8);
+        auto a1 = randomVertexScalar(nV, 7);
+        auto a2 = randomVertexScalar(nV, 7);
+        auto a3 = randomVertexScalar(nV, 8);
         REQUIRE((a1 - a2).cwiseAbs().maxCoeff() == 0.0,
                 "same seed → identical output");
         REQUIRE((a1 - a3).norm() > 0.1,
                 "different seed → different output");
         REQUIRE(a1.cwiseAbs().maxCoeff() <= 1.0, "vertex scalar in [-1, 1]");
 
-        auto b1 = generateRandomFaceScalar(nF, 7);
+        auto b1 = randomFaceScalar(nF, 7);
         REQUIRE(b1.size() == nF, "face scalar correct size");
         REQUIRE(b1.cwiseAbs().maxCoeff() <= 1.0, "face scalar in [-1, 1]");
 
@@ -104,8 +117,8 @@ int main() {
     // ── 3. Eigenmode field: extract column k ─────────────────
     {
         // Solve a few eigenmodes so we have something to extract from.
-        auto eig = solveEigenmodes(ops.cotanLaplacian, ops.mass, 6);
-        auto phi3 = generateEigenmodeField(eig, 3);
+        auto eig = solve::eigen(ops.cotanLaplacian, ops.mass, 6);
+        auto phi3 = eigenmodeField(eig, 3);
         REQUIRE(phi3.size() == nV, "eigenmode field has nV entries");
         REQUIRE((phi3 - eig.eigenvectors.col(3)).cwiseAbs().maxCoeff() == 0.0,
                 "eigenmode field equals column k");
@@ -113,13 +126,13 @@ int main() {
         // Out-of-range should throw Error(InvalidInput)
         bool threw = false;
         ErrorCode caughtCode = ErrorCode::InternalError;
-        try { (void)generateEigenmodeField(eig, 999); }
+        try { (void)eigenmodeField(eig, 999); }
         catch (const Error& e) { threw = true; caughtCode = e.code(); }
         REQUIRE(threw, "eigenmode index out of range throws");
         REQUIRE(caughtCode == ErrorCode::InvalidInput,
                 "out-of-range error has InvalidInput code");
 
-        std::cout << "  [3] generateEigenmodeField ✓" << std::endl;
+        std::cout << "  [3] eigenmodeField ✓" << std::endl;
     }
 
     // ── 4. Hodge validation — the headline test ──────────────
@@ -129,19 +142,19 @@ int main() {
     // and seed+1 for β, so we can independently reconstruct the
     // expected dα and δβ.
     //
-    // Then run hodgeDecompose and verify recovery within tolerance.
+    // Then run hodge and verify recovery within tolerance.
     {
         const unsigned seed = 31;
         const double aStrength = 1.5;
         const double bStrength = 0.7;
 
-        auto omega = generateRandomDecomposed1Form(
+        auto omega = randomDecomposed1Form(
             dec, nV, nE, nF, aStrength, bStrength, 0.0, seed);
 
         // Independently reconstruct what the generator built —
         // mirrors the generator's internal contract.
-        auto alphaRand = generateRandomVertexScalar(nV, seed);
-        auto betaRand  = generateRandomFaceScalar(nF, seed + 1);
+        auto alphaRand = randomVertexScalar(nV, seed);
+        auto betaRand  = randomFaceScalar(nF, seed + 1);
         Eigen::VectorXd dAlphaExpected   = aStrength * (dec.d0 * alphaRand);
         Eigen::VectorXd deltaBetaExpected = bStrength *
             dec.hodge1Inverse * (dec.d1.transpose() * betaRand);
@@ -153,9 +166,9 @@ int main() {
         std::cout << "  [4a] generator output matches contract (max|diff|="
                   << genErr << ") ✓" << std::endl;
 
-        // 4b. Run hodgeDecompose.
+        // 4b. Run hodge.
         CholeskyCache cache;
-        auto result = hodgeDecompose(ctx, dec, cache, omega);
+        auto result = hodge(m, dec, cache, omega);
 
         // 4c. Decomposition identity: ω == dα + δβ + γ algebraically.
         Eigen::VectorXd reconstructed =
@@ -194,8 +207,8 @@ int main() {
     // ── 5. Different strengths give different ω ──────────────
     // Sanity: cache isn't returning a fixed answer.
     {
-        auto omega1 = generateRandomDecomposed1Form(dec, nV, nE, nF, 1.0, 0.0, 0.0, 7);
-        auto omega2 = generateRandomDecomposed1Form(dec, nV, nE, nF, 0.0, 1.0, 0.0, 7);
+        auto omega1 = randomDecomposed1Form(dec, nV, nE, nF, 1.0, 0.0, 0.0, 7);
+        auto omega2 = randomDecomposed1Form(dec, nV, nE, nF, 0.0, 1.0, 0.0, 7);
         REQUIRE((omega1 - omega2).norm() > 0.1,
                 "pure-α and pure-β fields differ");
         std::cout << "  [5] α-only vs β-only fields differ ✓" << std::endl;
@@ -203,8 +216,8 @@ int main() {
 
     // ── Solve eigenmodes for the time-varying tests ──────────
     // Pipeline: solve → M-orthonormalize → removeDC. Same as the addon.
-    auto eigRaw = solveEigenmodes(ops.cotanLaplacian, ops.mass, 6);
-    eigRaw.eigenvectors = normalizeEigenmodes(eigRaw.eigenvectors, ops.mass);
+    auto eigRaw = solve::eigen(ops.cotanLaplacian, ops.mass, 6);
+    eigRaw.eigenvectors = solve::normalize(eigRaw.eigenvectors, ops.mass);
     auto eig = removeDC(eigRaw);
     int K = eig.k;
     REQUIRE(K == 5, "icosahedron yields 5 non-DC modes from k=6");
@@ -213,10 +226,10 @@ int main() {
     {
         // Initial condition is a single eigenmode → expected evolution
         // is exact spectral decay: u(t) = exp(-α t λ_k) · φ_k.
-        Eigen::VectorXd u0 = generateEigenmodeField(eig, 0);
+        Eigen::VectorXd u0 = eigenmodeField(eig, 0);
         std::vector<double> ts = {0.0, 0.1, 0.5, 2.0};
         double alpha = 1.0;
-        auto heat = generateHeatDiffusion(ops, eig, u0, ts, alpha);
+        auto heat = heatDiffusion(ops, eig, u0, ts, alpha);
 
         REQUIRE(heat.rows() == 4 && heat.cols() == nV,
                 "heat output shape [T, nV]");
@@ -240,9 +253,9 @@ int main() {
     {
         // Non-zero-mean initial condition: a single positive delta.
         std::map<int, double> sources = {{0, 1.0}};
-        Eigen::VectorXd u0 = generateDelta(nV, sources);
+        Eigen::VectorXd u0 = delta(nV, sources);
         std::vector<double> ts = {0.0, 0.1, 1.0, 10.0, 100.0};
-        auto heat = generateHeatDiffusion(ops, eig, u0, ts, 1.0);
+        auto heat = heatDiffusion(ops, eig, u0, ts, 1.0);
 
         double initialMean = (ops.mass * u0).sum() / ops.totalArea;
         for (size_t ti = 0; ti < ts.size(); ti++) {
@@ -266,7 +279,7 @@ int main() {
     {
         std::vector<double> ts = {0.0, 0.5, 1.0, 2.0};
         double amp = 1.5, gamma = 0.3, phase = 0.0;
-        auto wave = generateDampedWave(eig,
+        auto wave = dampedWave(eig,
             {0}, {amp}, {gamma}, {phase}, ts);
 
         REQUIRE(wave.rows() == 4 && wave.cols() == nV,
@@ -274,7 +287,7 @@ int main() {
 
         double lambda0 = eig.eigenvalues(0);
         double omega0 = std::sqrt(lambda0);
-        Eigen::VectorXd phi0 = generateEigenmodeField(eig, 0);
+        Eigen::VectorXd phi0 = eigenmodeField(eig, 0);
 
         for (size_t ti = 0; ti < ts.size(); ti++) {
             double t = ts[ti];
@@ -293,12 +306,12 @@ int main() {
     {
         // At t=0 with phases=0, output should be the literal
         // weighted superposition of the chosen eigenmodes.
-        auto wave = generateDampedWave(eig,
+        auto wave = dampedWave(eig,
             {0, 2}, {1.0, 0.5}, {0.0, 0.0}, {0.0, 0.0},
             {0.0});
         Eigen::VectorXd expected =
-            1.0 * generateEigenmodeField(eig, 0)
-          + 0.5 * generateEigenmodeField(eig, 2);
+            1.0 * eigenmodeField(eig, 0)
+          + 0.5 * eigenmodeField(eig, 2);
         Eigen::VectorXd uActual = wave.row(0).cast<double>();
         double err = (uActual - expected).cwiseAbs().maxCoeff();
         REQUIRE(err < 1e-6, "wave: multi-mode superposition at t=0");
@@ -313,7 +326,7 @@ int main() {
         double lambda0 = eig.eigenvalues(0);
         double period = 2.0 * M_PI / std::sqrt(lambda0);
         std::vector<double> ts = {0.0, period};
-        auto wave = generateDampedWave(eig,
+        auto wave = dampedWave(eig,
             {0}, {1.0}, {0.0}, {0.0}, ts);
 
         Eigen::VectorXd u0 = wave.row(0).cast<double>();

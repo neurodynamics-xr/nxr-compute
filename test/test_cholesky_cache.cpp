@@ -20,7 +20,20 @@
 #include <vector>
 #include <cmath>
 
-using namespace nxr::compute;
+using namespace nxr::manifold;
+using namespace nxr::manifold::solve;
+using namespace nxr::manifold::ops;
+using namespace nxr::manifold::ops::laplacian::connection;
+using namespace nxr::manifold::transport;
+using namespace nxr::manifold::connection;
+using namespace nxr::manifold::parametrization;
+using namespace nxr::manifold::parametrization::stripes;
+using namespace nxr::manifold::geometry;
+using namespace nxr::manifold::query;
+using namespace nxr::field::generate;
+using namespace nxr::field::interp;
+using namespace nxr::field::op;
+using namespace nxr::field::extract;
 
 // Same icosahedron mesh used by test_eigen.cpp — small enough to keep
 // the test fast, large enough that the matrices are non-trivial.
@@ -61,9 +74,9 @@ int main() {
     int nV = static_cast<int>(V.size() / 3);
     int nF = static_cast<int>(F.size() / 3);
 
-    ComputeContext ctx(V.data(), nV, F.data(), nF);
-    auto ops = assembleMeshOperators(ctx);
-    auto dec = assembleDECOperators(ctx);
+    Manifold m(V.data(), nV, F.data(), nF);
+    auto ops = assembleManifoldOperators(m);
+    auto dec = assembleDECOperators(m);
 
     // ── 1. Cache hit returns same reference ──────────────────
     {
@@ -136,9 +149,9 @@ int main() {
     // ── 3. Repeat Hodge with same ω — bit-identical output ───
     {
         CholeskyCache cache;
-        auto omega = generateRandomOmega(ctx.nE(), 7);
-        auto h1 = hodgeDecompose(ctx, dec, cache, omega);
-        auto h2 = hodgeDecompose(ctx, dec, cache, omega);
+        auto omega = randomOmega(m.nE(), 7);
+        auto h1 = hodge(m, dec, cache, omega);
+        auto h2 = hodge(m, dec, cache, omega);
         double dAlpha = (h1.dAlpha - h2.dAlpha).cwiseAbs().maxCoeff();
         double dBeta  = (h1.deltaBeta - h2.deltaBeta).cwiseAbs().maxCoeff();
         double dGamma = (h1.gamma - h2.gamma).cwiseAbs().maxCoeff();
@@ -152,10 +165,10 @@ int main() {
     // Sanity check that the cache isn't returning a stale solve.
     {
         CholeskyCache cache;
-        auto omegaA = generateRandomOmega(ctx.nE(), 7);
-        auto omegaB = generateRandomOmega(ctx.nE(), 8);
-        auto hA = hodgeDecompose(ctx, dec, cache, omegaA);
-        auto hB = hodgeDecompose(ctx, dec, cache, omegaB);
+        auto omegaA = randomOmega(m.nE(), 7);
+        auto omegaB = randomOmega(m.nE(), 8);
+        auto hA = hodge(m, dec, cache, omegaA);
+        auto hB = hodge(m, dec, cache, omegaB);
         double diff = (hA.dAlpha - hB.dAlpha).norm();
         REQUIRE(diff > 1e-6, "different ω must yield different dα");
         std::cout << "  [4] different ω yields different output (||Δdα||="

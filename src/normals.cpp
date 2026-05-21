@@ -6,7 +6,7 @@
 #include <iostream>
 #include <cmath>
 
-namespace nxr::compute {
+namespace nxr::manifold::geometry {
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
@@ -18,10 +18,10 @@ static Vector3 halfedgeVector(VertexPositionGeometry& geom, Halfedge h) {
     return tip - tail;
 }
 
-Eigen::MatrixXd computeVertexNormals(ComputeContext& ctx, NormalType type) {
-    auto& mesh = ctx.mesh();
-    auto& geometry = ctx.geometry();
-    int nV = ctx.nV();
+Eigen::MatrixXd normals(Manifold& m, NormalType type) {
+    auto& mesh = m.mesh();
+    auto& geometry = m.geometry();
+    int nV = m.nV();
 
     geometry.requireFaceNormals();
     geometry.requireFaceAreas();
@@ -124,4 +124,4 @@ Eigen::MatrixXd computeVertexNormals(ComputeContext& ctx, NormalType type) {
     return normals;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::geometry

@@ -2,7 +2,7 @@
  * nxr_compute_wasm.cpp — Embind bindings exposing nxr-compute to JavaScript via WebAssembly.
  *
  * Mirrors the N-API addon's surface — same compute methods, same stateful
- * ComputeContext pattern, same data shapes — but built around Embind's
+ * Manifold pattern, same data shapes — but built around Embind's
  * idioms instead of N-API. Designed for browser apps (three.js, plain JS,
  * frameworks) that consume nxr-compute as a portable compute backend.
  *
@@ -14,7 +14,7 @@
  *   • Sparse: returned as JS objects { row, col, data, rows, cols } in COO.
  *   • Structs (HodgeResult, EigenResult, …): returned as JS objects.
  *
- * The class `ContextWrapper` caches MeshOperators, DECOperators,
+ * The class `ContextWrapper` caches ManifoldOperators, DECOperators,
  * CholeskyCache, and EigenResult on the C++ side — same pattern as the
  * addon's ContextHolder. This means a Hodge solve after a Poisson solve
  * doesn't refactor the cotan Laplacian.
@@ -53,33 +53,23 @@ val eigenVectorToVal(const Eigen::VectorXd& v) {
     return toJsArrayCopy(v.data(), static_cast<std::size_t>(v.size()));
 }
 
-/** Any Eigen matrix expression → row-major flat JS typed array,
- *  suitable for V×3 / F×3 attributes (each row is one (x, y, z)
- *  triple — directly consumable as a three.js BufferAttribute) and
- *  for V×K eigenvectors (the vMajor / §11 layout). Templated so a
- *  single call site handles both column-major sources (the default
- *  Eigen::MatrixXd, e.g. eigenvectors) and row-major sources
- *  (`MeshOperators::vertexNormals`, declared as
- *  `Matrix<double, Dynamic, 3, RowMajor>`). Eigen short-circuits
- *  the assignment to a vectorised memcpy when the source layout
- *  already matches. */
-template <typename Derived>
-val eigenMatrixToVal(const Eigen::MatrixBase<Derived>& m) {
-    using Scalar = typename Derived::Scalar;
-    Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
+/** Eigen MatrixXd → row-major flat, suitable for V×3 / F×3 attributes
+ *  where each row is one (x, y, z) triple — directly consumable as a
+ *  three.js BufferAttribute. */
+val eigenMatrixToVal(const Eigen::MatrixXd& m) {
+    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
         rowMajor = m;
     return toJsArrayCopy(rowMajor.data(),
         static_cast<std::size_t>(rowMajor.rows()) * rowMajor.cols());
 }
 
 // Per nxr-compute.h's hard layout rule (vMajor for eigenvectors), all
-// V×K matrices flatten row-major into JS just like V×3 / F×3. The
-// previous column-major helper was removed in Phase A — the Zarr
-// schema and renderer both consume vMajor (U[v*K + k]). Float32
-// variant kept as a separate name because Embind's auto-deduction
-// needs a stable function symbol.
-template <typename Derived>
-val eigenMatrixFloat32ToVal(const Eigen::MatrixBase<Derived>& m) {
+// V×K matrices flatten row-major into JS just like V×3 / F×3.
+// Use eigenMatrixToVal above. The previous column-major helper
+// was removed in Phase A — the Zarr schema and renderer both
+// consume vMajor (U[v*K + k]).
+
+val eigenMatrixFloat32ToVal(const Eigen::MatrixXf& m) {
     Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
         rowMajor = m;
     return toJsArrayCopy(rowMajor.data(),
@@ -87,19 +77,9 @@ val eigenMatrixFloat32ToVal(const Eigen::MatrixBase<Derived>& m) {
 }
 
 val sparseToVal(const Eigen::SparseMatrix<double>& M) {
-    // Note on copies: the canonical Embind pattern for returning typed
-    // arrays from wasm is `typed_memory_view(...)` + `.slice()`, where
-    // slice() detaches the JS array from the wasm heap. The slice step
-    // is structurally required. We sidestep `std::vector<T>(nnz)`'s
-    // unwanted zero-initialization pass by allocating uninitialized
-    // heap buffers via `new T[nnz]` (default-initialization = no-op for
-    // trivial types), then writing each entry exactly once during the
-    // CSC walk. Net cost per sparse return: 3 heap allocs + 3 fills +
-    // 3 slice memcpys.
     int nnz = static_cast<int>(M.nonZeros());
-    std::unique_ptr<int32_t[]> rows{new int32_t[nnz]};
-    std::unique_ptr<int32_t[]> cols{new int32_t[nnz]};
-    std::unique_ptr<double[]>  vals{new double[nnz]};
+    std::vector<int32_t> rows(nnz), cols(nnz);
+    std::vector<double>  vals(nnz);
     int k = 0;
     for (int outer = 0; outer < M.outerSize(); outer++) {
         for (Eigen::SparseMatrix<double>::InnerIterator it(M, outer); it; ++it) {
@@ -110,24 +90,21 @@ val sparseToVal(const Eigen::SparseMatrix<double>& M) {
         }
     }
     val obj = val::object();
-    obj.set("row",  toJsArrayCopy(rows.get(), nnz));
-    obj.set("col",  toJsArrayCopy(cols.get(), nnz));
-    obj.set("data", toJsArrayCopy(vals.get(), nnz));
+    obj.set("row",  toJsArrayCopy(rows.data(), nnz));
+    obj.set("col",  toJsArrayCopy(cols.data(), nnz));
+    obj.set("data", toJsArrayCopy(vals.data(), nnz));
     obj.set("rows", static_cast<int>(M.rows()));
     obj.set("cols", static_cast<int>(M.cols()));
     obj.set("nnz",  nnz);
     return obj;
 }
 
-// Complex sparse → COO with parallel real/imag arrays. Used by the
-// connection-Laplacian "complex" output format. Same uninitialized-
-// heap-buffer pattern as sparseToVal above.
+// Complex sparse → COO with parallel real/imag arrays.
+// Used by the connection-Laplacian "complex" output format.
 val sparseComplexToVal(const Eigen::SparseMatrix<std::complex<double>>& M) {
     int nnz = static_cast<int>(M.nonZeros());
-    std::unique_ptr<int32_t[]> rows{new int32_t[nnz]};
-    std::unique_ptr<int32_t[]> cols{new int32_t[nnz]};
-    std::unique_ptr<double[]>  re  {new double [nnz]};
-    std::unique_ptr<double[]>  im  {new double [nnz]};
+    std::vector<int32_t> rows(nnz), cols(nnz);
+    std::vector<double>  re(nnz), im(nnz);
     int k = 0;
     for (int outer = 0; outer < M.outerSize(); outer++) {
         for (Eigen::SparseMatrix<std::complex<double>>::InnerIterator it(M, outer); it; ++it) {
@@ -139,10 +116,10 @@ val sparseComplexToVal(const Eigen::SparseMatrix<std::complex<double>>& M) {
         }
     }
     val obj = val::object();
-    obj.set("row",       toJsArrayCopy(rows.get(), nnz));
-    obj.set("col",       toJsArrayCopy(cols.get(), nnz));
-    obj.set("realData",  toJsArrayCopy(re.get(), nnz));
-    obj.set("imagData",  toJsArrayCopy(im.get(), nnz));
+    obj.set("row",       toJsArrayCopy(rows.data(), nnz));
+    obj.set("col",       toJsArrayCopy(cols.data(), nnz));
+    obj.set("realData",  toJsArrayCopy(re.data(), nnz));
+    obj.set("imagData",  toJsArrayCopy(im.data(), nnz));
     obj.set("rows",      static_cast<int>(M.rows()));
     obj.set("cols",      static_cast<int>(M.cols()));
     obj.set("nnz",       nnz);
@@ -169,7 +146,7 @@ std::vector<double> valToDoubleVector(const val& jsArr) {
 
 } // namespace
 
-// ── ComputeContext wrapper class ─────────────────────────────
+// ── Manifold wrapper class ─────────────────────────────
 //
 // Stateful: caches operators / DEC / Cholesky / eigenmodes after first
 // compute, mirroring the addon's ContextHolder pattern. JS holds an
@@ -177,76 +154,32 @@ std::vector<double> valToDoubleVector(const val& jsArr) {
 
 class ContextWrapper {
 public:
-    // Two constructors. The JS shim picks based on input size:
-    //   - `val`-taking ctor: convenient for small inputs; uses Embind's
-    //     element-by-element `convertJSArrayToNumberVector`.
-    //   - pointer-taking ctor (via `fromPointers` factory): caller has
-    //     already placed the data on the wasm heap (`Module._malloc` +
-    //     `HEAPF64.set(...)`) and passes the address as an integer.
-    //     Single memcpy into the geometry-central internals — the
-    //     fast path for cortical-sized meshes (V≈165k).
-    //
-    // Either way, the input buffers are NOT retained on the wrapper —
-    // `nxr::compute::ComputeContext` copies into its own (geometry-
-    // central VertexData / halfedge) storage during construction, so
-    // the inputs are dead after this. Holding them on the class would
-    // leak ~5–10 MB per cortex-sized context.
     ContextWrapper(val verticesArr, val facesArr) {
-        std::vector<double> verts =
-            emscripten::convertJSArrayToNumberVector<double>(verticesArr);
-        std::vector<int>    faces =
-            emscripten::convertJSArrayToNumberVector<int>(facesArr);
+        verts_ = emscripten::convertJSArrayToNumberVector<double>(verticesArr);
+        faces_ = emscripten::convertJSArrayToNumberVector<int>(facesArr);
 
-        if (verts.size() % 3 != 0) {
+        if (verts_.size() % 3 != 0) {
             throw std::invalid_argument("vertices length must be a multiple of 3");
         }
-        if (faces.size() % 3 != 0) {
+        if (faces_.size() % 3 != 0) {
             throw std::invalid_argument("faces length must be a multiple of 3");
         }
 
-        int nV = static_cast<int>(verts.size() / 3);
-        int nF = static_cast<int>(faces.size() / 3);
+        int nV = static_cast<int>(verts_.size() / 3);
+        int nF = static_cast<int>(faces_.size() / 3);
 
-        // nxr::compute::ComputeContext takes int32_t* for faces; convert
-        // since convertJSArrayToNumberVector<int> may use a different
-        // underlying integer width on some platforms.
-        std::vector<int32_t> faces32(faces.size());
-        for (std::size_t i = 0; i < faces.size(); i++) {
-            faces32[i] = static_cast<int32_t>(faces[i]);
+        // nxr::manifold::Manifold takes int32_t* for faces; copy into the
+        // canonical type since convertJSArrayToNumberVector<int> may
+        // produce a different underlying integer width on some platforms.
+        faces32_.resize(faces_.size());
+        for (std::size_t i = 0; i < faces_.size(); i++) {
+            faces32_[i] = static_cast<int32_t>(faces_[i]);
         }
 
-        construct_(verts.data(), nV, faces32.data(), nF);
+        ctx_ = std::make_unique<nxr::manifold::Manifold>(
+            verts_.data(), nV, faces32_.data(), nF);
+        cache_ = std::make_unique<nxr::manifold::ops::CholeskyCache>();
     }
-
-    // Zero-extra-copy fast path for callers who placed the vertex /
-    // face buffers on the wasm heap themselves. The JS shim wraps this
-    // via `Module._malloc` + `HEAPF64.set`/`HEAP32.set` + free.
-    // `vertsAddr` must point to nV*3 contiguous doubles; `facesAddr`
-    // must point to nF*3 contiguous int32s.
-    static ContextWrapper* fromPointers(uintptr_t vertsAddr, int nV,
-                                        uintptr_t facesAddr, int nF) {
-        if (nV <= 0 || nF <= 0) {
-            throw std::invalid_argument("fromPointers: nV / nF must be positive");
-        }
-        auto* w = new ContextWrapper{};
-        w->construct_(reinterpret_cast<const double*>(vertsAddr),  nV,
-                      reinterpret_cast<const int32_t*>(facesAddr), nF);
-        return w;
-    }
-
-private:
-    // Empty ctor for the static factory path. The val-taking public
-    // ctor uses the regular initialization order.
-    ContextWrapper() = default;
-
-    void construct_(const double* vertsPtr, int nV,
-                    const int32_t* facesPtr, int nF) {
-        ctx_ = std::make_unique<nxr::compute::ComputeContext>(
-            vertsPtr, nV, facesPtr, nF);
-        cache_ = std::make_unique<nxr::compute::CholeskyCache>();
-    }
-
-public:
 
     int nV() const { return ctx_->nV(); }
     int nE() const { return ctx_->nE(); }
@@ -256,15 +189,15 @@ public:
 
     // Optional `variantName` accepts "voronoi" (default), "barycentric",
     // or "full". Empty string → default. Switching variants invalidates
-    // the cached MeshOperators (and any cached factor that depended on
+    // the cached ManifoldOperators (and any cached factor that depended on
     // the previous mass).
-    val assembleMeshOperators(const std::string& variantName) {
-        nxr::compute::MassMatrixVariant variant = variantName.empty()
-            ? nxr::compute::MassMatrixVariant::Voronoi
-            : nxr::compute::parseMassMatrixVariant(variantName);
+    val assembleManifoldOperators(const std::string& variantName) {
+        nxr::manifold::ops::MassMatrixVariant variant = variantName.empty()
+            ? nxr::manifold::ops::MassMatrixVariant::Voronoi
+            : nxr::manifold::ops::parseMassMatrixVariant(variantName);
         if (!ops_ || ops_->massVariant != variant) {
-            ops_ = std::make_unique<nxr::compute::MeshOperators>(
-                nxr::compute::assembleMeshOperators(*ctx_, variant));
+            ops_ = std::make_unique<nxr::manifold::ops::ManifoldOperators>(
+                nxr::manifold::ops::assembleManifoldOperators(*ctx_, variant));
         }
         return meshOpsToVal();
     }
@@ -276,37 +209,37 @@ public:
 
     // Connection Laplacian on the chosen domain (vertex / face / edge).
     // Result-level cache keyed by (domain, nSym, regularization, format)
-    // — same pattern as computeSmoothFaceField (CLAUDE.md rule 9).
+    // — same pattern as smoothFace (CLAUDE.md rule 9).
     //
     // `opts` is a JS object: { domain?, nSym?, regularization?, format? }.
     // Defaults: { domain: 'vertex', nSym: 1, regularization: 1e-8, format: 'real2N' }.
     val assembleConnectionLaplacian(val opts) {
-        nxr::compute::ConnectionLaplacianOptions o;
+        nxr::manifold::ops::laplacian::connection::ConnectionLaplacianOptions o;
         if (!opts.isNull() && !opts.isUndefined()) {
             val domainV = opts["domain"];
             val nSymV   = opts["nSym"];
             val regV    = opts["regularization"];
             val fmtV    = opts["format"];
             if (!domainV.isUndefined())
-                o.domain = nxr::compute::parseConnectionDomain(domainV.as<std::string>());
+                o.domain = nxr::manifold::ops::laplacian::connection::parseConnectionDomain(domainV.as<std::string>());
             if (!nSymV.isUndefined())
                 o.nSym = nSymV.as<int>();
             if (!regV.isUndefined())
                 o.regularization = regV.as<double>();
             if (!fmtV.isUndefined())
-                o.format = nxr::compute::parseConnectionLaplacianFormat(fmtV.as<std::string>());
+                o.format = nxr::manifold::ops::laplacian::connection::parseConnectionLaplacianFormat(fmtV.as<std::string>());
         }
 
         const CLKey key{o.domain, o.nSym, o.regularization, o.format};
         auto it = clCache_.find(key);
         if (it == clCache_.end()) {
             try {
-                auto cl = std::make_shared<nxr::compute::ConnectionLaplacian>(
-                    nxr::compute::assembleConnectionLaplacian(*ctx_, o));
+                auto cl = std::make_shared<nxr::manifold::ops::laplacian::connection::ConnectionLaplacian>(
+                    nxr::manifold::ops::laplacian::connection::assembleConnectionLaplacian(*ctx_, o));
                 it = clCache_.emplace(key, std::move(cl)).first;
-            } catch (const nxr::compute::Error& e) {
+            } catch (const nxr::core::Error& e) {
                 std::string msg = "[";
-                msg += nxr::compute::errorCodeName(e.code());
+                msg += nxr::core::errorCodeName(e.code());
                 msg += "] ";
                 msg += e.what();
                 if (!e.hint().empty()) {
@@ -316,17 +249,17 @@ public:
                 throw std::runtime_error(msg);
             }
         }
-        const nxr::compute::ConnectionLaplacian& cl = *it->second;
+        const nxr::manifold::ops::laplacian::connection::ConnectionLaplacian& cl = *it->second;
 
         const char* domainStr =
-            cl.domain == nxr::compute::ConnectionDomain::Vertex              ? "vertex" :
-            cl.domain == nxr::compute::ConnectionDomain::Face                ? "face"   :
-            cl.domain == nxr::compute::ConnectionDomain::EdgeCrouzeixRaviart ? "edge"   : "?";
+            cl.domain == nxr::manifold::ops::laplacian::connection::ConnectionDomain::Vertex              ? "vertex" :
+            cl.domain == nxr::manifold::ops::laplacian::connection::ConnectionDomain::Face                ? "face"   :
+            cl.domain == nxr::manifold::ops::laplacian::connection::ConnectionDomain::EdgeCrouzeixRaviart ? "edge"   : "?";
         const char* formatStr =
-            cl.format == nxr::compute::ConnectionLaplacianFormat::Real2N ? "real2N" : "complex";
+            cl.format == nxr::manifold::ops::laplacian::connection::ConnectionLaplacianFormat::Real2N ? "real2N" : "complex";
 
         val out = val::object();
-        if (cl.format == nxr::compute::ConnectionLaplacianFormat::Real2N) {
+        if (cl.format == nxr::manifold::ops::laplacian::connection::ConnectionLaplacianFormat::Real2N) {
             out.set("K", sparseToVal(cl.K_real));
         } else {
             out.set("K", sparseComplexToVal(cl.K_complex));
@@ -340,8 +273,8 @@ public:
         return out;
     }
 
-    val computeFaceFrames() {
-        auto frames = nxr::compute::computeFaceFrames(*ctx_);
+    val frames() {
+        auto frames = nxr::manifold::geometry::frames(*ctx_);
         val obj = val::object();
         obj.set("e1",      eigenMatrixToVal(frames.e1));
         obj.set("e2",      eigenMatrixToVal(frames.e2));
@@ -349,9 +282,9 @@ public:
         return obj;
     }
 
-    val computeVertexNormals(int type) {
-        nxr::compute::NormalType nt = static_cast<nxr::compute::NormalType>(type);
-        Eigen::MatrixXd N = nxr::compute::computeVertexNormals(*ctx_, nt);
+    val normals(int type) {
+        nxr::manifold::geometry::NormalType nt = static_cast<nxr::manifold::geometry::NormalType>(type);
+        Eigen::MatrixXd N = nxr::manifold::geometry::normals(*ctx_, nt);
         return eigenMatrixToVal(N);
     }
 
@@ -367,21 +300,21 @@ public:
     //     to opt out. Layout: [iteration, totalIterations, residual×1e6].
     //
     // Errors land in JS as Error objects whose .message starts with
-    // "[CODE] " (where CODE is the nxr::compute::ErrorCode name, e.g. CANCELLED).
+    // "[CODE] " (where CODE is the nxr::core::ErrorCode name, e.g. CANCELLED).
     // A small parseError helper on the JS side recovers .code from the
     // message prefix; richer per-binding error mapping can land in a
     // future phase.
-    val solveEigenmodes(int k, double sigma,
+    val solve(int k, double sigma,
                         std::intptr_t cancelAddr,
                         std::intptr_t progressAddr,
                         int progressLen) {
         ensureOps();
 
-        nxr::compute::CancellationToken cancel = cancelAddr
-            ? nxr::compute::CancellationToken(reinterpret_cast<const std::atomic<int32_t>*>(cancelAddr))
-            : nxr::compute::CancellationToken{};
+        nxr::core::CancellationToken cancel = cancelAddr
+            ? nxr::core::CancellationToken(reinterpret_cast<const std::atomic<int32_t>*>(cancelAddr))
+            : nxr::core::CancellationToken{};
 
-        nxr::compute::ProgressObserver progress;
+        nxr::core::ProgressObserver progress;
         if (progressAddr && progressLen >= 3) {
             auto* base = reinterpret_cast<std::atomic<int32_t>*>(progressAddr);
             progress.iteration       = &base[0];
@@ -390,14 +323,15 @@ public:
         }
 
         try {
-            nxr::compute::EigenResult r = nxr::compute::solveEigenmodes(
-                ops_->cotanLaplacian, ops_->mass, k, sigma, cancel, progress);
+            nxr::manifold::solve::EigenResult r = nxr::manifold::solve::eigen(
+                ops_->cotanLaplacian, ops_->mass, k, sigma,
+                /*normalize=*/false, /*removeDC=*/false, cancel, progress);
             return eigenResultToVal(r);
-        } catch (const nxr::compute::Error& e) {
+        } catch (const nxr::core::Error& e) {
             // Prefix the message with the code so JS consumers can
             // pattern-match without losing the human-readable text.
             std::string msg = "[";
-            msg += nxr::compute::errorCodeName(e.code());
+            msg += nxr::core::errorCodeName(e.code());
             msg += "] ";
             msg += e.what();
             if (!e.hint().empty()) {
@@ -408,7 +342,7 @@ public:
         }
     }
 
-    val normalizeEigenmodes(val UJsArr, int rows, int cols) {
+    val normalize(val UJsArr, int rows, int cols) {
         ensureOps();
         auto vec = emscripten::convertJSArrayToNumberVector<double>(UJsArr);
         if (static_cast<int>(vec.size()) != rows * cols) {
@@ -421,13 +355,13 @@ public:
                 U(r, c) = vec[r * cols + c];
             }
         }
-        Eigen::MatrixXd Un = nxr::compute::normalizeEigenmodes(U, ops_->mass);
+        Eigen::MatrixXd Un = nxr::manifold::solve::normalize(U, ops_->mass);
         return eigenMatrixToVal(Un);
     }
 
     val removeDC(val eigStruct) {
-        nxr::compute::EigenResult r = valToEigenResult(eigStruct);
-        nxr::compute::EigenResult t = nxr::compute::removeDC(r);
+        nxr::manifold::solve::EigenResult r = valToEigenResult(eigStruct);
+        nxr::manifold::solve::EigenResult t = nxr::manifold::solve::removeDC(r);
         return eigenResultToVal(t);
     }
 
@@ -438,13 +372,12 @@ public:
         ensureOps();
         ensureDec();
 
-        nxr::compute::EigenResult eig = nxr::compute::solveEigenmodes(
-            ops_->cotanLaplacian, ops_->mass, k, sigma);
-        eig.eigenvectors = nxr::compute::normalizeEigenmodes(eig.eigenvectors, ops_->mass);
-        eig = nxr::compute::removeDC(eig);
-        eigCache_ = std::make_unique<nxr::compute::EigenResult>(eig);
+        nxr::manifold::solve::EigenResult eig = nxr::manifold::solve::eigen(
+            ops_->cotanLaplacian, ops_->mass, k, sigma,
+            /*normalize=*/true, /*removeDC=*/true);
+        eigCache_ = std::make_unique<nxr::manifold::solve::EigenResult>(eig);
 
-        auto frames = nxr::compute::computeFaceFrames(*ctx_);
+        auto frames = nxr::manifold::geometry::frames(*ctx_);
 
         val out = val::object();
         out.set("operators",  meshOpsToVal());
@@ -454,13 +387,13 @@ public:
         framesVal.set("e1",      eigenMatrixToVal(frames.e1));
         framesVal.set("e2",      eigenMatrixToVal(frames.e2));
         framesVal.set("normals", eigenMatrixToVal(frames.normals));
-        out.set("faceFrames", framesVal);
+        out.set("frames", framesVal);
         return out;
     }
 
     // ── Solvers ──────────────────────────────────────────────
 
-    val solvePoisson(val sourceVertsArr, val sourceValuesArr) {
+    val poisson(val sourceVertsArr, val sourceValuesArr) {
         ensureOps();
         auto verts = emscripten::convertJSArrayToNumberVector<int>(sourceVertsArr);
         auto vals  = emscripten::convertJSArrayToNumberVector<double>(sourceValuesArr);
@@ -469,29 +402,29 @@ public:
         }
         std::map<int, double> srcMap;
         for (std::size_t i = 0; i < verts.size(); i++) srcMap[verts[i]] = vals[i];
-        Eigen::VectorXd phi = nxr::compute::solvePoisson(*ops_, *cache_, srcMap);
+        Eigen::VectorXd phi = nxr::manifold::solve::poisson(*ops_, *cache_, srcMap);
         return eigenVectorToVal(phi);
     }
 
-    val computeGeodesicDistance(val sourceVertsArr) {
+    val heat(val sourceVertsArr) {
         ensureHeatGeo();
         auto sources = emscripten::convertJSArrayToNumberVector<int>(sourceVertsArr);
-        Eigen::VectorXd d = nxr::compute::computeGeodesicDistance(*heatGeo_, sources);
+        Eigen::VectorXd d = nxr::manifold::solve::heat(*heatGeo_, sources);
         return eigenVectorToVal(d);
     }
 
     val tracePath(int vStart, int vEnd) {
-        Eigen::MatrixXd path = nxr::compute::tracePath(*ctx_, vStart, vEnd);
+        Eigen::MatrixXd path = nxr::manifold::query::tracePath(*ctx_, vStart, vEnd);
         val out = val::object();
         out.set("positions", eigenMatrixToVal(path));
         out.set("nPoints",   static_cast<int>(path.rows()));
         return out;
     }
 
-    val hodgeDecompose(val omegaArr) {
+    val hodge(val omegaArr) {
         ensureDec();
         Eigen::VectorXd omega = valToEigenVector(omegaArr);
-        nxr::compute::HodgeResult h = nxr::compute::hodgeDecompose(*ctx_, *dec_, *cache_, omega);
+        nxr::manifold::solve::HodgeResult h = nxr::manifold::solve::hodge(*ctx_, *dec_, *cache_, omega);
         val o = val::object();
         o.set("exactPotential",     eigenVectorToVal(h.exactPotential));
         o.set("coExactPotentialV",  eigenVectorToVal(h.coExactPotentialV));
@@ -506,8 +439,8 @@ public:
         return o;
     }
 
-    val computeCurvatures() {
-        nxr::compute::CurvatureResult c = nxr::compute::computeCurvatures(*ctx_);
+    val curvatures() {
+        nxr::manifold::geometry::CurvatureResult c = nxr::manifold::geometry::curvatures(*ctx_);
         val o = val::object();
         o.set("gaussian",     eigenVectorToVal(c.gaussian));
         o.set("mean",         eigenVectorToVal(c.mean));
@@ -517,27 +450,27 @@ public:
         return o;
     }
 
-    val computeUVCoordinates() {
-        Eigen::MatrixXd uvs = nxr::compute::computeUVCoordinates(*ctx_);
+    val bff() {
+        Eigen::MatrixXd uvs = nxr::manifold::parametrization::bff(*ctx_);
         return eigenMatrixToVal(uvs);
     }
 
-    val computeIsolines(val scalarsArr, int numLevels, double minVal, double maxVal) {
+    val isoline(val scalarsArr, int numLevels, double minVal, double maxVal) {
         Eigen::VectorXd scalars = valToEigenVector(scalarsArr);
-        nxr::compute::IsolineResult r = nxr::compute::computeIsolines(*ctx_, scalars, numLevels, minVal, maxVal);
+        nxr::field::extract::IsolineResult r = nxr::field::extract::isoline(*ctx_, scalars, numLevels, minVal, maxVal);
         val out = val::object();
         out.set("positions",    eigenMatrixToVal(r.positions));
         out.set("segmentCount", r.segmentCount);
         return out;
     }
 
-    val computeDirectionField(val singVertsArr, val singValuesArr) {
+    val trivial(val singVertsArr, val singValuesArr) {
         ensureDec();
         auto verts = emscripten::convertJSArrayToNumberVector<int>(singVertsArr);
         auto vals  = emscripten::convertJSArrayToNumberVector<double>(singValuesArr);
         std::map<int, double> singMap;
         for (std::size_t i = 0; i < verts.size(); i++) singMap[verts[i]] = vals[i];
-        nxr::compute::DirectionFieldResult r = nxr::compute::computeDirectionField(*ctx_, *dec_, *cache_, singMap);
+        nxr::manifold::connection::DirectionFieldResult r = nxr::manifold::connection::trivial(*ctx_, *dec_, *cache_, singMap);
         val o = val::object();
         o.set("connections",         eigenVectorToVal(r.connections));
         o.set("directionVectors",    eigenMatrixToVal(r.directionVectors));
@@ -547,7 +480,7 @@ public:
         return o;
     }
 
-    val traceStreamlines(val faceFieldArr, int numSeeds, double stepCoef, int maxSteps) {
+    val streamline(val faceFieldArr, int numSeeds, double stepCoef, int maxSteps) {
         auto vec = emscripten::convertJSArrayToNumberVector<double>(faceFieldArr);
         int nFf = ctx_->nF();
         if (static_cast<int>(vec.size()) != nFf * 3) {
@@ -559,7 +492,7 @@ public:
             faceField(i, 1) = vec[i * 3 + 1];
             faceField(i, 2) = vec[i * 3 + 2];
         }
-        nxr::compute::StreamlineResult r = nxr::compute::traceStreamlines(*ctx_, faceField, numSeeds, stepCoef, maxSteps);
+        nxr::field::extract::StreamlineResult r = nxr::field::extract::streamline(*ctx_, faceField, numSeeds, stepCoef, maxSteps);
         val o = val::object();
         o.set("positions",    eigenMatrixToVal(r.positions));
         o.set("segmentCount", r.segmentCount);
@@ -568,36 +501,36 @@ public:
 
     // ── Vector field ops ────────────────────────────────────
 
-    val whitneyInterpolate(val oneFormArr) {
+    val whitney(val oneFormArr) {
         ensureDec();
         Eigen::VectorXd omega = valToEigenVector(oneFormArr);
-        Eigen::MatrixXd faceVecs = nxr::compute::whitneyInterpolate(*ctx_, *dec_, omega);
+        Eigen::MatrixXd faceVecs = nxr::field::interp::whitney(*ctx_, *dec_, omega);
         return eigenMatrixToVal(faceVecs);
     }
 
-    val scalarGradient(val scalarArr) {
+    val gradient(val scalarArr) {
         Eigen::VectorXd s = valToEigenVector(scalarArr);
-        Eigen::MatrixXd grad = nxr::compute::scalarGradient(*ctx_, s);
+        Eigen::MatrixXd grad = nxr::field::op::gradient(*ctx_, s);
         return eigenMatrixToVal(grad);
     }
 
     // ── Time-varying field generators ───────────────────────
 
-    val generateHeatDiffusion(val sourceVertsArr, val sourceValuesArr,
+    val heatDiffusion(val sourceVertsArr, val sourceValuesArr,
                               val timestepsArr, double alpha) {
         ensureOps();
         if (!eigCache_) {
             throw std::runtime_error(
-                "generateHeatDiffusion: eigenmodes not yet computed; "
-                "call solveEigenmodes() or precompute() first");
+                "heatDiffusion: eigenmodes not yet computed; "
+                "call solve() or precompute() first");
         }
         auto verts = emscripten::convertJSArrayToNumberVector<int>(sourceVertsArr);
         auto vals  = emscripten::convertJSArrayToNumberVector<double>(sourceValuesArr);
         std::map<int, double> sources;
         for (std::size_t i = 0; i < verts.size(); i++) sources[verts[i]] = vals[i];
-        Eigen::VectorXd u0 = nxr::compute::generateDelta(ctx_->nV(), sources);
+        Eigen::VectorXd u0 = nxr::field::generate::delta(ctx_->nV(), sources);
         std::vector<double> ts = valToDoubleVector(timestepsArr);
-        Eigen::MatrixXf field = nxr::compute::generateHeatDiffusion(
+        Eigen::MatrixXf field = nxr::field::generate::heatDiffusion(
             *ops_, *eigCache_, u0, ts, alpha);
         val out = val::object();
         out.set("data", eigenMatrixFloat32ToVal(field));
@@ -606,20 +539,20 @@ public:
         return out;
     }
 
-    val generateDampedWave(val modeIndicesArr, val amplitudesArr,
+    val dampedWave(val modeIndicesArr, val amplitudesArr,
                            val dampingsArr, val phasesArr,
                            val timestepsArr) {
         if (!eigCache_) {
             throw std::runtime_error(
-                "generateDampedWave: eigenmodes not yet computed; "
-                "call solveEigenmodes() or precompute() first");
+                "dampedWave: eigenmodes not yet computed; "
+                "call solve() or precompute() first");
         }
         auto mi  = valToInt32Vector(modeIndicesArr);
         auto am  = valToDoubleVector(amplitudesArr);
         auto da  = valToDoubleVector(dampingsArr);
         auto ph  = valToDoubleVector(phasesArr);
         auto ts  = valToDoubleVector(timestepsArr);
-        Eigen::MatrixXf field = nxr::compute::generateDampedWave(
+        Eigen::MatrixXf field = nxr::field::generate::dampedWave(
             *eigCache_, mi, am, da, ph, ts);
         val out = val::object();
         out.set("data", eigenMatrixFloat32ToVal(field));
@@ -628,10 +561,10 @@ public:
         return out;
     }
 
-    val generateRandomDecomposed1Form(double alphaStrength, double betaStrength,
+    val randomDecomposed1Form(double alphaStrength, double betaStrength,
                                       double gammaStrength, int seed) {
         ensureDec();
-        Eigen::VectorXd omega = nxr::compute::generateRandomDecomposed1Form(
+        Eigen::VectorXd omega = nxr::field::generate::randomDecomposed1Form(
             *dec_, ctx_->nV(), ctx_->nE(), ctx_->nF(),
             alphaStrength, betaStrength, gammaStrength,
             static_cast<unsigned int>(seed));
@@ -640,7 +573,7 @@ public:
 
     // ── Vector heat method ──────────────────────────────────
 
-    val vectorHeatTransport(val sourceVertsArr, val sourceVectorsArr) {
+    val parallel(val sourceVertsArr, val sourceVectorsArr) {
         ensureVHM();
         auto verts = emscripten::convertJSArrayToNumberVector<int>(sourceVertsArr);
         auto vecs  = emscripten::convertJSArrayToNumberVector<double>(sourceVectorsArr);
@@ -653,11 +586,11 @@ public:
             S(i, 1) = vecs[i * 3 + 1];
             S(i, 2) = vecs[i * 3 + 2];
         }
-        Eigen::MatrixXd out = nxr::compute::vectorHeatTransport(*vhm_, verts, S);
+        Eigen::MatrixXd out = nxr::manifold::transport::parallel(*vhm_, verts, S);
         return eigenMatrixToVal(out);
     }
 
-    val vectorHeatExtendScalar(val sourceVertsArr, val sourceValuesArr) {
+    val extendScalar(val sourceVertsArr, val sourceValuesArr) {
         ensureVHM();
         auto verts = emscripten::convertJSArrayToNumberVector<int>(sourceVertsArr);
         auto vals  = emscripten::convertJSArrayToNumberVector<double>(sourceValuesArr);
@@ -666,14 +599,14 @@ public:
         }
         Eigen::VectorXd vv(vals.size());
         for (std::size_t i = 0; i < vals.size(); i++) vv[i] = vals[i];
-        Eigen::VectorXd out = nxr::compute::vectorHeatExtendScalar(*vhm_, verts, vv);
+        Eigen::VectorXd out = nxr::manifold::transport::extendScalar(*vhm_, verts, vv);
         return eigenVectorToVal(out);
     }
 
-    val vectorHeatLogMap(int sourceVertex, int strategy) {
+    val logMap(int sourceVertex, int strategy) {
         ensureVHM();
-        auto s = static_cast<nxr::compute::LogMapStrategy>(strategy);
-        nxr::compute::LogMapResult r = nxr::compute::vectorHeatLogMap(*vhm_, sourceVertex, s);
+        auto s = static_cast<nxr::manifold::transport::LogMapStrategy>(strategy);
+        nxr::manifold::transport::LogMapResult r = nxr::manifold::transport::logMap(*vhm_, sourceVertex, s);
         val obj = val::object();
         obj.set("logCoords", eigenMatrixToVal(r.logCoords));
         double e1[3] = {r.sourceE1.x(), r.sourceE1.y(), r.sourceE1.z()};
@@ -683,21 +616,21 @@ public:
         return obj;
     }
 
-    val vectorHeatFindCenter(val sourceVertsArr, int p) {
+    val findCenter(val sourceVertsArr, int p) {
         ensureVHM();
         auto verts = emscripten::convertJSArrayToNumberVector<int>(sourceVertsArr);
-        Eigen::Vector3d c = nxr::compute::vectorHeatFindCenter(*vhm_, verts, p);
+        Eigen::Vector3d c = nxr::manifold::transport::findCenter(*vhm_, verts, p);
         double xyz[3] = {c.x(), c.y(), c.z()};
         return toJsArrayCopy(xyz, 3);
     }
 
     // ── Signed heat method ──────────────────────────────────
 
-    val signedHeatDistance(val curveVertsArr, bool isLoop, int levelSet) {
+    val signedHeat(val curveVertsArr, bool isLoop, int levelSet) {
         ensureSHS();
         auto verts = emscripten::convertJSArrayToNumberVector<int>(curveVertsArr);
-        auto ls    = static_cast<nxr::compute::SignedHeatLevelSet>(levelSet);
-        Eigen::VectorXd out = nxr::compute::signedHeatDistance(*shs_, verts, isLoop, ls);
+        auto ls    = static_cast<nxr::manifold::solve::SignedHeatLevelSet>(levelSet);
+        Eigen::VectorXd out = nxr::manifold::solve::signedHeat(*shs_, verts, isLoop, ls);
         return eigenVectorToVal(out);
     }
 
@@ -709,22 +642,22 @@ public:
     // factorizes it. We can't add a Solver class without reimplementing
     // the algorithm, so we cache at the result level keyed by
     // (nSym, alignToCurvature). The geometry doesn't change for the
-    // lifetime of a ComputeContext, so the cache is correct by
+    // lifetime of a Manifold, so the cache is correct by
     // construction. Repeated identical calls become near-zero-cost;
     // parameter changes still pay the full cold cost once per new key.
 
-    val computeSmoothFaceField(int nSym, bool alignToCurvature) {
+    val smoothFace(int nSym, bool alignToCurvature) {
         auto key = std::make_pair(nSym, alignToCurvature);
         auto it = smoothFaceFieldCache_.find(key);
         if (it != smoothFaceFieldCache_.end()) {
             return eigenMatrixToVal(it->second);
         }
-        Eigen::MatrixXd v = nxr::compute::computeSmoothFaceField(*ctx_, nSym, alignToCurvature);
+        Eigen::MatrixXd v = nxr::manifold::connection::smoothFace(*ctx_, nSym, alignToCurvature);
         smoothFaceFieldCache_.emplace(key, v);
         return eigenMatrixToVal(v);
     }
 
-    val computeSmoothVertexField(int nSym, bool alignToCurvature) {
+    val smoothVertex(int nSym, bool alignToCurvature) {
         auto key = std::make_pair(nSym, alignToCurvature);
         auto it = smoothVertexFieldCache_.find(key);
         if (it != smoothVertexFieldCache_.end()) {
@@ -735,8 +668,8 @@ public:
             obj.set("nSym",           r.nSym);
             return obj;
         }
-        nxr::compute::SmoothVertexFieldResult r =
-            nxr::compute::computeSmoothVertexField(*ctx_, nSym, alignToCurvature);
+        nxr::manifold::connection::SmoothVertexFieldResult r =
+            nxr::manifold::connection::smoothVertex(*ctx_, nSym, alignToCurvature);
         val obj = val::object();
         obj.set("vertexVectors",  eigenMatrixToVal(r.vertexVectors));
         obj.set("vertexFieldRaw", eigenVectorToVal(r.vertexFieldRaw));
@@ -747,10 +680,10 @@ public:
 
     // ── Stripe patterns ─────────────────────────────────────
 
-    val computeStripePattern(val vertexFieldArr, double uniformFrequency,
+    val compute(val vertexFieldArr, double uniformFrequency,
                              bool connectOnSingularities) {
         Eigen::VectorXd raw = valToEigenVector(vertexFieldArr);
-        nxr::compute::StripePatternResult r = nxr::compute::computeStripePattern(
+        nxr::manifold::parametrization::stripes::StripePatternResult r = nxr::manifold::parametrization::stripes::compute(
             *ctx_, raw, uniformFrequency, connectOnSingularities);
         val obj = val::object();
         obj.set("positions",    eigenMatrixToVal(r.positions));
@@ -758,11 +691,11 @@ public:
         return obj;
     }
 
-    val computeStripePatternFreq(val vertexFieldArr, val freqsArr,
+    val computeFreq(val vertexFieldArr, val freqsArr,
                                  bool connectOnSingularities) {
         Eigen::VectorXd raw   = valToEigenVector(vertexFieldArr);
         Eigen::VectorXd freqs = valToEigenVector(freqsArr);
-        nxr::compute::StripePatternResult r = nxr::compute::computeStripePatternFreq(
+        nxr::manifold::parametrization::stripes::StripePatternResult r = nxr::manifold::parametrization::stripes::computeFreq(
             *ctx_, raw, freqs, connectOnSingularities);
         val obj = val::object();
         obj.set("positions",    eigenMatrixToVal(r.positions));
@@ -773,21 +706,21 @@ public:
 private:
     // Lazy state (matches the addon's ContextHolder caching).
     void ensureOps() {
-        if (!ops_) ops_ = std::make_unique<nxr::compute::MeshOperators>(
-            nxr::compute::assembleMeshOperators(*ctx_));
+        if (!ops_) ops_ = std::make_unique<nxr::manifold::ops::ManifoldOperators>(
+            nxr::manifold::ops::assembleManifoldOperators(*ctx_));
     }
     void ensureDec() {
-        if (!dec_) dec_ = std::make_unique<nxr::compute::DECOperators>(
-            nxr::compute::assembleDECOperators(*ctx_));
+        if (!dec_) dec_ = std::make_unique<nxr::manifold::ops::DECOperators>(
+            nxr::manifold::ops::assembleDECOperators(*ctx_));
     }
     void ensureVHM() {
-        if (!vhm_) vhm_ = std::make_unique<nxr::compute::VectorHeatSolver>(*ctx_);
+        if (!vhm_) vhm_ = std::make_unique<nxr::manifold::transport::VectorHeatSolver>(*ctx_);
     }
     void ensureSHS() {
-        if (!shs_) shs_ = std::make_unique<nxr::compute::SignedHeatSolver>(*ctx_);
+        if (!shs_) shs_ = std::make_unique<nxr::manifold::solve::SignedHeatSolver>(*ctx_);
     }
     void ensureHeatGeo() {
-        if (!heatGeo_) heatGeo_ = std::make_unique<nxr::compute::HeatGeodesicSolver>(*ctx_);
+        if (!heatGeo_) heatGeo_ = std::make_unique<nxr::manifold::solve::HeatGeodesicSolver>(*ctx_);
     }
 
     val meshOpsToVal() {
@@ -795,10 +728,10 @@ private:
         val o = val::object();
         o.set("cotanLaplacian",  sparseToVal(ops_->cotanLaplacian));
         o.set("mass",            sparseToVal(ops_->mass));
-        o.set("massVariant", std::string(
-            ops_->massVariant == nxr::compute::MassMatrixVariant::Voronoi      ? "voronoi" :
-            ops_->massVariant == nxr::compute::MassMatrixVariant::Barycentric  ? "barycentric" :
-                                                                                 "full"));
+        o.set("massVariant",     std::string(
+            ops_->massVariant == nxr::manifold::ops::MassMatrixVariant::Voronoi      ? "voronoi" :
+            ops_->massVariant == nxr::manifold::ops::MassMatrixVariant::Barycentric  ? "barycentric" :
+                                                                                       "full"));
         o.set("vertexDualAreas", eigenVectorToVal(ops_->vertexDualAreas));
         o.set("vertexNormals",   eigenMatrixToVal(ops_->vertexNormals));
         o.set("totalArea",       ops_->totalArea);
@@ -820,7 +753,7 @@ private:
         return o;
     }
 
-    val eigenResultToVal(const nxr::compute::EigenResult& r) {
+    val eigenResultToVal(const nxr::manifold::solve::EigenResult& r) {
         val o = val::object();
         // vMajor row-major: U[v*K + k]. Matches the cortical-flow
         // Zarr schema (manifold/eigenmodes/eigenvectors stored as
@@ -832,8 +765,8 @@ private:
         return o;
     }
 
-    nxr::compute::EigenResult valToEigenResult(const val& s) {
-        nxr::compute::EigenResult r;
+    nxr::manifold::solve::EigenResult valToEigenResult(const val& s) {
+        nxr::manifold::solve::EigenResult r;
         val uField = s["eigenvectors"];
         val lField = s["eigenvalues"];
         auto uVec = emscripten::convertJSArrayToNumberVector<double>(uField);
@@ -854,35 +787,31 @@ private:
         return r;
     }
 
-    // ops_ and dec_ are view structs over ctx_'s geometry-central
-    // cached matrices (see lifetime contract in compute.h). Declared
-    // after ctx_ so destruction order tears them down first; the
-    // references inside are never left dangling.
-    std::unique_ptr<nxr::compute::ComputeContext>     ctx_;
-    std::unique_ptr<nxr::compute::MeshOperators>      ops_;
-    std::unique_ptr<nxr::compute::DECOperators>       dec_;
-    std::unique_ptr<nxr::compute::CholeskyCache>      cache_;
-    std::unique_ptr<nxr::compute::EigenResult>        eigCache_;
-    std::unique_ptr<nxr::compute::VectorHeatSolver>   vhm_;
-    std::unique_ptr<nxr::compute::SignedHeatSolver>   shs_;
-    std::unique_ptr<nxr::compute::HeatGeodesicSolver> heatGeo_;
+    std::unique_ptr<nxr::manifold::Manifold>     ctx_;
+    std::unique_ptr<nxr::manifold::ops::ManifoldOperators>      ops_;
+    std::unique_ptr<nxr::manifold::ops::DECOperators>       dec_;
+    std::unique_ptr<nxr::manifold::ops::CholeskyCache>      cache_;
+    std::unique_ptr<nxr::manifold::solve::EigenResult>        eigCache_;
+    std::unique_ptr<nxr::manifold::transport::VectorHeatSolver>   vhm_;
+    std::unique_ptr<nxr::manifold::solve::SignedHeatSolver>   shs_;
+    std::unique_ptr<nxr::manifold::solve::HeatGeodesicSolver> heatGeo_;
     // Smooth-field result caches — keyed by (nSym, alignToCurvature).
     // Stored by value so the cache owns the data; lookups copy back
     // out to JS via toJsArrayCopy on each return.
     std::map<std::pair<int, bool>, Eigen::MatrixXd>                       smoothFaceFieldCache_;
-    std::map<std::pair<int, bool>, nxr::compute::SmoothVertexFieldResult> smoothVertexFieldCache_;
+    std::map<std::pair<int, bool>, nxr::manifold::connection::SmoothVertexFieldResult> smoothVertexFieldCache_;
     // Connection-Laplacian result cache — keyed by all four assembly
     // options. Stored by shared_ptr so callers can hold references
     // without keeping the entire ContextWrapper alive longer than
     // intended.
-    using CLKey = std::tuple<nxr::compute::ConnectionDomain,
+    using CLKey = std::tuple<nxr::manifold::ops::laplacian::connection::ConnectionDomain,
                               int,
                               double,
-                              nxr::compute::ConnectionLaplacianFormat>;
-    std::map<CLKey, std::shared_ptr<nxr::compute::ConnectionLaplacian>>   clCache_;
-    // (Note: the input vertex / face buffers used to live here as
-    // class members but were never read after construction — drop, saves
-    // ~5–10 MB on a 165 k-vertex context. See the constructor comment.)
+                              nxr::manifold::ops::laplacian::connection::ConnectionLaplacianFormat>;
+    std::map<CLKey, std::shared_ptr<nxr::manifold::ops::laplacian::connection::ConnectionLaplacian>>   clCache_;
+    std::vector<double>  verts_;
+    std::vector<int>     faces_;
+    std::vector<int32_t> faces32_;
 };
 
 // ── Free functions ───────────────────────────────────────────
@@ -894,10 +823,10 @@ std::string getVersion() {
 /**
  * Generalized eigenproblem K φ = λ M φ from JS-supplied COO triplets.
  *
- * Mirrors `ContextWrapper::solveEigenmodes` — same Spectra IRAM /
+ * Mirrors `ContextWrapper::solve` — same Spectra IRAM /
  * shift-invert path and same cancel/progress contract — but takes K
  * and M as raw triplet arrays instead of building them through
- * `assembleMeshOperators`. Useful for callers that compute their own
+ * `assembleManifoldOperators`. Useful for callers that compute their own
  * sparse Laplacians (graph Laplacians, FEM assemblies on non-manifold
  * face soups, custom regularized matrices, etc.) without going through
  * the geometry-central halfedge stack.
@@ -909,10 +838,10 @@ std::string getVersion() {
  *   n               common matrix size for K and M (square)
  *   k, sigma        eigensolve params (sigma defaults to -1e-8 if
  *                   the caller passes 0; explicit value preferred).
- *   cancelAddr, progressAddr, progressLen  same as ContextWrapper.solveEigenmodes
+ *   cancelAddr, progressAddr, progressLen  same as ContextWrapper.solve
  *
  * Returns: { eigenvectors, eigenvalues, k, nConverged } in vMajor
- * row-major layout, identical to ContextWrapper.solveEigenmodes.
+ * row-major layout, identical to ContextWrapper.solve.
  *
  * Triplets with duplicate (row, col) pairs are summed when the sparse
  * matrix is built (Eigen's setFromTriplets default behavior). This is
@@ -968,11 +897,11 @@ val solveEigenmodesFromTriplets(
         M.makeCompressed();
     }
 
-    nxr::compute::CancellationToken cancel = cancelAddr
-        ? nxr::compute::CancellationToken(
+    nxr::core::CancellationToken cancel = cancelAddr
+        ? nxr::core::CancellationToken(
             reinterpret_cast<const std::atomic<int32_t>*>(cancelAddr))
-        : nxr::compute::CancellationToken{};
-    nxr::compute::ProgressObserver progress;
+        : nxr::core::CancellationToken{};
+    nxr::core::ProgressObserver progress;
     if (progressAddr && progressLen >= 3) {
         auto* base = reinterpret_cast<std::atomic<int32_t>*>(progressAddr);
         progress.iteration       = &base[0];
@@ -981,8 +910,9 @@ val solveEigenmodesFromTriplets(
     }
 
     try {
-        nxr::compute::EigenResult r = nxr::compute::solveEigenmodes(
-            K, M, k, sigma, cancel, progress);
+        nxr::manifold::solve::EigenResult r = nxr::manifold::solve::eigen(
+            K, M, k, sigma,
+            /*normalize=*/false, /*removeDC=*/false, cancel, progress);
         // Build the JS return object inline (mirrors ContextWrapper's
         // eigenResultToVal — that one is a class member, so we replicate
         // its three-line body here rather than re-host it).
@@ -992,9 +922,9 @@ val solveEigenmodesFromTriplets(
         o.set("k",            r.k);
         o.set("nConverged",   r.nConverged);
         return o;
-    } catch (const nxr::compute::Error& e) {
+    } catch (const nxr::core::Error& e) {
         std::string msg = "[";
-        msg += nxr::compute::errorCodeName(e.code());
+        msg += nxr::core::errorCodeName(e.code());
         msg += "] ";
         msg += e.what();
         if (!e.hint().empty()) {
@@ -1008,61 +938,55 @@ val solveEigenmodesFromTriplets(
 // ── Embind module bindings ───────────────────────────────────
 
 EMSCRIPTEN_BINDINGS(nxr_compute_wasm) {
-    emscripten::class_<ContextWrapper>("ComputeContext")
+    emscripten::class_<ContextWrapper>("Manifold")
         .constructor<val, val>()
-        // Fast-path factory: caller has already placed vertex / face
-        // buffers on the wasm heap and supplies their addresses. The
-        // JS shim wraps the malloc + HEAP.set + free dance.
-        .class_function("fromPointers",
-                        &ContextWrapper::fromPointers,
-                        emscripten::allow_raw_pointers())
         // Accessors
         .function("nV", &ContextWrapper::nV)
         .function("nE", &ContextWrapper::nE)
         .function("nF", &ContextWrapper::nF)
         // Operators
-        .function("assembleMeshOperators",  &ContextWrapper::assembleMeshOperators)
+        .function("assembleManifoldOperators",  &ContextWrapper::assembleManifoldOperators)
         .function("assembleDECOperators",   &ContextWrapper::assembleDECOperators)
         .function("assembleConnectionLaplacian", &ContextWrapper::assembleConnectionLaplacian)
-        .function("computeFaceFrames",      &ContextWrapper::computeFaceFrames)
-        .function("computeVertexNormals",   &ContextWrapper::computeVertexNormals)
+        .function("frames",      &ContextWrapper::frames)
+        .function("normals",   &ContextWrapper::normals)
         // Spectral
-        .function("solveEigenmodes",        &ContextWrapper::solveEigenmodes)
-        .function("normalizeEigenmodes",    &ContextWrapper::normalizeEigenmodes)
+        .function("solve",        &ContextWrapper::solve)
+        .function("normalize",    &ContextWrapper::normalize)
         .function("removeDC",               &ContextWrapper::removeDC)
         .function("precompute",             &ContextWrapper::precompute)
         // Solvers
-        .function("solvePoisson",           &ContextWrapper::solvePoisson)
-        .function("computeGeodesicDistance",&ContextWrapper::computeGeodesicDistance)
+        .function("poisson",           &ContextWrapper::poisson)
+        .function("heat",&ContextWrapper::heat)
         .function("tracePath",              &ContextWrapper::tracePath)
-        .function("hodgeDecompose",         &ContextWrapper::hodgeDecompose)
+        .function("hodge",         &ContextWrapper::hodge)
         // Geometric
-        .function("computeCurvatures",      &ContextWrapper::computeCurvatures)
-        .function("computeUVCoordinates",   &ContextWrapper::computeUVCoordinates)
-        .function("computeIsolines",        &ContextWrapper::computeIsolines)
-        .function("computeDirectionField",  &ContextWrapper::computeDirectionField)
-        .function("traceStreamlines",       &ContextWrapper::traceStreamlines)
+        .function("curvatures",      &ContextWrapper::curvatures)
+        .function("bff",   &ContextWrapper::bff)
+        .function("isoline",        &ContextWrapper::isoline)
+        .function("trivial",  &ContextWrapper::trivial)
+        .function("streamline",       &ContextWrapper::streamline)
         // Vector field
-        .function("whitneyInterpolate",     &ContextWrapper::whitneyInterpolate)
-        .function("scalarGradient",         &ContextWrapper::scalarGradient)
+        .function("whitney",     &ContextWrapper::whitney)
+        .function("gradient",         &ContextWrapper::gradient)
         // Time-varying generators
-        .function("generateHeatDiffusion",  &ContextWrapper::generateHeatDiffusion)
-        .function("generateDampedWave",     &ContextWrapper::generateDampedWave)
-        .function("generateRandomDecomposed1Form",
-                                            &ContextWrapper::generateRandomDecomposed1Form)
+        .function("heatDiffusion",  &ContextWrapper::heatDiffusion)
+        .function("dampedWave",     &ContextWrapper::dampedWave)
+        .function("randomDecomposed1Form",
+                                            &ContextWrapper::randomDecomposed1Form)
         // Vector heat method
-        .function("vectorHeatTransport",    &ContextWrapper::vectorHeatTransport)
-        .function("vectorHeatExtendScalar", &ContextWrapper::vectorHeatExtendScalar)
-        .function("vectorHeatLogMap",       &ContextWrapper::vectorHeatLogMap)
-        .function("vectorHeatFindCenter",   &ContextWrapper::vectorHeatFindCenter)
+        .function("parallel",    &ContextWrapper::parallel)
+        .function("extendScalar", &ContextWrapper::extendScalar)
+        .function("logMap",       &ContextWrapper::logMap)
+        .function("findCenter",   &ContextWrapper::findCenter)
         // Signed heat method
-        .function("signedHeatDistance",     &ContextWrapper::signedHeatDistance)
+        .function("signedHeat",     &ContextWrapper::signedHeat)
         // Smooth direction fields
-        .function("computeSmoothFaceField",   &ContextWrapper::computeSmoothFaceField)
-        .function("computeSmoothVertexField", &ContextWrapper::computeSmoothVertexField)
+        .function("smoothFace",   &ContextWrapper::smoothFace)
+        .function("smoothVertex", &ContextWrapper::smoothVertex)
         // Stripe patterns
-        .function("computeStripePattern",     &ContextWrapper::computeStripePattern)
-        .function("computeStripePatternFreq", &ContextWrapper::computeStripePatternFreq)
+        .function("compute",     &ContextWrapper::compute)
+        .function("computeFreq", &ContextWrapper::computeFreq)
         ;
 
     emscripten::function("version", &getVersion);

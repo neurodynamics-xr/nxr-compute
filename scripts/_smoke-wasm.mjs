@@ -42,8 +42,8 @@ const faces = new Int32Array([
   4, 9, 5,  2, 4,11,  6, 2,10,  8, 6, 7,  9, 8, 1,
 ])
 
-// ── Test 1: ComputeContext + accessors ───────────────────────
-const ctx = new nxrCompute.ComputeContext(verts, faces)
+// ── Test 1: Manifold + accessors ───────────────────────
+const ctx = new nxrCompute.Manifold(verts, faces)
 const nV = ctx.nV(), nF = ctx.nF(), nE = ctx.nE()
 console.log(`[smoke] context: nV=${nV}, nF=${nF}, nE=${nE}`)
 
@@ -98,21 +98,21 @@ require(Math.abs(evals[3] - 4.34164) < 1e-3,
   `expected λ_3 ≈ 4.34, got ${evals[3]}`)
 
 // Face frames
-require(data.faceFrames.e1.length      === 20 * 3, 'face frames e1 [F*3]')
-require(data.faceFrames.e2.length      === 20 * 3, 'face frames e2 [F*3]')
-require(data.faceFrames.normals.length === 20 * 3, 'face frames normals [F*3]')
+require(data.frames.e1.length      === 20 * 3, 'face frames e1 [F*3]')
+require(data.frames.e2.length      === 20 * 3, 'face frames e2 [F*3]')
+require(data.frames.normals.length === 20 * 3, 'face frames normals [F*3]')
 
 // Verify orthonormality: e1·e2 ≈ 0, |e1| ≈ 1, e1×e2 ≈ n
 let maxOrth = 0, maxNorm = 0
 for (let f = 0; f < 20; f++) {
-  const e1x = data.faceFrames.e1[f*3], e1y = data.faceFrames.e1[f*3+1], e1z = data.faceFrames.e1[f*3+2]
-  const e2x = data.faceFrames.e2[f*3], e2y = data.faceFrames.e2[f*3+1], e2z = data.faceFrames.e2[f*3+2]
+  const e1x = data.frames.e1[f*3], e1y = data.frames.e1[f*3+1], e1z = data.frames.e1[f*3+2]
+  const e2x = data.frames.e2[f*3], e2y = data.frames.e2[f*3+1], e2z = data.frames.e2[f*3+2]
   maxOrth = Math.max(maxOrth, Math.abs(e1x*e2x + e1y*e2y + e1z*e2z))
   maxNorm = Math.max(maxNorm, Math.abs(Math.hypot(e1x, e1y, e1z) - 1))
 }
 require(maxOrth < 1e-12, `face frames orthogonal (max|e1·e2|=${maxOrth})`)
 require(maxNorm < 1e-12, `face frames unit-length (max|‖e1‖−1|=${maxNorm})`)
-console.log(`  faceFrames ✓ (orthonormal to ${maxOrth.toExponential(2)})`)
+console.log(`  frames ✓ (orthonormal to ${maxOrth.toExponential(2)})`)
 
 // ── Test 3: M-orthonormality of eigenvectors ──────────────────
 //
@@ -161,7 +161,7 @@ console.log(`  M-orthonormality ✓ (off-diag max=${maxOffDiag.toExponential(2)}
 // ── Test 4: face-centered scalar gradient ─────────────────────
 const u_t = new Float64Array(nV).fill(0)
 u_t[0] = 1.0       // delta at vertex 0
-const grad = ctx.scalarGradient(u_t)
+const grad = ctx.gradient(u_t)
 require(grad.length === nF * 3, 'gradient length nF*3')
 let maxGradMag = 0
 for (let f = 0; f < nF; f++) {
@@ -169,15 +169,15 @@ for (let f = 0; f < nF; f++) {
   maxGradMag = Math.max(maxGradMag, m)
 }
 require(maxGradMag > 0, 'gradient nontrivial')
-console.log(`  scalarGradient ✓ (max |∇u| = ${maxGradMag.toFixed(4)})`)
+console.log(`  gradient ✓ (max |∇u| = ${maxGradMag.toFixed(4)})`)
 
 // ── Test 5: geodesic distance from a vertex ───────────────────
-const dists = ctx.computeGeodesicDistance(new Int32Array([0]))
+const dists = ctx.heat(new Int32Array([0]))
 require(dists.length === nV, 'geodesic distances length nV')
 require(Math.abs(dists[0]) < 1e-9, `distance at source = 0, got ${dists[0]}`)
 let maxDist = 0
 for (const d of dists) if (d > maxDist) maxDist = d
-console.log(`  geodesicDistance ✓ (max d = ${maxDist.toFixed(4)})`)
+console.log(`  heat ✓ (max d = ${maxDist.toFixed(4)})`)
 
 // ── Test 6: geodesic path between antipodes ───────────────────
 const path0 = ctx.tracePath(0, 3)
@@ -196,7 +196,7 @@ console.log(`  tracePath ✓ (antipode path length ${pathLen.toFixed(4)})`)
 
 // ── Test 7: heat diffusion (spectral generator) ───────────────
 const ts = Float64Array.from({ length: 5 }, (_, i) => i * 0.1)
-const heat = ctx.generateHeatDiffusion(
+const heat = ctx.heatDiffusion(
   new Int32Array([0]),
   new Float64Array([1.0]),
   ts,
@@ -206,11 +206,11 @@ require(heat.T  === 5, `heat T=5, got ${heat.T}`)
 require(heat.nV === 12, `heat nV=12, got ${heat.nV}`)
 require(heat.data instanceof Float32Array, 'heat data Float32Array')
 require(heat.data.length === 5 * 12, 'heat data length T*V')
-console.log(`  generateHeatDiffusion ✓ (T=${heat.T}, nV=${heat.nV})`)
+console.log(`  heatDiffusion ✓ (T=${heat.T}, nV=${heat.nV})`)
 
 // ── Test 8: vector heat method ───────────────────────────────
 {
-  const transported = ctx.vectorHeatTransport(
+  const transported = ctx.parallel(
     new Int32Array([0]),
     new Float64Array([1.0, 0.0, 0.0]),
   )
@@ -222,18 +222,18 @@ console.log(`  generateHeatDiffusion ✓ (T=${heat.T}, nV=${heat.nV})`)
   }
   require(maxNorm > 1e-6, 'vhm transport produced non-trivial vectors')
 
-  const extended = ctx.vectorHeatExtendScalar(
+  const extended = ctx.extendScalar(
     new Int32Array([0, 6]),
     new Float64Array([1.0, 0.0]),
   )
   require(extended.length === nV, 'vhm extendScalar length nV')
 
-  const logmap = ctx.vectorHeatLogMap(0, /* AffineLocal */ 1)
+  const logmap = ctx.logMap(0, /* AffineLocal */ 1)
   require(logmap.logCoords.length === nV * 2, 'logmap V*2')
   require(logmap.sourceE1.length === 3 && logmap.sourceE2.length === 3, 'logmap source frame 3')
   require(Math.hypot(logmap.logCoords[0], logmap.logCoords[1]) < 1e-6, 'logmap zero at source')
 
-  const center = ctx.vectorHeatFindCenter(new Int32Array([0, 1, 5]), 2)
+  const center = ctx.findCenter(new Int32Array([0, 1, 5]), 2)
   require(center.length === 3 && center.every(Number.isFinite), 'findCenter xyz finite')
   console.log(`  vectorHeat ✓ (transport max=${maxNorm.toFixed(3)}, ` +
               `center=[${[...center].map(v => v.toFixed(3)).join(', ')}])`)
@@ -241,7 +241,7 @@ console.log(`  generateHeatDiffusion ✓ (T=${heat.T}, nV=${heat.nV})`)
 
 // ── Test 9: signed heat method ───────────────────────────────
 {
-  const sd = ctx.signedHeatDistance(
+  const sd = ctx.signedHeat(
     new Int32Array([11, 5, 1, 7, 10]),
     /* isLoop = */ true,
     /* ZeroSet = */ 1,
@@ -255,17 +255,17 @@ console.log(`  generateHeatDiffusion ✓ (T=${heat.T}, nV=${heat.nV})`)
 
 // ── Test 10: smooth NRoSy direction fields ──────────────────
 {
-  const faceField = ctx.computeSmoothFaceField(4, false)
+  const faceField = ctx.smoothFace(4, false)
   require(faceField.length === nF * 3, 'smooth face field length F*3')
 
-  const vfield = ctx.computeSmoothVertexField(2, false)
+  const vfield = ctx.smoothVertex(2, false)
   require(vfield.vertexVectors.length  === nV * 3, 'smooth vertex field V*3')
   require(vfield.vertexFieldRaw.length === nV * 2, 'smooth vertex field raw V*2')
   require(vfield.nSym === 2, 'nSym preserved')
   console.log(`  smoothField ✓ (face nF=${nF}, vertex nV=${nV})`)
 
   // ── Test 11: stripe patterns ───────────────────────────────
-  const stripes = ctx.computeStripePattern(vfield.vertexFieldRaw, 8.0, true)
+  const stripes = ctx.compute(vfield.vertexFieldRaw, 8.0, true)
   require(stripes.segmentCount >= 0, 'stripes segmentCount non-negative')
   require(stripes.positions.length === stripes.segmentCount * 6,
           'stripes positions length 2*segs*3')
@@ -285,16 +285,16 @@ console.log(`  generateHeatDiffusion ✓ (T=${heat.T}, nV=${heat.nV})`)
 
   // Defaults: strategy=AffineLocal, p=2, isLoop=true, levelSet=ZeroSet,
   //           nSym=4 (face) / 2 (vertex), connectOnSingularities=true.
-  const lm = wctx.vectorHeatLogMap(0)
+  const lm = wctx.logMap(0)
   require(lm.logCoords.length === nV * 2, 'wrapped logMap default strategy works')
-  const c  = wctx.vectorHeatFindCenter([0, 1, 5])
+  const c  = wctx.findCenter([0, 1, 5])
   require(c.length === 3, 'wrapped findCenter default p works')
-  const sd = wctx.signedHeatDistance([11, 5, 1, 7, 10])
+  const sd = wctx.signedHeat([11, 5, 1, 7, 10])
   require(sd.length === nV, 'wrapped signedHeat default flags work')
-  const ff = wctx.computeSmoothFaceField()
-  require(ff.length === nF * 3, 'wrapped smoothFaceField default nSym works')
-  const vf = wctx.computeSmoothVertexField()
-  const sp = wctx.computeStripePattern(vf.vertexFieldRaw, 8.0)
+  const ff = wctx.smoothFace()
+  require(ff.length === nF * 3, 'wrapped smoothFace default nSym works')
+  const vf = wctx.smoothVertex()
+  const sp = wctx.compute(vf.vertexFieldRaw, 8.0)
   require(sp.segmentCount >= 0, 'wrapped stripes default flag works')
   wctx.delete()
   console.log('  index.mjs defaults ✓')

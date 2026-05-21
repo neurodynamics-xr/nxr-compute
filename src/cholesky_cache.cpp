@@ -7,7 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 
-namespace nxr::compute {
+namespace nxr::manifold::ops {
 
 // All cache methods follow the same shape: lazy-init on first call,
 // return the stored factor on every subsequent call. Single-threaded
@@ -105,4 +105,4 @@ CholeskyCache::hodgeCoExact(const DECOperators& dec) {
     return *hodgeCoExact_;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::ops

@@ -7,7 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 
-namespace nxr::compute {
+namespace nxr::manifold::query {
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
@@ -21,11 +21,11 @@ using namespace geometrycentral::surface;
 //    a geodesic).
 // 3. getPathPolyline3D() expands the intrinsic edge sequence into
 //    a 3D polyline lying on the original mesh.
-Eigen::MatrixXd tracePath(ComputeContext& ctx, int vStart, int vEnd) {
-    auto& mesh = ctx.mesh();
-    auto& geom = ctx.geometry();
+Eigen::MatrixXd tracePath(Manifold& m, int vStart, int vEnd) {
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
 
-    int nV = ctx.nV();
+    int nV = m.nV();
     if (vStart < 0 || vStart >= nV || vEnd < 0 || vEnd >= nV) {
         throw Error(ErrorCode::InvalidInput,
             "tracePath: vertex index out of range (nV=" + std::to_string(nV) + ")");
@@ -81,4 +81,4 @@ Eigen::MatrixXd tracePath(ComputeContext& ctx, int vStart, int vEnd) {
     return out;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::query

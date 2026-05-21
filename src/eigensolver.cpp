@@ -10,7 +10,7 @@
 #include <numeric>
 #include <chrono>
 
-namespace nxr::compute {
+namespace nxr::manifold::solve {
 
 namespace {
 
@@ -66,11 +66,13 @@ private:
 
 } // namespace
 
-EigenResult solveEigenmodes(
+EigenResult eigen(
     const Eigen::SparseMatrix<double>& K,
     const Eigen::SparseMatrix<double>& M,
     int k,
     double sigma,
+    bool normalize,
+    bool removeDC,
     const CancellationToken& cancel,
     const ProgressObserver& progress
 ) {
@@ -79,15 +81,15 @@ EigenResult solveEigenmodes(
     // Validate inputs — caught before any expensive factorization.
     if (K.rows() != K.cols() || M.rows() != M.cols() || K.rows() != M.rows()) {
         throw Error(ErrorCode::InvalidInput,
-            "solveEigenmodes: K and M must be square and same size");
+            "eigen: K and M must be square and same size");
     }
     if (k < 1) {
         throw Error(ErrorCode::EigensolveInvalidK,
-            "solveEigenmodes: k must be >= 1");
+            "eigen: k must be >= 1");
     }
     if (k > n - 1) {
         throw Error(ErrorCode::EigensolveInvalidK,
-            "solveEigenmodes: k must be < N (matrix size)");
+            "eigen: k must be < N (matrix size)");
     }
     // K ceiling — Spectra's Krylov basis is `ncv = 2k+1` doubles per
     // matrix row (capped at n). At k=1000 on a 10k-vertex cortical
@@ -98,7 +100,7 @@ EigenResult solveEigenmodes(
     constexpr int kMaxK = 1000;
     if (k > kMaxK) {
         throw Error(ErrorCode::EigensolveInvalidK,
-            "solveEigenmodes: k must be <= 1000",
+            "solve: k must be <= 1000",
             "Browser/WASM Krylov basis ceiling — higher k requires "
             "server-side or memory64 builds. See "
             "docs/eigensolve-cap.md.");
@@ -219,7 +221,14 @@ EigenResult solveEigenmodes(
             "Spectra eigensolver returned a numerical-issue error code");
     }
 
+    if (removeDC) {
+        result = ::nxr::manifold::solve::removeDC(result);
+    }
+    if (normalize) {
+        result.eigenvectors = ::nxr::manifold::solve::normalize(result.eigenvectors, M);
+    }
+
     return result;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::solve

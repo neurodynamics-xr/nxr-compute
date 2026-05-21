@@ -15,7 +15,7 @@ function out = connectionLaplacian(mctx, options) %#ok<INUSD>
 %   MEX, add a `cmdAssembleConnectionLaplacian` handler in
 %   bindings/mex/src/nxr_compute_mex.cpp that:
 %     1. parses the options struct from a MATLAB struct
-%     2. calls nxr::compute::assembleConnectionLaplacian(...)
+%     2. calls nxr::manifold::ops::laplacian::connection::assembleConnectionLaplacian(...)
 %     3. returns a struct with K (sparse, native MATLAB),
 %        baseDim, outputDim, domain, nSym, regularization, format
 %   Then replace this body with `nxr_compute('assembleConnectionLaplacian', mctx.V, mctx.F, options)`.

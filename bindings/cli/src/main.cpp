@@ -33,8 +33,8 @@ void onSigint(int /*sig*/) {
     g_sigintFlag.store(1, std::memory_order_relaxed);
 }
 
-nxr::compute::CancellationToken ctrlCToken() {
-    return nxr::compute::CancellationToken(&g_sigintFlag);
+nxr::core::CancellationToken ctrlCToken() {
+    return nxr::core::CancellationToken(&g_sigintFlag);
 }
 
 constexpr const char* kVersion = "nxr-compute 0.1.0";
@@ -85,27 +85,27 @@ int cmdSmoke() {
     };
 
     auto t0 = std::chrono::steady_clock::now();
-    nxr::compute::ComputeContext ctx(verts, 12, faces, 20);
-    auto ops = nxr::compute::assembleMeshOperators(ctx);
-    auto eig = nxr::compute::solveEigenmodes(ops.cotanLaplacian, ops.mass, 6, -1e-8, ctrlCToken());
-    eig.eigenvectors = nxr::compute::normalizeEigenmodes(eig.eigenvectors, ops.mass);
-    eig = nxr::compute::removeDC(eig);
+    nxr::manifold::Manifold m(verts, 12, faces, 20);
+    auto ops = nxr::manifold::ops::assembleManifoldOperators(m);
+    auto eig = nxr::manifold::solve::eigen(
+        ops.cotanLaplacian, ops.mass, 6, -1e-8,
+        /*normalize=*/true, /*removeDC=*/true, ctrlCToken());
 
     // Touch the new vector / signed heat / smooth field surfaces so the
     // smoke catches link-time and basic-execution regressions across all
     // four new families.
-    nxr::compute::VectorHeatSolver vhm(ctx);
+    nxr::manifold::transport::VectorHeatSolver vhm(m);
     Eigen::MatrixXd srcVec(1, 3); srcVec << 1.0, 0.0, 0.0;
-    Eigen::MatrixXd transported = nxr::compute::vectorHeatTransport(vhm, {0}, srcVec);
-    auto logmap = nxr::compute::vectorHeatLogMap(vhm, 0);
-    Eigen::Vector3d center = nxr::compute::vectorHeatFindCenter(vhm, {0, 1, 2});
+    Eigen::MatrixXd transported = nxr::manifold::transport::parallel(vhm, {0}, srcVec);
+    auto logmap = nxr::manifold::transport::logMap(vhm, 0);
+    Eigen::Vector3d center = nxr::manifold::transport::findCenter(vhm, {0, 1, 2});
 
-    nxr::compute::SignedHeatSolver shs(ctx);
-    Eigen::VectorXd sd = nxr::compute::signedHeatDistance(shs, {0, 1, 5}, true);
+    nxr::manifold::solve::SignedHeatSolver shs(m);
+    Eigen::VectorXd sd = nxr::manifold::solve::signedHeat(shs, {0, 1, 5}, true);
 
-    Eigen::MatrixXd faceField = nxr::compute::computeSmoothFaceField(ctx, 4);
-    auto vfield = nxr::compute::computeSmoothVertexField(ctx, 2);
-    auto stripes = nxr::compute::computeStripePattern(ctx, vfield.vertexFieldRaw, 8.0);
+    Eigen::MatrixXd faceField = nxr::manifold::connection::smoothFace(m, 4);
+    auto vfield = nxr::manifold::connection::smoothVertex(m, 2);
+    auto stripes = nxr::manifold::parametrization::stripes::compute(m, vfield.vertexFieldRaw, 8.0);
 
     const double dt = elapsedMs(t0);
 
@@ -114,9 +114,9 @@ int cmdSmoke() {
               << "  logmap rows=" << logmap.logCoords.rows()
               << "  center=" << center.transpose() << "\n";
     std::cout << "[smoke]   signedHeat range=[" << sd.minCoeff() << ", " << sd.maxCoeff() << "]\n";
-    std::cout << "[smoke]   smoothFaceField nF=" << faceField.rows()
+    std::cout << "[smoke]   smoothFace nF=" << faceField.rows()
               << "  stripes segs=" << stripes.segmentCount << "\n";
-    std::cout << "[smoke]   nV=" << ctx.nV() << "  nF=" << ctx.nF()
+    std::cout << "[smoke]   nV=" << m.nV() << "  nF=" << m.nF()
               << "  totalArea=" << ops.totalArea << "\n";
     std::cout << "[smoke]   eigenvalues (k=" << eig.k << " post-removeDC):";
     for (int i = 0; i < eig.k; ++i) {
@@ -168,11 +168,11 @@ int main(int argc, char** argv) {
     if (cmd == "smoke") {
         try {
             return cmdSmoke();
-        } catch (const nxr::compute::Error& e) {
+        } catch (const nxr::core::Error& e) {
             std::cerr << "nxr_compute smoke: ["
-                      << nxr::compute::errorCodeName(e.code()) << "] "
+                      << nxr::core::errorCodeName(e.code()) << "] "
                       << e.what() << "\n";
-            return e.code() == nxr::compute::ErrorCode::Cancelled ? 130 : 1;
+            return e.code() == nxr::core::ErrorCode::Cancelled ? 130 : 1;
         } catch (const std::exception& e) {
             std::cerr << "nxr_compute smoke: " << e.what() << "\n";
             return 1;

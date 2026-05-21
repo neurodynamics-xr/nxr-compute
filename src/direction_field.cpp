@@ -34,10 +34,12 @@
 #include <vector>
 #include <unordered_map>
 
-namespace nxr::compute {
+namespace nxr::manifold::connection {
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
+using nxr::manifold::ops::DECOperators;
+using nxr::manifold::ops::CholeskyCache;
 
 // ─────────────────────────────────────────────────────────────
 // Helper: 2D orthonormal basis on a face from its normal and
@@ -90,15 +92,15 @@ static double transportNoRotation(
 // ─────────────────────────────────────────────────────────────
 
 static Eigen::VectorXd computeCoExactComponent(
-    ComputeContext& ctx,
+    Manifold& m,
     const DECOperators& dec,
     CholeskyCache& cache,
     const std::map<int, double>& singularityMap,
     double& eulerChiOut
 ) {
-    auto& mesh = ctx.mesh();
-    auto& geom = ctx.geometry();
-    int nV = ctx.nV();
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
+    int nV = m.nV();
 
     geom.requireVertexGaussianCurvatures();
 
@@ -134,13 +136,13 @@ static Eigen::VectorXd computeCoExactComponent(
 // ─────────────────────────────────────────────────────────────
 
 static Eigen::VectorXd propagateAngles(
-    ComputeContext& ctx,
+    Manifold& m,
     const Eigen::VectorXd& phi,   // connection 1-form on edges
     const DECOperators& /*dec*/
 ) {
-    auto& mesh = ctx.mesh();
-    auto& geom = ctx.geometry();
-    int nF = ctx.nF();
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
+    int nF = m.nF();
 
     Eigen::VectorXd alpha = Eigen::VectorXd::Zero(nF);
     std::vector<bool> visited(nF, false);
@@ -189,12 +191,12 @@ static Eigen::VectorXd propagateAngles(
 // ─────────────────────────────────────────────────────────────
 
 static Eigen::MatrixXd buildFaceVectorsFromAngles(
-    ComputeContext& ctx,
+    Manifold& m,
     const Eigen::VectorXd& alpha
 ) {
-    auto& mesh = ctx.mesh();
-    auto& geom = ctx.geometry();
-    int nF = ctx.nF();
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
+    int nF = m.nF();
 
     Eigen::MatrixXd out(nF, 3);
     for (Face f : mesh.faces()) {
@@ -209,11 +211,11 @@ static Eigen::MatrixXd buildFaceVectorsFromAngles(
 }
 
 // ─────────────────────────────────────────────────────────────
-// computeDirectionField — public entry point
+// trivial — public entry point
 // ─────────────────────────────────────────────────────────────
 
-DirectionFieldResult computeDirectionField(
-    ComputeContext& ctx,
+DirectionFieldResult trivial(
+    Manifold& m,
     const DECOperators& dec,
     CholeskyCache& cache,
     const std::map<int, double>& singularityMap
@@ -223,7 +225,7 @@ DirectionFieldResult computeDirectionField(
     result.gaussBonnetSatisfied = false;
 
     // 1. Co-exact component δβ (vertex singularities → connection)
-    result.connections = computeCoExactComponent(ctx, dec, cache, singularityMap,
+    result.connections = computeCoExactComponent(m, dec, cache, singularityMap,
                                                  result.eulerCharacteristic);
 
     // 2. Gauss-Bonnet check
@@ -233,14 +235,14 @@ DirectionFieldResult computeDirectionField(
         std::abs(sumSing - result.eulerCharacteristic) < 1e-3;
 
     // 3. Propagate angles via dual spanning tree
-    Eigen::VectorXd alpha = propagateAngles(ctx, result.connections, dec);
+    Eigen::VectorXd alpha = propagateAngles(m, result.connections, dec);
 
     // 4. Build direction field vectors
-    result.directionVectors = buildFaceVectorsFromAngles(ctx, alpha);
+    result.directionVectors = buildFaceVectorsFromAngles(m, alpha);
 
     // 5. Orthogonal field: rotate by 90° on each face (α + π/2)
     Eigen::VectorXd alphaOrth = alpha.array() + M_PI / 2.0;
-    result.orthogonalVectors = buildFaceVectorsFromAngles(ctx, alphaOrth);
+    result.orthogonalVectors = buildFaceVectorsFromAngles(m, alphaOrth);
 
     std::cout << "[direction_field] χ=" << result.eulerCharacteristic
               << ", Σσ=" << sumSing
@@ -251,9 +253,17 @@ DirectionFieldResult computeDirectionField(
     return result;
 }
 
+} // namespace nxr::manifold::connection
+
 // ─────────────────────────────────────────────────────────────
 // Streamline Tracing
 // ─────────────────────────────────────────────────────────────
+
+namespace nxr::field::extract {
+
+using namespace geometrycentral;
+using namespace geometrycentral::surface;
+using nxr::manifold::Manifold;
 
 namespace {
 
@@ -310,28 +320,28 @@ IntersectResult lineIntersectsEdge2D(
 
 } // namespace (anonymous)
 
-StreamlineResult traceStreamlines(
-    ComputeContext& ctx,
+StreamlineResult streamline(
+    Manifold& m,
     const Eigen::MatrixXd& faceField,
     int numSeeds,
     double stepCoef,
     int maxSteps
 ) {
-    auto& mesh = ctx.mesh();
-    auto& geom = ctx.geometry();
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
 
     geom.requireFaceNormals();
     geom.requireEdgeLengths();
 
     // Mean edge length
     double meanEdge = 0.0;
-    int nE = ctx.nE();
+    int nE = m.nE();
     for (Edge e : mesh.edges()) meanEdge += geom.edgeLengths[e];
     meanEdge /= std::max(1, nE);
     double stepSize = meanEdge * stepCoef;
 
     // Seed faces — quasi-uniform across mesh
-    int nF = ctx.nF();
+    int nF = m.nF();
     int seedStep = std::max(1, nF / (numSeeds * numSeeds));
 
     std::vector<double> outPts;  // flat [x,y,z, x,y,z, ...] endpoint pairs
@@ -371,7 +381,7 @@ StreamlineResult traceStreamlines(
             }
 
             // Need to cross an edge — find which one
-            auto [basis1, basis2] = faceOrthonormalBasis(geom, currentFace);
+            auto [basis1, basis2] = nxr::manifold::connection::faceOrthonormalBasis(geom, currentFace);
             bool crossed = false;
             for (Halfedge h : currentFace.adjacentHalfedges()) {
                 Vector3 pa = geom.inputVertexPositions[h.tailVertex()];
@@ -442,4 +452,4 @@ StreamlineResult traceStreamlines(
     return result;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::field::extract

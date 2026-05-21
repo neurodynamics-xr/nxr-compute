@@ -10,7 +10,7 @@
 //
 //   1. **Vertex / face packed buffers.** MATLAB users pass V as
 //      Vx3 double (column-major: x,x,…,y,y,…,z,z,…). nxr-compute's
-//      ComputeContext takes a flat row-major xyz buffer. We
+//      Manifold takes a flat row-major xyz buffer. We
 //      repack at the boundary.
 //
 //   2. **Face indexing.** MATLAB convention is 1-based; nxr-compute uses
@@ -28,7 +28,7 @@
 #include <string>
 #include <vector>
 
-namespace nxr::compute::mex {
+namespace nxr::manifold::mex {
 
 // ── Scalar / string ─────────────────────────────────────────
 
@@ -248,36 +248,29 @@ inline std::vector<std::int32_t> mxToFaceBuffer(const mxArray* arr, int& nFOut) 
 
 // ── Struct builders for compound return values ──────────────
 
-inline mxArray* meshOperatorsToStruct(const nxr::compute::MeshOperators& ops,
-                                      const nxr::compute::ComputeContext& ctx) {
-    // Field names mirror geometry-central's canonical cache names so
-    // the MATLAB struct reads as a 1-to-1 viewer over GC. `mass` is
-    // variant-aware (Voronoi / Barycentric / ConsistentFEM).
+inline mxArray* meshOperatorsToStruct(const nxr::manifold::ops::ManifoldOperators& ops,
+                                      int nV, int nE, int nF) {
     const char* fields[] = {
         "cotanLaplacian", "mass", "vertexDualAreas", "vertexNormals",
         "totalArea", "nV", "nE", "nF",
     };
     mxArray* s = mxCreateStructMatrix(1, 1, 8, fields);
 
-    // ops.vertexNormals is [nV, 3] stored row-major (see
-    // VertexNormalsMatrix alias in compute.h). MATLAB wants column-
-    // major, so the assignment below performs an implicit transpose
-    // copy via Eigen's cross-layout assignment — handled transparently
-    // by Eigen's expression templates.
-    Eigen::MatrixXd vertexNormalsT = ops.vertexNormals;  // (nV, 3), col-major
+    // ops.vertexNormals is [nV, 3] row-major; MATLAB takes col-major so copy through.
+    Eigen::MatrixXd normalsT = ops.vertexNormals;  // already (nV, 3)
 
     mxSetField(s, 0, "cotanLaplacian",  eigenSparseToMx(ops.cotanLaplacian));
     mxSetField(s, 0, "mass",            eigenSparseToMx(ops.mass));
     mxSetField(s, 0, "vertexDualAreas", eigenVectorToMx(ops.vertexDualAreas));
-    mxSetField(s, 0, "vertexNormals",   eigenMatrixToMx(vertexNormalsT));
+    mxSetField(s, 0, "vertexNormals",   eigenMatrixToMx(normalsT));
     mxSetField(s, 0, "totalArea",       mxCreateDoubleScalar(ops.totalArea));
-    mxSetField(s, 0, "nV",              mxCreateDoubleScalar(ctx.nV()));
-    mxSetField(s, 0, "nE",              mxCreateDoubleScalar(ctx.nE()));
-    mxSetField(s, 0, "nF",              mxCreateDoubleScalar(ctx.nF()));
+    mxSetField(s, 0, "nV",              mxCreateDoubleScalar(nV));
+    mxSetField(s, 0, "nE",              mxCreateDoubleScalar(nE));
+    mxSetField(s, 0, "nF",              mxCreateDoubleScalar(nF));
     return s;
 }
 
-inline mxArray* eigenResultToStruct(const nxr::compute::EigenResult& r) {
+inline mxArray* eigenResultToStruct(const nxr::manifold::solve::EigenResult& r) {
     const char* fields[] = {"eigenvectors", "eigenvalues", "k", "nConverged"};
     mxArray* s = mxCreateStructMatrix(1, 1, 4, fields);
     mxSetField(s, 0, "eigenvectors", eigenMatrixToMx(r.eigenvectors));
@@ -289,12 +282,12 @@ inline mxArray* eigenResultToStruct(const nxr::compute::EigenResult& r) {
 
 /** Read back an EigenResult struct previously returned by
  *  eigenResultToStruct. Used by removeDC, which takes the result
- *  of solveEigenmodes and returns a trimmed copy. */
-inline nxr::compute::EigenResult mxToEigenResult(const mxArray* s) {
+ *  of solve and returns a trimmed copy. */
+inline nxr::manifold::solve::EigenResult mxToEigenResult(const mxArray* s) {
     if (!mxIsStruct(s)) {
         throw std::invalid_argument("expected an EigenResult struct");
     }
-    nxr::compute::EigenResult r;
+    nxr::manifold::solve::EigenResult r;
     mxArray* uField = mxGetField(s, 0, "eigenvectors");
     mxArray* lField = mxGetField(s, 0, "eigenvalues");
     if (!uField || !lField) {
@@ -307,4 +300,4 @@ inline nxr::compute::EigenResult mxToEigenResult(const mxArray* s) {
     return r;
 }
 
-} // namespace nxr::compute::mex
+} // namespace nxr::manifold::mex

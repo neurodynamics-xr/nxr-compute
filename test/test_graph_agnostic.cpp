@@ -4,15 +4,15 @@
  *
  * Builds a synthetic graph Laplacian (50-node path graph) and feeds
  * it through:
- *   • solveEigenmodes(L, M, k)
- *   • normalizeEigenmodes
+ *   • solve(L, M, k)
+ *   • normalize
  *   • removeDC
  *   • CholeskyCache::laplacian(L)        — agnostic overload
- *   • solvePoisson(L, M, cache, density) — agnostic overload
- *   • generateHeatDiffusion(M, eig, …)   — agnostic overload
+ *   • poisson(L, M, cache, density) — agnostic overload
+ *   • heatDiffusion(M, eig, …)   — agnostic overload
  *
  * Confirms that the convenience layer no longer requires a
- * MeshOperators struct and serves graph signal processing users
+ * ManifoldOperators struct and serves graph signal processing users
  * the same way it serves mesh users.
  */
 
@@ -22,7 +22,20 @@
 #include <iostream>
 #include <vector>
 
-using namespace nxr::compute;
+using namespace nxr::manifold;
+using namespace nxr::manifold::solve;
+using namespace nxr::manifold::ops;
+using namespace nxr::manifold::ops::laplacian::connection;
+using namespace nxr::manifold::transport;
+using namespace nxr::manifold::connection;
+using namespace nxr::manifold::parametrization;
+using namespace nxr::manifold::parametrization::stripes;
+using namespace nxr::manifold::geometry;
+using namespace nxr::manifold::query;
+using namespace nxr::field::generate;
+using namespace nxr::field::interp;
+using namespace nxr::field::op;
+using namespace nxr::field::extract;
 
 static int testsRun = 0;
 static int testsFailed = 0;
@@ -83,10 +96,10 @@ int main() {
     const int n = 50;
     auto g = makePathGraph(n);
 
-    // ── 1. solveEigenmodes on a graph Laplacian ────────────────
-    std::cout << "[1] solveEigenmodes on path graph L\n";
+    // ── 1. solve on a graph Laplacian ────────────────
+    std::cout << "[1] solve on path graph L\n";
     int k = 6;
-    auto eigRaw = solveEigenmodes(g.L, g.M, k);
+    auto eigRaw = solve::eigen(g.L, g.M, k);
     EXPECT(eigRaw.k == k);
     EXPECT(eigRaw.eigenvectors.rows() == n);
     EXPECT(eigRaw.eigenvalues.size() == k);
@@ -101,9 +114,9 @@ int main() {
     std::cout << "    λ_1 expected " << lambda1Expected
               << ", got " << lambda1Actual << "\n";
 
-    // ── 2. normalizeEigenmodes (M = I) is a no-op up to sign ───
-    std::cout << "[2] normalizeEigenmodes leaves U M-orthonormal\n";
-    auto Un = normalizeEigenmodes(eigRaw.eigenvectors, g.M);
+    // ── 2. normalize (M = I) is a no-op up to sign ───
+    std::cout << "[2] normalize leaves U M-orthonormal\n";
+    auto Un = solve::normalize(eigRaw.eigenvectors, g.M);
     Eigen::MatrixXd Gram = Un.transpose() * (g.M * Un);
     Eigen::MatrixXd I = Eigen::MatrixXd::Identity(k, k);
     double orthErr = (Gram - I).cwiseAbs().maxCoeff();
@@ -124,10 +137,10 @@ int main() {
     const auto& f2 = cache.laplacian(g.L);
     EXPECT(&f1 == &f2);  // same factor returned
 
-    // ── 5. solvePoisson(L, M, cache, …) ────────────────────────
-    std::cout << "[5] solvePoisson on graph Laplacian\n";
+    // ── 5. poisson(L, M, cache, …) ────────────────────────
+    std::cout << "[5] poisson on graph Laplacian\n";
     std::map<int, double> density = { {0, 1.0}, {n - 1, -1.0} };
-    auto phi = solvePoisson(g.L, g.M, cache, density);
+    auto phi = solve::poisson(g.L, g.M, cache, density);
     EXPECT(phi.size() == n);
 
     // M-weighted mean of phi should be ≈ 0. The Poisson formulation
@@ -139,13 +152,13 @@ int main() {
     std::cout << "    range = [" << phi.minCoeff()
               << ", " << phi.maxCoeff() << "], mean = " << phiMean << "\n";
 
-    // ── 6. generateHeatDiffusion(M, eig, u0, …) ────────────────
-    std::cout << "[6] generateHeatDiffusion on graph eigenmodes\n";
+    // ── 6. heatDiffusion(M, eig, u0, …) ────────────────
+    std::cout << "[6] heatDiffusion on graph eigenmodes\n";
     // u0 = a single eigenmode → exact pure exponential decay.
     Eigen::VectorXd u0 = eig.eigenvectors.col(0);
     std::vector<double> ts = { 0.0, 0.1, 0.5, 2.0 };
     double alpha = 1.0;
-    auto heat = generateHeatDiffusion(g.M, eig, u0, ts, alpha);
+    auto heat = heatDiffusion(g.M, eig, u0, ts, alpha);
     EXPECT(heat.rows() == static_cast<int>(ts.size()));
     EXPECT(heat.cols() == n);
 
@@ -167,7 +180,7 @@ int main() {
     Eigen::VectorXd u0Delta = Eigen::VectorXd::Zero(n);
     u0Delta(n / 2) = 1.0;
     std::vector<double> tsLong = { 5000.0 };
-    auto heatLong = generateHeatDiffusion(g.M, eig, u0Delta, tsLong, 1.0);
+    auto heatLong = heatDiffusion(g.M, eig, u0Delta, tsLong, 1.0);
     Eigen::VectorXd uInf = heatLong.row(0).cast<double>();
     double expectedMean = 1.0 / static_cast<double>(n);
     double maxDev = (uInf.array() - expectedMean).abs().maxCoeff();

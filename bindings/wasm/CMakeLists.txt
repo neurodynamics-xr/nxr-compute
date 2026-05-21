@@ -7,7 +7,7 @@
 # Usage from JS:
 #   import createNxrComputeModule from './nxr_compute.js'
 #   const nxr-compute = await createNxrComputeModule()
-#   const ctx = new nxr-compute.ComputeContext(verts, faces)
+#   const ctx = new nxr-compute.Manifold(verts, faces)
 #
 # This target only builds when CMake is configured with the
 # Emscripten toolchain (i.e. via emcmake). It links the nxr-compute
@@ -44,7 +44,7 @@ target_link_libraries(nxr_compute_wasm PRIVATE nxr_compute)
 # MAXIMUM_MEMORY=2GB           Browser-side cap
 # ENVIRONMENT=web,node,worker  Run in any of these
 # NO_EXIT_RUNTIME=1            Keep the runtime alive after main() (so the
-#                              ComputeContext doesn't get torn down)
+#                              Manifold doesn't get torn down)
 # DISABLE_EXCEPTION_CATCHING=0 Allow C++ exceptions (nxr-compute throws on bad input)
 # EXPORTED_RUNTIME_METHODS     Heap typed-array views + helpers used by:
 #                              • embind's `convertJSArrayToNumberVector`

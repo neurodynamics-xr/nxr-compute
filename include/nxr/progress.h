@@ -1,6 +1,6 @@
 #pragma once
 
-// ── nxr::compute::ProgressObserver — lock-free progress slots ─────────
+// ── nxr::core::ProgressObserver — lock-free progress slots ─────────
 //
 // Long-running nxr-compute operations accept an optional ProgressObserver.
 // The struct holds three pointers to atomic<int32_t> slots; the
@@ -35,7 +35,7 @@
 #include <atomic>
 #include <cstdint>
 
-namespace nxr::compute {
+namespace nxr::core {
 
 struct ProgressObserver {
     std::atomic<int32_t>* iteration       = nullptr;
@@ -69,4 +69,4 @@ struct ProgressObserver {
     }
 };
 
-} // namespace nxr::compute
+} // namespace nxr::core

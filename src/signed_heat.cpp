@@ -8,39 +8,39 @@
 #include <iostream>
 #include <vector>
 
-namespace nxr::compute {
+namespace nxr::manifold::solve {
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
 
 class SignedHeatSolverImpl {
 public:
-    SignedHeatSolverImpl(ComputeContext& c, double tCoef)
-        : ctx(c), solver(c.geometry(), tCoef) {}
-    ComputeContext& ctx;
+    SignedHeatSolverImpl(Manifold& c, double tCoef)
+        : m(c), solver(c.geometry(), tCoef) {}
+    Manifold& m;
     geometrycentral::surface::SignedHeatSolver solver;
 };
 
-SignedHeatSolver::SignedHeatSolver(ComputeContext& ctx, double tCoef)
-    : impl_(std::make_unique<SignedHeatSolverImpl>(ctx, tCoef)) {}
+SignedHeatSolver::SignedHeatSolver(Manifold& m, double tCoef)
+    : impl_(std::make_unique<SignedHeatSolverImpl>(m, tCoef)) {}
 
 SignedHeatSolver::~SignedHeatSolver() = default;
 
 SignedHeatSolverImpl& SignedHeatSolver::impl() { return *impl_; }
 
-Eigen::VectorXd signedHeatDistance(
+Eigen::VectorXd signedHeat(
     SignedHeatSolver& solver,
     const std::vector<int>& curveVertices,
     bool isLoop,
     SignedHeatLevelSet levelSet
 ) {
     auto& s = solver.impl();
-    auto& mesh = s.ctx.mesh();
-    int nV = s.ctx.nV();
+    auto& mesh = s.m.mesh();
+    int nV = s.m.nV();
 
     if (curveVertices.size() < 2) {
         throw Error(ErrorCode::InvalidInput,
-            "signedHeatDistance: curve must have at least 2 vertices");
+            "signedHeat: curve must have at least 2 vertices");
     }
 
     Curve curve;
@@ -83,4 +83,4 @@ Eigen::VectorXd signedHeatDistance(
     return out;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::solve

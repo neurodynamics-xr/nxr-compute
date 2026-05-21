@@ -5,7 +5,7 @@
 
 #include <iostream>
 
-namespace nxr::compute {
+namespace nxr::manifold::geometry {
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
@@ -18,13 +18,13 @@ using namespace geometrycentral::surface;
 // Convention matches direction_field.cpp::faceOrthonormalBasis, so
 // tangent vectors transported via the trivial-connection direction
 // field are interpretable in the same coordinate system.
-FaceFrames computeFaceFrames(ComputeContext& ctx) {
-    auto& mesh = ctx.mesh();
-    auto& geom = ctx.geometry();
+FaceFrames frames(Manifold& m) {
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
 
     geom.requireFaceNormals();
 
-    int nF = ctx.nF();
+    int nF = m.nF();
     FaceFrames out;
     out.e1.resize(nF, 3);
     out.e2.resize(nF, 3);
@@ -50,4 +50,4 @@ FaceFrames computeFaceFrames(ComputeContext& ctx) {
     return out;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::geometry

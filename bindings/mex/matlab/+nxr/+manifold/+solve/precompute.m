@@ -5,7 +5,7 @@ function eig = precompute(mctx, k)
 %
 %   Equivalent to:
 %       e = nxr.manifold.solve.eigen(mctx, k);
-%       e.eigenvectors = nxr_compute('normalizeEigenmodes', e.eigenvectors, mctx.M);
+%       e.eigenvectors = nxr_compute('normalize', e.eigenvectors, mctx.M);
 %       e = nxr_compute('removeDC', e);
 %
 %   The MEX `precompute` dispatcher inlines all four steps in C++, so

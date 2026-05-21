@@ -10,7 +10,7 @@
 //   1. Flat surface (legacy, backward-compatible):
 //        const nxr = await initNxrCompute()
 //        const ctx = nxr.createContext(verts, faces)
-//        ctx.solveEigenmodes(300)
+//        ctx.solve(300)
 //
 //   2. Six-group nested namespace `nxr.manifold.*` (preferred for new code):
 //        const mctx = nxr.createManifoldContext(verts, faces)
@@ -61,7 +61,7 @@ function wrap(mod) {
 
     /**
      * Generalized eigensolve K φ = λ M φ from caller-supplied COO triplets.
-     * Bypasses the halfedge ComputeContext path — use this when K and M
+     * Bypasses the halfedge Manifold path — use this when K and M
      * are assembled outside of geometry-central (graph Laplacians, FEM
      * assemblies on non-manifold meshes, custom regularized matrices).
      *
@@ -94,14 +94,14 @@ function wrap(mod) {
     ),
 
     /**
-     * Create a ComputeContext for the given mesh (flat surface).
+     * Create a Manifold for the given mesh (flat surface).
      *
      * @param {Float64Array | number[]} vertices — `V × 3` row-major
      *   xyz triples. Float64 is the canonical type; arrays are
      *   accepted for convenience.
      * @param {Int32Array | number[]} faces — `F × 3` row-major
      *   vertex indices, **0-based**.
-     * @returns {ComputeContext}
+     * @returns {Manifold}
      */
     createContext(vertices, faces) {
       const raw = makeRaw(mod, vertices, faces)
@@ -112,7 +112,7 @@ function wrap(mod) {
      * Create a ManifoldContext for the given mesh — the same compute
      * context exposed under the six-group `nxr.manifold.*` namespace.
      * Internally constructs a single ContextWrapper; both
-     * `mctx.solve.eigen(...)` and `mctx._flat.solveEigenmodes(...)`
+     * `mctx.solve.eigen(...)` and `mctx._flat.solve(...)`
      * call into the same C++ object.
      *
      * @param {Float64Array | number[]} vertices
@@ -150,41 +150,15 @@ function makeRaw(mod, vertices, faces) {
   const f = faces    instanceof Int32Array   ? faces    : new Int32Array(faces)
   if (v.length % 3 !== 0) throw new Error('nxr: vertices length must be a multiple of 3')
   if (f.length % 3 !== 0) throw new Error('nxr: faces length must be a multiple of 3')
-
-  // Fast path: place buffers on the wasm heap ourselves and call the
-  // pointer-taking factory. One memcpy per buffer (HEAP*.set is a
-  // typed-array memcpy under the hood) vs Embind's
-  // convertJSArrayToNumberVector, which walks element-by-element
-  // through a JS Array bridge — measurable on cortical-scale meshes
-  // (V≈165k). Memory is freed before returning regardless of
-  // success/failure.
-  //
-  // Fallback: older prebuilt WASM artifacts (committed in dist/wasm/
-  // before this rev) don't expose `fromPointers`. Detect and fall
-  // through to the legacy val-taking constructor for back-compat.
-  if (typeof mod.ComputeContext.fromPointers === 'function') {
-    const nV = v.length / 3
-    const nF = f.length / 3
-    const vertsPtr = mod._malloc(v.byteLength)
-    const facesPtr = mod._malloc(f.byteLength)
-    try {
-      mod.HEAPF64.set(v, vertsPtr >>> 3)  // /8: byte offset → Float64 index
-      mod.HEAP32.set(f, facesPtr >>> 2)   // /4: byte offset → Int32 index
-      return mod.ComputeContext.fromPointers(vertsPtr, nV, facesPtr, nF)
-    } finally {
-      mod._free(vertsPtr)
-      mod._free(facesPtr)
-    }
-  }
-  // Legacy val-taking constructor (Embind walks element-by-element).
-  return new mod.ComputeContext(v, f)
+  // The Embind constructor accepts JS arrays via val; pass typed arrays directly.
+  return new mod.Manifold(v, f)
 }
 
 /* ---------------------------------------------------------------------- */
 /*                Flat surface (legacy, backward-compatible)              */
 /* ---------------------------------------------------------------------- */
 
-/** Adds JS-side ergonomics on top of the raw Embind ComputeContext. */
+/** Adds JS-side ergonomics on top of the raw Embind Manifold. */
 function makeContextWrapper(raw) {
   return {
     nV: () => raw.nV(),
@@ -193,14 +167,14 @@ function makeContextWrapper(raw) {
 
     // Operators / geometry
     // `variant` ∈ "voronoi" (default) | "barycentric" | "full".
-    assembleMeshOperators: (variant = "") => raw.assembleMeshOperators(variant),
+    assembleManifoldOperators: (variant = "") => raw.assembleManifoldOperators(variant),
     assembleDECOperators:  () => raw.assembleDECOperators(),
-    computeFaceFrames:     () => raw.computeFaceFrames(),
-    computeVertexNormals:  (type = 0) => raw.computeVertexNormals(type),
+    frames:     () => raw.frames(),
+    normals:  (type = 0) => raw.normals(type),
 
     // Spectral
-    solveEigenmodes:       (k, sigma = -1e-8) => raw.solveEigenmodes(k, sigma),
-    normalizeEigenmodes:   (U, rows, cols)    => raw.normalizeEigenmodes(U, rows, cols),
+    solve:       (k, sigma = -1e-8) => raw.solve(k, sigma),
+    normalize:   (U, rows, cols)    => raw.normalize(U, rows, cols),
     removeDC:              (eig)              => raw.removeDC(eig),
 
     /**
@@ -216,98 +190,98 @@ function makeContextWrapper(raw) {
     },
 
     // Solvers
-    solvePoisson(sourceVerts, sourceValues) {
+    poisson(sourceVerts, sourceValues) {
       const sv = sourceVerts  instanceof Int32Array   ? sourceVerts  : new Int32Array(sourceVerts)
       const sa = sourceValues instanceof Float64Array ? sourceValues : new Float64Array(sourceValues)
-      return raw.solvePoisson(sv, sa)
+      return raw.poisson(sv, sa)
     },
-    computeGeodesicDistance(sourceVerts) {
+    heat(sourceVerts) {
       const sv = sourceVerts instanceof Int32Array ? sourceVerts : new Int32Array(sourceVerts)
-      return raw.computeGeodesicDistance(sv)
+      return raw.heat(sv)
     },
     tracePath:        (vStart, vEnd) => raw.tracePath(vStart, vEnd),
-    hodgeDecompose:   (omega)        => raw.hodgeDecompose(omega),
+    hodge:   (omega)        => raw.hodge(omega),
 
     // Geometric
-    computeCurvatures:    () => raw.computeCurvatures(),
-    computeUVCoordinates: () => raw.computeUVCoordinates(),
-    computeIsolines(scalars, numLevels, minVal = 0, maxVal = 0) {
-      return raw.computeIsolines(scalars, numLevels, minVal, maxVal)
+    curvatures:    () => raw.curvatures(),
+    bff: () => raw.bff(),
+    isoline(scalars, numLevels, minVal = 0, maxVal = 0) {
+      return raw.isoline(scalars, numLevels, minVal, maxVal)
     },
-    computeDirectionField(singVerts, singValues) {
+    trivial(singVerts, singValues) {
       const sv = singVerts  instanceof Int32Array   ? singVerts  : new Int32Array(singVerts)
       const sa = singValues instanceof Float64Array ? singValues : new Float64Array(singValues)
-      return raw.computeDirectionField(sv, sa)
+      return raw.trivial(sv, sa)
     },
-    traceStreamlines(faceField, numSeeds = 15, stepCoef = 0.15, maxSteps = 1000) {
-      return raw.traceStreamlines(faceField, numSeeds, stepCoef, maxSteps)
+    streamline(faceField, numSeeds = 15, stepCoef = 0.15, maxSteps = 1000) {
+      return raw.streamline(faceField, numSeeds, stepCoef, maxSteps)
     },
 
     // Vector field
-    whitneyInterpolate: (oneForm) => raw.whitneyInterpolate(oneForm),
-    scalarGradient:     (scalar)  => raw.scalarGradient(scalar),
+    whitney: (oneForm) => raw.whitney(oneForm),
+    gradient:     (scalar)  => raw.gradient(scalar),
 
     // Time-varying generators
-    generateHeatDiffusion(sources, sourceValues, timesteps, alpha = 1.0) {
+    heatDiffusion(sources, sourceValues, timesteps, alpha = 1.0) {
       const sv = sources       instanceof Int32Array   ? sources       : new Int32Array(sources)
       const sa = sourceValues  instanceof Float64Array ? sourceValues  : new Float64Array(sourceValues)
       const ts = timesteps     instanceof Float64Array ? timesteps     : new Float64Array(timesteps)
-      return raw.generateHeatDiffusion(sv, sa, ts, alpha)
+      return raw.heatDiffusion(sv, sa, ts, alpha)
     },
-    generateDampedWave(modeIndices, amplitudes, dampings, phases, timesteps) {
+    dampedWave(modeIndices, amplitudes, dampings, phases, timesteps) {
       const mi = modeIndices instanceof Int32Array   ? modeIndices : new Int32Array(modeIndices)
       const am = amplitudes  instanceof Float64Array ? amplitudes  : new Float64Array(amplitudes)
       const da = dampings    instanceof Float64Array ? dampings    : new Float64Array(dampings)
       const ph = phases      instanceof Float64Array ? phases      : new Float64Array(phases)
       const ts = timesteps   instanceof Float64Array ? timesteps   : new Float64Array(timesteps)
-      return raw.generateDampedWave(mi, am, da, ph, ts)
+      return raw.dampedWave(mi, am, da, ph, ts)
     },
-    generateRandomDecomposed1Form(alphaStrength, betaStrength, gammaStrength, seed = 42) {
-      return raw.generateRandomDecomposed1Form(alphaStrength, betaStrength, gammaStrength, seed)
+    randomDecomposed1Form(alphaStrength, betaStrength, gammaStrength, seed = 42) {
+      return raw.randomDecomposed1Form(alphaStrength, betaStrength, gammaStrength, seed)
     },
 
     // Vector heat method (Sharp, Soliman, Crane 2019)
-    vectorHeatTransport(sourceVerts, sourceVectors) {
+    parallel(sourceVerts, sourceVectors) {
       const sv = sourceVerts    instanceof Int32Array   ? sourceVerts    : new Int32Array(sourceVerts)
       const vv = sourceVectors  instanceof Float64Array ? sourceVectors  : new Float64Array(sourceVectors)
-      return raw.vectorHeatTransport(sv, vv)
+      return raw.parallel(sv, vv)
     },
-    vectorHeatExtendScalar(sourceVerts, sourceValues) {
+    extendScalar(sourceVerts, sourceValues) {
       const sv = sourceVerts   instanceof Int32Array   ? sourceVerts   : new Int32Array(sourceVerts)
       const sa = sourceValues  instanceof Float64Array ? sourceValues  : new Float64Array(sourceValues)
-      return raw.vectorHeatExtendScalar(sv, sa)
+      return raw.extendScalar(sv, sa)
     },
-    vectorHeatLogMap(sourceVertex, strategy = 1 /* AffineLocal */) {
-      return raw.vectorHeatLogMap(sourceVertex, strategy)
+    logMap(sourceVertex, strategy = 1 /* AffineLocal */) {
+      return raw.logMap(sourceVertex, strategy)
     },
-    vectorHeatFindCenter(sourceVerts, p = 2) {
+    findCenter(sourceVerts, p = 2) {
       const sv = sourceVerts instanceof Int32Array ? sourceVerts : new Int32Array(sourceVerts)
-      return raw.vectorHeatFindCenter(sv, p)
+      return raw.findCenter(sv, p)
     },
 
     // Signed heat method (Feng & Crane 2024)
-    signedHeatDistance(curveVerts, isLoop = true, levelSet = 1 /* ZeroSet */) {
+    signedHeat(curveVerts, isLoop = true, levelSet = 1 /* ZeroSet */) {
       const cv = curveVerts instanceof Int32Array ? curveVerts : new Int32Array(curveVerts)
-      return raw.signedHeatDistance(cv, isLoop, levelSet)
+      return raw.signedHeat(cv, isLoop, levelSet)
     },
 
     // Smooth direction fields (Knöppel-Crane)
-    computeSmoothFaceField(nSym = 4, alignToCurvature = false) {
-      return raw.computeSmoothFaceField(nSym, alignToCurvature)
+    smoothFace(nSym = 4, alignToCurvature = false) {
+      return raw.smoothFace(nSym, alignToCurvature)
     },
-    computeSmoothVertexField(nSym = 2, alignToCurvature = false) {
-      return raw.computeSmoothVertexField(nSym, alignToCurvature)
+    smoothVertex(nSym = 2, alignToCurvature = false) {
+      return raw.smoothVertex(nSym, alignToCurvature)
     },
 
     // Stripe patterns (Knöppel-Crane SIGGRAPH 2015)
-    computeStripePattern(vertexFieldRaw, uniformFrequency, connectOnSingularities = true) {
+    compute(vertexFieldRaw, uniformFrequency, connectOnSingularities = true) {
       const vf = vertexFieldRaw instanceof Float64Array ? vertexFieldRaw : new Float64Array(vertexFieldRaw)
-      return raw.computeStripePattern(vf, uniformFrequency, connectOnSingularities)
+      return raw.compute(vf, uniformFrequency, connectOnSingularities)
     },
-    computeStripePatternFreq(vertexFieldRaw, frequencies, connectOnSingularities = true) {
+    computeFreq(vertexFieldRaw, frequencies, connectOnSingularities = true) {
       const vf = vertexFieldRaw instanceof Float64Array ? vertexFieldRaw : new Float64Array(vertexFieldRaw)
       const fr = frequencies    instanceof Float64Array ? frequencies    : new Float64Array(frequencies)
-      return raw.computeStripePatternFreq(vf, fr, connectOnSingularities)
+      return raw.computeFreq(vf, fr, connectOnSingularities)
     },
 
     /** Release WASM heap memory for this context. After delete(),
@@ -346,7 +320,7 @@ function asF64(a) { return a instanceof Float64Array ? a : new Float64Array(a) }
  * underlying ContextWrapper. Each leaf delegates to a single C++ method;
  * no math is reimplemented here. The split DEC and mesh operators (e.g.
  * `operator.d0`, `operator.mass`) are extracted from the cached results
- * of the bulk `assembleDECOperators` / `assembleMeshOperators` calls.
+ * of the bulk `assembleDECOperators` / `assembleManifoldOperators` calls.
  */
 function makeManifoldContext(raw) {
   // Lazy caches for the bulk operator assemblies. `operator.d0()` and
@@ -354,30 +328,30 @@ function makeManifoldContext(raw) {
   let _dec  = null
   let _mesh = null
   const dec  = () => (_dec  ??= raw.assembleDECOperators())
-  const mesh = () => (_mesh ??= raw.assembleMeshOperators(""))
+  const mesh = () => (_mesh ??= raw.assembleManifoldOperators(""))
 
   // ----- solve --------------------------------------------------------
   const solve = {
     poisson(sourceVerts, sourceValues) {
-      return raw.solvePoisson(asI32(sourceVerts), asF64(sourceValues))
+      return raw.poisson(asI32(sourceVerts), asF64(sourceValues))
     },
     /**
      * Heat diffusion on the manifold over the given timesteps.
-     * Consolidates the legacy `generateHeatDiffusion` entry point —
+     * Consolidates the legacy `heatDiffusion` entry point —
      * one call returns a TimeSeriesField.
      */
     heat(sources, sourceValues, timesteps, alpha = 1.0) {
-      return raw.generateHeatDiffusion(
+      return raw.heatDiffusion(
         asI32(sources), asF64(sourceValues), asF64(timesteps), alpha,
       )
     },
     eigen(k, sigma = -1e-8) {
-      return raw.solveEigenmodes(k, sigma)
+      return raw.solve(k, sigma)
     },
     /** Provisional — flag for future re-classification (likely
      *  `operator.hodgeDecomp` or `interpolate.hodge`). */
     hodge(omega) {
-      return raw.hodgeDecompose(omega)
+      return raw.hodge(omega)
     },
   }
 
@@ -394,9 +368,9 @@ function makeManifoldContext(raw) {
     star2:        () => dec().hodge2,
     star1Inverse: () => dec().hodge1Inverse,
     mass:         () => mesh().mass,
-    stiffness:    () => mesh().cotanLaplacian,
+    stiffness:    () => mesh().stiffness,
     /** Cotangent Laplacian — same matrix as `operator.stiffness()`. */
-    laplacian:    () => mesh().cotanLaplacian,
+    laplacian:    () => mesh().stiffness,
     /**
      * Connection Laplacian on the chosen domain. Drives smoothest
      * n-RoSy direction fields, parallel-transport energies, and
@@ -407,7 +381,7 @@ function makeManifoldContext(raw) {
      * `solveEigenmodesFromTriplets` together with a block-diagonal
      * real mass matrix `blkdiag(M, M)`. The smallest eigenpair
      * reproduces the smoothest n-direction field that
-     * `interpolate.smoothFaceField` / `smoothVertexField` return
+     * `interpolate.smoothFace` / `smoothVertex` return
      * internally.
      *
      * The `format: 'complex'` form returns a complex Hermitian COO
@@ -439,7 +413,7 @@ function makeManifoldContext(raw) {
   // ----- query --------------------------------------------------------
   // Most query primitives are round-1 stubs. Where a clean composition
   // from existing primitives is available (e.g. `query.isoline` from
-  // computeIsolines), we wire it; otherwise emit a one-shot warning and
+  // isoline), we wire it; otherwise emit a one-shot warning and
   // return a TODO marker.
   const query = {
     /** Identity wrapper — useful for the functional form
@@ -452,11 +426,11 @@ function makeManifoldContext(raw) {
     /** Single-level isoline of a per-vertex scalar field. */
     isoline(field, level) {
       const f = asF64(field)
-      return raw.computeIsolines(f, 1, level, level)
+      return raw.isoline(f, 1, level, level)
     },
     /** Karcher mean of source vertices (vector-heat findCenter, p-th power). */
     center(sourceVerts, p = 2) {
-      return raw.vectorHeatFindCenter(asI32(sourceVerts), p)
+      return raw.findCenter(asI32(sourceVerts), p)
     },
   }
 
@@ -465,35 +439,35 @@ function makeManifoldContext(raw) {
   //   mctx.measure.distance([0])                  // unsigned heat-method geodesic
   //   mctx.measure.distance.signed([0,1,2], true) // signed heat distance from a curve
   function distance(sourceVerts) {
-    return raw.computeGeodesicDistance(asI32(sourceVerts))
+    return raw.heat(asI32(sourceVerts))
   }
   distance.signed = function distanceSigned(curveVerts, isLoop = true, levelSet = 1 /* ZeroSet */) {
-    return raw.signedHeatDistance(asI32(curveVerts), isLoop, levelSet)
+    return raw.signedHeat(asI32(curveVerts), isLoop, levelSet)
   }
   const measure = {
     distance,
     area(region)            { return stubWarn('measure.area'); /* TODO: integrate vertex/face areas over a region selection */ },
     density(region, field)  { return stubWarn('measure.density'); /* TODO: average a scalar field over a region */ },
-    curvature()             { return raw.computeCurvatures() },
-    normal(type = 0)        { return raw.computeVertexNormals(type) },
-    frame()                 { return raw.computeFaceFrames() },
+    curvature()             { return raw.curvatures() },
+    normal(type = 0)        { return raw.normals(type) },
+    frame()                 { return raw.frames() },
   }
 
   // ----- uv -----------------------------------------------------------
   const uv = {
     /** Boundary First Flattening (open meshes only — throws otherwise). */
-    bff() { return raw.computeUVCoordinates() },
+    bff() { return raw.bff() },
     /** Logarithmic map at one source vertex. */
     logMap(sourceVertex, strategy = 1 /* AffineLocal */) {
-      return raw.vectorHeatLogMap(sourceVertex, strategy)
+      return raw.logMap(sourceVertex, strategy)
     },
     /** Sinusoidal stripes aligned to a 2-RoSy field. */
     stripe(vertexFieldRaw, uniformFrequency, connectOnSingularities = true) {
-      return raw.computeStripePattern(asF64(vertexFieldRaw), uniformFrequency, connectOnSingularities)
+      return raw.compute(asF64(vertexFieldRaw), uniformFrequency, connectOnSingularities)
     },
     /** Stripe pattern with a per-vertex frequency (length V). */
     stripeFreq(vertexFieldRaw, frequencies, connectOnSingularities = true) {
-      return raw.computeStripePatternFreq(asF64(vertexFieldRaw), asF64(frequencies), connectOnSingularities)
+      return raw.computeFreq(asF64(vertexFieldRaw), asF64(frequencies), connectOnSingularities)
     },
   }
 
@@ -501,24 +475,24 @@ function makeManifoldContext(raw) {
   const interpolate = {
     /** Parallel-transport tangent vectors via the vector heat method. */
     transport(sourceVerts, sourceVectors) {
-      return raw.vectorHeatTransport(asI32(sourceVerts), asF64(sourceVectors))
+      return raw.parallel(asI32(sourceVerts), asF64(sourceVectors))
     },
     /** Smoothly extend a sparse scalar from the source vertices to all V. */
     extend(sourceVerts, sourceValues) {
-      return raw.vectorHeatExtendScalar(asI32(sourceVerts), asF64(sourceValues))
+      return raw.extendScalar(asI32(sourceVerts), asF64(sourceValues))
     },
     /** Trivial-connection direction field driven by prescribed singularities. */
-    directionField(singVerts, singValues) {
-      return raw.computeDirectionField(asI32(singVerts), asF64(singValues))
+    trivial(singVerts, singValues) {
+      return raw.trivial(asI32(singVerts), asF64(singValues))
     },
     /** Smoothest face-based direction field (Knöppel-Crane). */
-    smoothFaceField(nSym = 4, alignToCurvature = false) {
-      return raw.computeSmoothFaceField(nSym, alignToCurvature)
+    smoothFace(nSym = 4, alignToCurvature = false) {
+      return raw.smoothFace(nSym, alignToCurvature)
     },
     /** Smoothest vertex-based direction field — the `vertexFieldRaw` field
      *  in the result is what `uv.stripe` consumes. */
-    smoothVertexField(nSym = 2, alignToCurvature = false) {
-      return raw.computeSmoothVertexField(nSym, alignToCurvature)
+    smoothVertex(nSym = 2, alignToCurvature = false) {
+      return raw.smoothVertex(nSym, alignToCurvature)
     },
   }
 
@@ -620,9 +594,9 @@ function makeFunctionalNamespace() {
     interpolate: {
       transport:         fwd('interpolate', 'transport'),
       extend:            fwd('interpolate', 'extend'),
-      directionField:    fwd('interpolate', 'directionField'),
-      smoothFaceField:   fwd('interpolate', 'smoothFaceField'),
-      smoothVertexField: fwd('interpolate', 'smoothVertexField'),
+      trivial:    fwd('interpolate', 'trivial'),
+      smoothFace:   fwd('interpolate', 'smoothFace'),
+      smoothVertex: fwd('interpolate', 'smoothVertex'),
     },
   }
 }

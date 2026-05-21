@@ -2,9 +2,9 @@
  * test_visualization_primitives.cpp — verifies the three new
  * visualization-layer primitives:
  *
- *   1. computeFaceFrames    — per-face orthonormal (e1, e2, n)
+ *   1. frames    — per-face orthonormal (e1, e2, n)
  *   2. tracePath            — geodesic path via flip-out
- *   3. computeUVCoordinates — BFF parametrization
+ *   3. bff — BFF parametrization
  *
  * Face frames + geodesic path: tested on the icosahedron fixture
  * shared with the other tests. BFF: needs an open mesh, so we
@@ -22,7 +22,20 @@
 #include <iostream>
 #include <vector>
 
-using namespace nxr::compute;
+using namespace nxr::manifold;
+using namespace nxr::manifold::solve;
+using namespace nxr::manifold::ops;
+using namespace nxr::manifold::ops::laplacian::connection;
+using namespace nxr::manifold::transport;
+using namespace nxr::manifold::connection;
+using namespace nxr::manifold::parametrization;
+using namespace nxr::manifold::parametrization::stripes;
+using namespace nxr::manifold::geometry;
+using namespace nxr::manifold::query;
+using namespace nxr::field::generate;
+using namespace nxr::field::interp;
+using namespace nxr::field::op;
+using namespace nxr::field::extract;
 
 #define REQUIRE(cond, msg) do { \
     if (!(cond)) { \
@@ -93,21 +106,21 @@ int main() try {
         int nV = static_cast<int>(V.size() / 3);
         int nF = static_cast<int>(F.size() / 3);
 
-        ComputeContext ctx(V.data(), nV, F.data(), nF);
-        auto frames = computeFaceFrames(ctx);
+        Manifold m(V.data(), nV, F.data(), nF);
+        auto ff = frames(m);
 
-        REQUIRE(frames.e1.rows()      == nF, "e1 row count");
-        REQUIRE(frames.e2.rows()      == nF, "e2 row count");
-        REQUIRE(frames.normals.rows() == nF, "normals row count");
+        REQUIRE(ff.e1.rows()      == nF, "e1 row count");
+        REQUIRE(ff.e2.rows()      == nF, "e2 row count");
+        REQUIRE(ff.normals.rows() == nF, "normals row count");
 
         // For each face: check orthonormality {e1, e2, n}.
         double maxOrthErr = 0.0;
         double maxNormErr = 0.0;
         double maxRightHandErr = 0.0;
         for (int fi = 0; fi < nF; fi++) {
-            Eigen::Vector3d e1 = frames.e1.row(fi).transpose();
-            Eigen::Vector3d e2 = frames.e2.row(fi).transpose();
-            Eigen::Vector3d n  = frames.normals.row(fi).transpose();
+            Eigen::Vector3d e1 = ff.e1.row(fi).transpose();
+            Eigen::Vector3d e2 = ff.e2.row(fi).transpose();
+            Eigen::Vector3d n  = ff.normals.row(fi).transpose();
 
             maxOrthErr = std::max(maxOrthErr, std::abs(e1.dot(e2)));
             maxOrthErr = std::max(maxOrthErr, std::abs(e1.dot(n)));
@@ -135,11 +148,11 @@ int main() try {
         int nV = static_cast<int>(V.size() / 3);
         int nF = static_cast<int>(F.size() / 3);
 
-        ComputeContext ctx(V.data(), nV, F.data(), nF);
+        Manifold m(V.data(), nV, F.data(), nF);
 
         // First sanity: adjacent vertices (0 → 1, share an edge).
         std::cout << "  [2a] tracing 0→1 (adjacent)..." << std::endl;
-        auto pathAdj = tracePath(ctx, 0, 1);
+        auto pathAdj = tracePath(m, 0, 1);
         REQUIRE(pathAdj.rows() >= 2, "adjacent path has at least 2 points");
         std::cout << "  [2a] adjacent path ✓ (" << pathAdj.rows() << " points)"
                   << std::endl;
@@ -152,7 +165,7 @@ int main() try {
         // 12-vertex mesh we expect length in (chord=2, arc=π) ≈
         // (2.0, 3.14). The flip-out result is ~2.78, comfortably
         // inside that envelope.
-        auto path = tracePath(ctx, 0, 3);
+        auto path = tracePath(m, 0, 3);
 
         REQUIRE(path.rows() >= 2, "path has at least 2 points");
         REQUIRE(path.cols() == 3, "path is 3D");
@@ -193,8 +206,8 @@ int main() try {
         int nF = static_cast<int>(F.size() / 3);
         std::cout << "  grid: nV=" << nV << " nF=" << nF << std::endl;
 
-        ComputeContext ctx(V.data(), nV, F.data(), nF);
-        auto uvs = computeUVCoordinates(ctx);
+        Manifold m(V.data(), nV, F.data(), nF);
+        auto uvs = bff(m);
 
         REQUIRE(uvs.rows() == nV, "UV row count");
         REQUIRE(uvs.cols() == 2,  "UV is 2D");
@@ -217,10 +230,10 @@ int main() try {
         // Closed mesh: should error with a clear message.
         std::vector<double> Vico; std::vector<int32_t> Fico;
         buildIcosahedron(Vico, Fico);
-        ComputeContext ctxClosed(Vico.data(), 12, Fico.data(), 20);
+        Manifold ctxClosed(Vico.data(), 12, Fico.data(), 20);
         bool threw = false;
         try {
-            (void)computeUVCoordinates(ctxClosed);
+            (void)bff(ctxClosed);
         } catch (const std::runtime_error&) {
             threw = true;
         }

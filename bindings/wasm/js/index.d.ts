@@ -64,29 +64,26 @@ export type ConnectionLaplacianResult =
       format:         'complex'
     }
 
-/** FEM mass-matrix variant string passed to assembleMeshOperators(). */
+/** FEM mass-matrix variant string passed to assembleManifoldOperators(). */
 export type MassMatrixVariant = "voronoi" | "barycentric" | "full"
 
-export interface MeshOperators {
-  /** Cotangent Laplacian (PSD), V×V sparse. Mirrors
-   *  geometry-central's `geometry.cotanLaplacian`. */
-  cotanLaplacian:   SparseMatrixCOO
+export interface ManifoldOperators {
+  /** Cotangent Laplacian (PSD, symmetrized), V×V sparse */
+  stiffness:   SparseMatrixCOO
   /** Mass matrix, V×V sparse. SPD; diagonal for "voronoi"/"barycentric",
    *  has off-diagonal couplings for "full". */
-  mass:             SparseMatrixCOO
+  mass:        SparseMatrixCOO
   /** Which variant produced `mass`. */
-  massVariant:      MassMatrixVariant
+  massVariant: MassMatrixVariant
   /** Per-vertex Voronoi dual area, V (always Voronoi-derived
-   *  regardless of `massVariant`). Mirrors GC's
-   *  `geometry.vertexDualAreas`. */
-  vertexDualAreas:  Float64Array
-  /** Per-vertex normals, V*3 row-major. Mirrors GC's
-   *  `geometry.vertexNormals`. */
-  vertexNormals:    Float64Array
-  totalArea:        number
-  nV:               number
-  nE:               number
-  nF:               number
+   *  regardless of `massVariant`). */
+  vertexAreas: Float64Array
+  /** Per-vertex normals, V*3 row-major */
+  normals:     Float64Array
+  totalArea:   number
+  nV:          number
+  nE:          number
+  nF:          number
 }
 
 export interface DECOperators {
@@ -119,10 +116,10 @@ export interface FaceFrames {
 }
 
 export interface PrecomputeResult {
-  operators:  MeshOperators
+  operators:  ManifoldOperators
   dec:        DECOperators
   eigenmodes: EigenResult
-  faceFrames: FaceFrames
+  frames: FaceFrames
 }
 
 export interface HodgeResult {
@@ -197,7 +194,7 @@ export interface SmoothVertexFieldResult {
   /** V*3 row-major lifted world-space vectors (principal nSym-RoSy representative). */
   vertexVectors:  Float64Array
   /** V*2 row-major raw nSym-RoSy field in vertex tangent basis.
-   *  Pass back into computeStripePattern as-is. */
+   *  Pass back into compute as-is. */
   vertexFieldRaw: Float64Array
   nSym: number
 }
@@ -226,11 +223,11 @@ export enum NormalType {
 }
 
 /**
- * Stateful compute context for one mesh. Holds the nxr::compute::ComputeContext
+ * Stateful compute context for one mesh. Holds the nxr::manifold::Manifold
  * in WASM linear memory plus cached operators / Cholesky factors /
  * eigenmodes. Call `delete()` when finished.
  */
-export interface ComputeContext {
+export interface Manifold {
   nV(): number
   nE(): number
   nF(): number
@@ -238,14 +235,14 @@ export interface ComputeContext {
   // Operators / geometry
   /** Assemble cotangent stiffness + mass matrix.
    *  @param variant — mass-matrix variant ("voronoi" default, "barycentric", "full"). */
-  assembleMeshOperators(variant?: MassMatrixVariant | ""): MeshOperators
+  assembleManifoldOperators(variant?: MassMatrixVariant | ""): ManifoldOperators
   assembleDECOperators():  DECOperators
-  computeFaceFrames():     FaceFrames
-  computeVertexNormals(type?: NormalType): Float64Array
+  frames():     FaceFrames
+  normals(type?: NormalType): Float64Array
 
   // Spectral
-  solveEigenmodes(k: number, sigma?: number): EigenResult
-  normalizeEigenmodes(U: Float64Array, rows: number, cols: number): Float64Array
+  solve(k: number, sigma?: number): EigenResult
+  normalize(U: Float64Array, rows: number, cols: number): Float64Array
   removeDC(eig: EigenResult): EigenResult
 
   /**
@@ -256,21 +253,21 @@ export interface ComputeContext {
   precompute(options?: { k?: number; sigma?: number }): PrecomputeResult
 
   // Solvers
-  solvePoisson(sourceVerts: Int32Array | number[], sourceValues: Float64Array | number[]): Float64Array
-  computeGeodesicDistance(sourceVerts: Int32Array | number[]): Float64Array
+  poisson(sourceVerts: Int32Array | number[], sourceValues: Float64Array | number[]): Float64Array
+  heat(sourceVerts: Int32Array | number[]): Float64Array
   tracePath(vStart: number, vEnd: number): PolylineResult
-  hodgeDecompose(omega: Float64Array): HodgeResult
+  hodge(omega: Float64Array): HodgeResult
 
   // Geometric
-  computeCurvatures(): CurvatureResult
+  curvatures(): CurvatureResult
   /** Throws if the mesh has no boundary (BFF requires open mesh). */
-  computeUVCoordinates(): Float64Array
-  computeIsolines(scalars: Float64Array, numLevels: number, minVal?: number, maxVal?: number): SegmentsResult
-  computeDirectionField(
+  bff(): Float64Array
+  isoline(scalars: Float64Array, numLevels: number, minVal?: number, maxVal?: number): SegmentsResult
+  trivial(
     singVerts:  Int32Array  | number[],
     singValues: Float64Array | number[],
   ): DirectionFieldResult
-  traceStreamlines(
+  streamline(
     faceField: Float64Array,
     numSeeds?: number,
     stepCoef?: number,
@@ -278,24 +275,24 @@ export interface ComputeContext {
   ): SegmentsResult
 
   // Vector field
-  whitneyInterpolate(oneForm: Float64Array): Float64Array
-  scalarGradient(scalar: Float64Array): Float64Array
+  whitney(oneForm: Float64Array): Float64Array
+  gradient(scalar: Float64Array): Float64Array
 
   // Time-varying generators (require eigenmodes computed first)
-  generateHeatDiffusion(
+  heatDiffusion(
     sources:      Int32Array  | number[],
     sourceValues: Float64Array | number[],
     timesteps:    Float64Array | number[],
     alpha?: number,
   ): TimeSeriesField
-  generateDampedWave(
+  dampedWave(
     modeIndices: Int32Array  | number[],
     amplitudes:  Float64Array | number[],
     dampings:    Float64Array | number[],
     phases:      Float64Array | number[],
     timesteps:   Float64Array | number[],
   ): TimeSeriesField
-  generateRandomDecomposed1Form(
+  randomDecomposed1Form(
     alphaStrength: number,
     betaStrength:  number,
     gammaStrength: number,
@@ -304,29 +301,29 @@ export interface ComputeContext {
 
   // Vector heat method (Sharp, Soliman, Crane 2019)
   /** Parallel-transport tangent vectors. sourceVectors is N*3 world-space. Returns V*3 row-major. */
-  vectorHeatTransport(
+  parallel(
     sourceVerts:   Int32Array  | number[],
     sourceVectors: Float64Array | number[],
   ): Float64Array
   /** Smoothly extend a sparse scalar from the given source vertices to all V. */
-  vectorHeatExtendScalar(
+  extendScalar(
     sourceVerts:  Int32Array  | number[],
     sourceValues: Float64Array | number[],
   ): Float64Array
   /** Logarithmic map at one source vertex. */
-  vectorHeatLogMap(
+  logMap(
     sourceVertex: number,
     strategy?:    LogMapStrategy,
   ): LogMapResult
   /** Karcher mean of source vertices. Returns 3 floats (xyz). */
-  vectorHeatFindCenter(
+  findCenter(
     sourceVerts: Int32Array | number[],
     p?:          number,
   ): Float64Array
 
   // Signed heat method (Feng & Crane 2024)
   /** Signed geodesic distance from a curve given as ordered vertex indices. */
-  signedHeatDistance(
+  signedHeat(
     curveVerts: Int32Array | number[],
     isLoop:     boolean,
     levelSet?:  SignedHeatLevelSet,
@@ -334,26 +331,26 @@ export interface ComputeContext {
 
   // Smooth direction fields (Knöppel-Crane)
   /** Smoothest face-based direction field, lifted to F*3 world. nSym=4 → cross field. */
-  computeSmoothFaceField(
+  smoothFace(
     nSym?:             number,
     alignToCurvature?: boolean,
   ): Float64Array
   /** Smoothest vertex-based direction field. Use the returned `vertexFieldRaw`
-   *  as input to computeStripePattern. nSym=2 typical for stripes. */
-  computeSmoothVertexField(
+   *  as input to compute. nSym=2 typical for stripes. */
+  smoothVertex(
     nSym?:             number,
     alignToCurvature?: boolean,
   ): SmoothVertexFieldResult
 
   // Stripe patterns (Knöppel-Crane SIGGRAPH 2015)
   /** Sinusoidal stripes aligned to a 2-RoSy field, returned as 3D line segments. */
-  computeStripePattern(
+  compute(
     vertexFieldRaw:           Float64Array,
     uniformFrequency:         number,
     connectOnSingularities?:  boolean,
   ): SegmentsResult
   /** Stripe pattern with a per-vertex frequency (length V). */
-  computeStripePatternFreq(
+  computeFreq(
     vertexFieldRaw:           Float64Array,
     frequencies:              Float64Array,
     connectOnSingularities?:  boolean,
@@ -365,12 +362,12 @@ export interface ComputeContext {
 
 export interface NxrCompute {
   version(): string
-  /** Flat surface (legacy). Returns a ComputeContext with the historical
-   *  per-method names (solveEigenmodes, computeGeodesicDistance, …). */
+  /** Flat surface (legacy). Returns a Manifold with the historical
+   *  per-method names (solve, heat, …). */
   createContext(
     vertices: Float64Array | number[],
     faces:    Int32Array  | number[],
-  ): ComputeContext
+  ): Manifold
   /** Six-group nested namespace `nxr.manifold.*` over the same compute
    *  context. Internally constructs a single ContextWrapper. */
   createManifoldContext(
@@ -396,7 +393,7 @@ export interface SolveGroup {
     sourceValues: Float64Array | number[],
   ): Float64Array
   /** Heat diffusion over the given timesteps; consolidates the legacy
-   *  `generateHeatDiffusion` entry point. */
+   *  `heatDiffusion` entry point. */
   heat(
     sources:      Int32Array  | number[],
     sourceValues: Float64Array | number[],
@@ -428,7 +425,7 @@ export interface OperatorGroup {
    *  eigendecompositions. Result-level cached by all four options. */
   connectionLaplacian(options?: ConnectionLaplacianOptions): ConnectionLaplacianResult
   /** Drop the cached DEC and mesh operator results so the next access
-   *  re-runs `assembleDECOperators` / `assembleMeshOperators`. */
+   *  re-runs `assembleDECOperators` / `assembleManifoldOperators`. */
   invalidateCache(): void
 }
 
@@ -494,12 +491,12 @@ export interface InterpolateGroup {
     sourceVerts:  Int32Array  | number[],
     sourceValues: Float64Array | number[],
   ): Float64Array
-  directionField(
+  trivial(
     singVerts:  Int32Array  | number[],
     singValues: Float64Array | number[],
   ): DirectionFieldResult
-  smoothFaceField(nSym?: number, alignToCurvature?: boolean): Float64Array
-  smoothVertexField(nSym?: number, alignToCurvature?: boolean): SmoothVertexFieldResult
+  smoothFace(nSym?: number, alignToCurvature?: boolean): Float64Array
+  smoothVertex(nSym?: number, alignToCurvature?: boolean): SmoothVertexFieldResult
 }
 
 /** Stateful compute context exposed under the six-group nested
@@ -520,7 +517,7 @@ export interface ManifoldContext {
   /** Release WASM heap memory; the context is invalid after dispose(). */
   dispose(): void
   /** Flat compatibility surface (same as `createContext()`'s return). */
-  _flat: ComputeContext
+  _flat: Manifold
 }
 
 /** Functional form of the six-group namespace. Each leaf takes the
@@ -605,13 +602,13 @@ export interface ManifoldFunctional {
       sourceVerts: Int32Array | number[],
       sourceValues: Float64Array | number[],
     ): Float64Array
-    directionField(
+    trivial(
       mctx: ManifoldContext,
       singVerts: Int32Array | number[],
       singValues: Float64Array | number[],
     ): DirectionFieldResult
-    smoothFaceField(mctx: ManifoldContext, nSym?: number, alignToCurvature?: boolean): Float64Array
-    smoothVertexField(mctx: ManifoldContext, nSym?: number, alignToCurvature?: boolean): SmoothVertexFieldResult
+    smoothFace(mctx: ManifoldContext, nSym?: number, alignToCurvature?: boolean): Float64Array
+    smoothVertex(mctx: ManifoldContext, nSym?: number, alignToCurvature?: boolean): SmoothVertexFieldResult
   }
 }
 

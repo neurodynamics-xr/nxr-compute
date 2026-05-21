@@ -92,13 +92,13 @@ check(curv.gaussian.length === 12,
       'measure.curvature() returns per-vertex K')
 
 // ── interpolate group ───────────────────────────────────────
-const sff = mctx.interpolate.smoothFaceField(4, false)
+const sff = mctx.interpolate.smoothFace(4, false)
 check(sff.length === 60,   // 20 faces * 3
-      'interpolate.smoothFaceField(4) → 20×3 vectors')
+      'interpolate.smoothFace(4) → 20×3 vectors')
 
-const svf = mctx.interpolate.smoothVertexField(2, false)
+const svf = mctx.interpolate.smoothVertex(2, false)
 check(svf.vertexFieldRaw.length === 24,   // 12 verts * 2
-      'interpolate.smoothVertexField(2) → 12×2 raw + lifted')
+      'interpolate.smoothVertex(2) → 12×2 raw + lifted')
 
 // ── query group ─────────────────────────────────────────────
 const v = mctx.query.vertex(7)

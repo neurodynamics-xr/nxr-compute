@@ -11,7 +11,7 @@
 #include <tuple>
 #include <vector>
 
-namespace nxr::compute {
+namespace nxr::manifold::transport {
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
@@ -19,27 +19,27 @@ using namespace geometrycentral::surface;
 // ── Solver impl (PIMPL) ───────────────────────────────────
 //
 // Owns the geometry-central VectorHeatMethodSolver plus a
-// reference to the ComputeContext so wrappers can resolve
+// reference to the Manifold so wrappers can resolve
 // vertex / face indices and reach the embedded geometry for
 // tangent-basis lifting.
 
 class VectorHeatSolverImpl {
 public:
-    VectorHeatSolverImpl(ComputeContext& c, double tCoef)
-        : ctx(c), solver(c.geometry(), tCoef) {
+    VectorHeatSolverImpl(Manifold& c, double tCoef)
+        : m(c), solver(c.geometry(), tCoef) {
         c.geometry().requireVertexTangentBasis();
     }
-    ComputeContext& ctx;
+    Manifold& m;
     VectorHeatMethodSolver solver;
 };
 
-VectorHeatSolver::VectorHeatSolver(ComputeContext& ctx, double tCoef)
-    : impl_(std::make_unique<VectorHeatSolverImpl>(ctx, tCoef)) {}
+VectorHeatSolver::VectorHeatSolver(Manifold& m, double tCoef)
+    : impl_(std::make_unique<VectorHeatSolverImpl>(m, tCoef)) {}
 
 VectorHeatSolver::~VectorHeatSolver() = default;
 
 VectorHeatSolverImpl& VectorHeatSolver::impl()  { return *impl_; }
-ComputeContext&       VectorHeatSolver::ctx()   { return impl_->ctx; }
+Manifold&       VectorHeatSolver::m()   { return impl_->m; }
 
 // ── Helpers ───────────────────────────────────────────────
 
@@ -70,15 +70,15 @@ Vector3 tangentToWorld(const Vector2& t,
 
 // ── Tangent vector transport ──────────────────────────────
 
-Eigen::MatrixXd vectorHeatTransport(
+Eigen::MatrixXd parallel(
     VectorHeatSolver& solver,
     const std::vector<int>& sourceVertices,
     const Eigen::MatrixXd& sourceVectors
 ) {
     auto& s = solver.impl();
-    auto& mesh = s.ctx.mesh();
-    auto& geom = s.ctx.geometry();
-    int nV = s.ctx.nV();
+    auto& mesh = s.m.mesh();
+    auto& geom = s.m.geometry();
+    int nV = s.m.nV();
 
     if (static_cast<int>(sourceVertices.size()) != sourceVectors.rows()) {
         throw Error(ErrorCode::InvalidInput,
@@ -117,14 +117,14 @@ Eigen::MatrixXd vectorHeatTransport(
 
 // ── Scalar extension ──────────────────────────────────────
 
-Eigen::VectorXd vectorHeatExtendScalar(
+Eigen::VectorXd extendScalar(
     VectorHeatSolver& solver,
     const std::vector<int>& sourceVertices,
     const Eigen::VectorXd& sourceValues
 ) {
     auto& s = solver.impl();
-    auto& mesh = s.ctx.mesh();
-    int nV = s.ctx.nV();
+    auto& mesh = s.m.mesh();
+    int nV = s.m.nV();
 
     if (static_cast<int>(sourceVertices.size()) != sourceValues.size()) {
         throw Error(ErrorCode::InvalidInput,
@@ -151,15 +151,15 @@ Eigen::VectorXd vectorHeatExtendScalar(
 
 // ── Log map ───────────────────────────────────────────────
 
-LogMapResult vectorHeatLogMap(
+LogMapResult logMap(
     VectorHeatSolver& solver,
     int sourceVertex,
     LogMapStrategy strategy
 ) {
     auto& s = solver.impl();
-    auto& mesh = s.ctx.mesh();
-    auto& geom = s.ctx.geometry();
-    int nV = s.ctx.nV();
+    auto& mesh = s.m.mesh();
+    auto& geom = s.m.geometry();
+    int nV = s.m.nV();
     checkVertexInRange(sourceVertex, nV);
 
     Vertex src = mesh.vertex(static_cast<size_t>(sourceVertex));
@@ -196,15 +196,15 @@ LogMapResult vectorHeatLogMap(
 
 // ── Karcher mean / find center ────────────────────────────
 
-Eigen::Vector3d vectorHeatFindCenter(
+Eigen::Vector3d findCenter(
     VectorHeatSolver& solver,
     const std::vector<int>& sourceVertices,
     int p
 ) {
     auto& s = solver.impl();
-    auto& mesh = s.ctx.mesh();
-    auto& geom = s.ctx.geometry();
-    int nV = s.ctx.nV();
+    auto& mesh = s.m.mesh();
+    auto& geom = s.m.geometry();
+    int nV = s.m.nV();
 
     if (sourceVertices.empty()) {
         throw Error(ErrorCode::InvalidInput,
@@ -218,12 +218,12 @@ Eigen::Vector3d vectorHeatFindCenter(
         srcs.push_back(mesh.vertex(static_cast<size_t>(idx)));
     }
 
-    // findCenter requires a ManifoldSurfaceMesh — ComputeContext stores
+    // findCenter requires a ManifoldSurfaceMesh — Manifold stores
     // exactly that, but the base reference is SurfaceMesh. Cast down.
     auto* manifold = dynamic_cast<ManifoldSurfaceMesh*>(&mesh);
     if (!manifold) {
         throw Error(ErrorCode::NonManifold,
-            "vectorHeatFindCenter requires a manifold surface mesh");
+            "findCenter requires a manifold surface mesh");
     }
 
     SurfacePoint center = findCenter(*manifold, geom, s.solver, srcs, p);
@@ -235,4 +235,4 @@ Eigen::Vector3d vectorHeatFindCenter(
     return out;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::transport

@@ -57,22 +57,30 @@ class VertexPositionGeometry;
 }
 }
 
-namespace nxr::compute {
+namespace nxr::manifold {
+
+// Cross-cutting types live in nxr::core; bring them into manifold scope
+// so unqualified uses below (Error, CancellationToken, ProgressObserver)
+// resolve. See <nxr/errors.h>, <nxr/cancellation.h>, <nxr/progress.h>.
+using core::Error;
+using core::ErrorCode;
+using core::CancellationToken;
+using core::ProgressObserver;
 
 // ── Compute Context ──────────────────────────────────────────
 // Owns the geometry-central mesh and geometry objects.
 // All compute functions operate on a context, which can be created
 // once and reused across multiple calls.
 
-class ComputeContext {
+class Manifold {
 public:
-    ComputeContext(const double* vertices, int nV,
+    Manifold(const double* vertices, int nV,
                    const int32_t* faces, int nF);
-    ~ComputeContext();
+    ~Manifold();
 
     // Non-copyable
-    ComputeContext(const ComputeContext&) = delete;
-    ComputeContext& operator=(const ComputeContext&) = delete;
+    Manifold(const Manifold&) = delete;
+    Manifold& operator=(const Manifold&) = delete;
 
     int nV() const;
     int nE() const;
@@ -90,6 +98,10 @@ private:
     std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh> mesh_;
     std::unique_ptr<geometrycentral::surface::VertexPositionGeometry> geometry_;
 };
+
+} // namespace nxr::manifold
+
+namespace nxr::manifold::ops {
 
 // ── Operator Assembly ────────────────────────────────────────
 
@@ -121,7 +133,7 @@ enum class MassMatrixVariant {
     ConsistentFEM   // sparse, off-diagonal couplings (full FEM mass)
 };
 
-// MeshOperators / DECOperators mix view and value semantics. Field
+// ManifoldOperators / DECOperators mix view and value semantics. Field
 // names follow geometry-central's canonical naming for the underlying
 // cached matrices (cotanLaplacian, vertexDualAreas, vertexNormals,
 // d0/d1/hodge*), so the surface here is a 1-to-1 viewer over GC's
@@ -129,18 +141,18 @@ enum class MassMatrixVariant {
 // keep a generic name because GC has no single matrix covering them.
 //
 //   * View fields (const-references into geometry-central's cached matrices):
-//       MeshOperators::cotanLaplacian, all DECOperators fields. Bound by
-//       assembleMeshOperators / assembleDECOperators after the relevant
+//       ManifoldOperators::cotanLaplacian, all DECOperators fields. Bound by
+//       assembleManifoldOperators / assembleDECOperators after the relevant
 //       require* call pins them on the geometry.
 //
 //   * Owned field:
-//       MeshOperators::mass — variant-dependent (Voronoi / Barycentric /
+//       ManifoldOperators::mass — variant-dependent (Voronoi / Barycentric /
 //       ConsistentFEM); non-Voronoi variants don't have a single
 //       geometry-central matrix to view, so mass is materialised by
 //       value regardless of variant for uniform semantics.
 //
-// Lifetime contract: bindings must keep the owning ComputeContext alive
-// for the entire lifetime of any MeshOperators / DECOperators they hold,
+// Lifetime contract: bindings must keep the owning Manifold alive
+// for the entire lifetime of any ManifoldOperators / DECOperators they hold,
 // and must NOT call unrequire* on the underlying geometry while the
 // structs are alive. ContextHolder / ContextWrapper enforce this by
 // keeping the operator structs and the context together.
@@ -159,13 +171,13 @@ enum class MassMatrixVariant {
 using VertexNormalsMatrix =
     Eigen::Matrix<double, Eigen::Dynamic, 3, Eigen::RowMajor>;
 
-struct MeshOperators {
-    MeshOperators(const Eigen::SparseMatrix<double>& cotanLaplacian_,
-                  Eigen::SparseMatrix<double> mass_,
-                  MassMatrixVariant massVariant_,
-                  Eigen::VectorXd vertexDualAreas_,
-                  VertexNormalsMatrix vertexNormals_,
-                  double totalArea_)
+struct ManifoldOperators {
+    ManifoldOperators(const Eigen::SparseMatrix<double>& cotanLaplacian_,
+                      Eigen::SparseMatrix<double> mass_,
+                      MassMatrixVariant massVariant_,
+                      Eigen::VectorXd vertexDualAreas_,
+                      VertexNormalsMatrix vertexNormals_,
+                      double totalArea_)
       : cotanLaplacian(cotanLaplacian_),
         mass(std::move(mass_)),
         massVariant(massVariant_),
@@ -187,12 +199,12 @@ struct MeshOperators {
 /** Assemble operators from a context. Default mass variant is Voronoi
  *  (matches the previous behavior and the cortical-flow / mesh-tests
  *  consumers). */
-MeshOperators assembleMeshOperators(
-    ComputeContext& ctx,
+ManifoldOperators assembleManifoldOperators(
+    Manifold& m,
     MassMatrixVariant variant = MassMatrixVariant::Voronoi);
 
 /** Convenience overload: creates context and assembles operators in one call. */
-MeshOperators assembleMeshOperators(
+ManifoldOperators assembleManifoldOperators(
     const double* vertices, int nV,
     const int32_t* faces, int nF,
     MassMatrixVariant variant = MassMatrixVariant::Voronoi
@@ -202,6 +214,129 @@ MeshOperators assembleMeshOperators(
  *  Accepts "voronoi", "barycentric", "full". Throws Error(InvalidInput)
  *  on unknown. Case-sensitive (matches the MATLAB +bct convention). */
 MassMatrixVariant parseMassMatrixVariant(const std::string& name);
+
+// ── DEC Operators ────────────────────────────────────────────
+
+struct DECOperators {
+    DECOperators(const Eigen::SparseMatrix<double>& d0_,
+                 const Eigen::SparseMatrix<double>& d1_,
+                 const Eigen::SparseMatrix<double>& hodge0_,
+                 const Eigen::SparseMatrix<double>& hodge1_,
+                 const Eigen::SparseMatrix<double>& hodge2_,
+                 const Eigen::SparseMatrix<double>& hodge1Inverse_)
+      : d0(d0_), d1(d1_), hodge0(hodge0_), hodge1(hodge1_),
+        hodge2(hodge2_), hodge1Inverse(hodge1Inverse_) {}
+
+    // All fields are views into geometry-central's cached matrices —
+    // see the comment block above ManifoldOperators for the lifetime
+    // contract. dec.hodge0 is the same matrix as ops.mass (both
+    // are the lumped Voronoi mass).
+    const Eigen::SparseMatrix<double>& d0;      // vertex → edge
+    const Eigen::SparseMatrix<double>& d1;      // edge → face
+    const Eigen::SparseMatrix<double>& hodge0;  // vertex → vertex (diagonal)
+    const Eigen::SparseMatrix<double>& hodge1;  // edge → edge (diagonal)
+    const Eigen::SparseMatrix<double>& hodge2;  // face → face (diagonal)
+    const Eigen::SparseMatrix<double>& hodge1Inverse;
+};
+
+DECOperators assembleDECOperators(Manifold& m);
+
+// Zero-copy passthrough accessors. Each triggers geometry-central's
+// internal cache on first call (cascading through index / area /
+// cotan-weight dependencies inside requireDECOperators or
+// requireVertexDualAreas) and returns the cached field by const
+// reference on every subsequent call. No matrix copies, in contrast
+// to assembleDECOperators which builds a fresh DECOperators struct.
+// The returned reference is valid for the Manifold's lifetime.
+const Eigen::SparseMatrix<double>& d0(Manifold& m);
+const Eigen::SparseMatrix<double>& d1(Manifold& m);
+const Eigen::SparseMatrix<double>& hodge0(Manifold& m);
+const Eigen::SparseMatrix<double>& hodge1(Manifold& m);
+const Eigen::SparseMatrix<double>& hodge2(Manifold& m);
+const Eigen::SparseMatrix<double>& hodge1Inverse(Manifold& m);
+const Eigen::VectorXd&             vertexDualAreas(Manifold& m);
+
+// ── Factor Cache ─────────────────────────────────────────────
+//
+// Pre-factored Cholesky / LU decompositions of mesh-derived
+// matrices, cached across compute calls. Each factor is built
+// lazily on first request and reused on every subsequent call
+// for the lifetime of the owning Manifold.
+//
+// Why this exists: mesh-derived sparse factorizations cost
+// O(n^1.5) to build but only O(nnz) per back-substitution. Each
+// solver call (Poisson, Hodge α-solve, direction-field) hits
+// the same matrix; without caching we redo that O(n^1.5) work
+// on every click and on every frame of any future per-frame
+// pipeline. Both geometry-processing-js and geometry-central
+// pre-factor and reuse for this reason.
+//
+// Bit-for-bit contract: each cached factor is built by the same
+// matrix-assembly + factorization sequence the previous inline
+// solvers used (same regularization ε, same coefficient order,
+// same Eigen solver type). Refactored callers must produce
+// numerically identical output to the pre-cache implementation.
+//
+// Lifetime: owned by ContextHolder in the addon; destroyed when
+// the JavaScript handle releases (i.e. when the mesh changes).
+//
+// Not cached: the eigensolver's (K - σM) factor lives inside
+// Spectra::SymShiftInvert and is discarded per call. Caching
+// it would require replacing Spectra's ShiftInvertOp with a
+// custom one — out of scope for v1.
+//
+// Perf options compatible with the modularity rule (CLAUDE.md §10):
+// AVX2/AVX-512 compile flags (the build enables these on x86_64),
+// Eigen's separate analyzePattern() + factorize() for matrices
+// that share sparsity pattern, multi-RHS batched solves, and GPU
+// triangular back-substitution via TSL for hot per-frame paths.
+// Not on the table: CHOLMOD / SuiteSparse / MKL / PARDISO — they
+// break the WASM and MEX targets.
+
+class CholeskyCache {
+public:
+    CholeskyCache() = default;
+    CholeskyCache(const CholeskyCache&) = delete;
+    CholeskyCache& operator=(const CholeskyCache&) = delete;
+
+    /** Diagonal regularization added to every factored matrix.
+     *  Identical to the constant the pre-cache inline solvers used. */
+    static constexpr double kRegularization = 1e-8;
+
+    /** LLT of (K + ε·I) for any symmetric PSD K. The cache is keyed
+     *  by lifetime, not content — the *first* matrix passed in is the
+     *  one factored, and subsequent calls return that factor regardless
+     *  of what's passed. Use a fresh CholeskyCache per matrix. */
+    const Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>& laplacian(
+        const Eigen::SparseMatrix<double>& K);
+
+    /** Convenience overload: factors ops.cotanLaplacian. */
+    const Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>& laplacian(
+        const ManifoldOperators& ops) {
+        return laplacian(ops.cotanLaplacian);
+    }
+
+    /** LLT of (d0ᵀ ★₁ d0 + ε·I).
+     *  Used by both Hodge α-solve and direction-field. */
+    const Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>& hodgeExact(
+        const DECOperators& dec);
+
+    /** LU of (d1 ★₁⁻¹ d1ᵀ + ε·I), used by Hodge β-solve.
+     *  B is symmetric PSD after regularization, so SimplicialLLT
+     *  would also work; SparseLU preserved for bit-for-bit
+     *  equivalence with the pre-cache implementation. */
+    const Eigen::SparseLU<Eigen::SparseMatrix<double>>& hodgeCoExact(
+        const DECOperators& dec);
+
+private:
+    std::unique_ptr<Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>> laplacian_;
+    std::unique_ptr<Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>> hodgeExact_;
+    std::unique_ptr<Eigen::SparseLU<Eigen::SparseMatrix<double>>> hodgeCoExact_;
+};
+
+} // namespace nxr::manifold::ops
+
+namespace nxr::manifold::ops::laplacian::connection {
 
 // ── Connection Laplacian ─────────────────────────────────────
 //
@@ -215,7 +350,7 @@ MassMatrixVariant parseMassMatrixVariant(const std::string& name);
 // `Real2N` format (default) lowers each complex entry a + bi to the
 // 2×2 real block [[a, -b], [b, a]], producing a 2N×2N symmetric real
 // matrix that drops directly into nxr-compute's existing real-only
-// eigensolver (`solveEigenmodes`) when paired with a block-diagonal
+// eigensolver (`solve`) when paired with a block-diagonal
 // real mass matrix `blkdiag(M, M)`. The smallest eigenpair then
 // reproduces the smoothest n-direction field that
 // `computeSmoothest{Vertex,Face}DirectionField` returns internally.
@@ -285,7 +420,7 @@ struct ConnectionLaplacian {
  *  for nRoSy energy minimization; revisit if a more principled face
  *  weight emerges upstream. */
 ConnectionLaplacian assembleConnectionLaplacian(
-    ComputeContext& ctx,
+    Manifold& m,
     const ConnectionLaplacianOptions& opts = {}
 );
 
@@ -295,109 +430,9 @@ ConnectionLaplacian assembleConnectionLaplacian(
 ConnectionDomain          parseConnectionDomain(const std::string& name);
 ConnectionLaplacianFormat parseConnectionLaplacianFormat(const std::string& name);
 
-// ── DEC Operators ────────────────────────────────────────────
+} // namespace nxr::manifold::ops::laplacian::connection
 
-struct DECOperators {
-    DECOperators(const Eigen::SparseMatrix<double>& d0_,
-                 const Eigen::SparseMatrix<double>& d1_,
-                 const Eigen::SparseMatrix<double>& hodge0_,
-                 const Eigen::SparseMatrix<double>& hodge1_,
-                 const Eigen::SparseMatrix<double>& hodge2_,
-                 const Eigen::SparseMatrix<double>& hodge1Inverse_)
-      : d0(d0_), d1(d1_), hodge0(hodge0_), hodge1(hodge1_),
-        hodge2(hodge2_), hodge1Inverse(hodge1Inverse_) {}
-
-    // All fields are views into geometry-central's cached matrices —
-    // see the comment block above MeshOperators for the lifetime
-    // contract. dec.hodge0 is the same matrix as ops.mass (both
-    // are the lumped Voronoi mass).
-    const Eigen::SparseMatrix<double>& d0;      // vertex → edge
-    const Eigen::SparseMatrix<double>& d1;      // edge → face
-    const Eigen::SparseMatrix<double>& hodge0;  // vertex → vertex (diagonal)
-    const Eigen::SparseMatrix<double>& hodge1;  // edge → edge (diagonal)
-    const Eigen::SparseMatrix<double>& hodge2;  // face → face (diagonal)
-    const Eigen::SparseMatrix<double>& hodge1Inverse;
-};
-
-DECOperators assembleDECOperators(ComputeContext& ctx);
-
-// ── Factor Cache ─────────────────────────────────────────────
-//
-// Pre-factored Cholesky / LU decompositions of mesh-derived
-// matrices, cached across compute calls. Each factor is built
-// lazily on first request and reused on every subsequent call
-// for the lifetime of the owning ComputeContext.
-//
-// Why this exists: mesh-derived sparse factorizations cost
-// O(n^1.5) to build but only O(nnz) per back-substitution. Each
-// solver call (Poisson, Hodge α-solve, direction-field) hits
-// the same matrix; without caching we redo that O(n^1.5) work
-// on every click and on every frame of any future per-frame
-// pipeline. Both geometry-processing-js and geometry-central
-// pre-factor and reuse for this reason.
-//
-// Bit-for-bit contract: each cached factor is built by the same
-// matrix-assembly + factorization sequence the previous inline
-// solvers used (same regularization ε, same coefficient order,
-// same Eigen solver type). Refactored callers must produce
-// numerically identical output to the pre-cache implementation.
-//
-// Lifetime: owned by ContextHolder in the addon; destroyed when
-// the JavaScript handle releases (i.e. when the mesh changes).
-//
-// Not cached: the eigensolver's (K - σM) factor lives inside
-// Spectra::SymShiftInvert and is discarded per call. Caching
-// it would require replacing Spectra's ShiftInvertOp with a
-// custom one — out of scope for v1.
-//
-// Perf options compatible with the modularity rule (CLAUDE.md §10):
-// AVX2/AVX-512 compile flags (the build enables these on x86_64),
-// Eigen's separate analyzePattern() + factorize() for matrices
-// that share sparsity pattern, multi-RHS batched solves, and GPU
-// triangular back-substitution via TSL for hot per-frame paths.
-// Not on the table: CHOLMOD / SuiteSparse / MKL / PARDISO — they
-// break the WASM and MEX targets.
-
-class CholeskyCache {
-public:
-    CholeskyCache() = default;
-    CholeskyCache(const CholeskyCache&) = delete;
-    CholeskyCache& operator=(const CholeskyCache&) = delete;
-
-    /** Diagonal regularization added to every factored matrix.
-     *  Identical to the constant the pre-cache inline solvers used. */
-    static constexpr double kRegularization = 1e-8;
-
-    /** LLT of (K + ε·I) for any symmetric PSD K. The cache is keyed
-     *  by lifetime, not content — the *first* matrix passed in is the
-     *  one factored, and subsequent calls return that factor regardless
-     *  of what's passed. Use a fresh CholeskyCache per matrix. */
-    const Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>& laplacian(
-        const Eigen::SparseMatrix<double>& K);
-
-    /** Convenience overload: factors ops.cotanLaplacian. */
-    const Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>& laplacian(
-        const MeshOperators& ops) {
-        return laplacian(ops.cotanLaplacian);
-    }
-
-    /** LLT of (d0ᵀ ★₁ d0 + ε·I).
-     *  Used by both Hodge α-solve and direction-field. */
-    const Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>& hodgeExact(
-        const DECOperators& dec);
-
-    /** LU of (d1 ★₁⁻¹ d1ᵀ + ε·I), used by Hodge β-solve.
-     *  B is symmetric PSD after regularization, so SimplicialLLT
-     *  would also work; SparseLU preserved for bit-for-bit
-     *  equivalence with the pre-cache implementation. */
-    const Eigen::SparseLU<Eigen::SparseMatrix<double>>& hodgeCoExact(
-        const DECOperators& dec);
-
-private:
-    std::unique_ptr<Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>> laplacian_;
-    std::unique_ptr<Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>> hodgeExact_;
-    std::unique_ptr<Eigen::SparseLU<Eigen::SparseMatrix<double>>> hodgeCoExact_;
-};
+namespace nxr::manifold::solve {
 
 // ── Eigensolver ──────────────────────────────────────────────
 
@@ -413,48 +448,64 @@ struct EigenResult {
  * for the k smallest eigenvalues.
  * Matches MATLAB: eigs(K, M, k, 'SM')
  *
- * @param sigma     Shift for shift-invert mode. Values near 0
- *                  (e.g. -1e-8) target the lowest eigenmodes.
- *                  The solver pre-factors (K - σM) once, then
- *                  each IRAM iteration is a cheap forward/back-
- *                  substitution. This is dramatically faster than
- *                  standard mode for the smallest eigenvalues of
- *                  large sparse systems.
- * @param cancel    Optional cancellation token. The solver polls
- *                  cancel.requested() once per Spectra perform_op
- *                  call; on true, throws Error(Cancelled). Cancel
- *                  latency is roughly one SpMV ≈ a few ms on
- *                  cortical-sized meshes. Default: never cancelled.
- * @param progress  Optional observer of solver progress. The
- *                  `iteration` slot is incremented once per Spectra
- *                  perform_op (proxy for solver work units);
- *                  `totalIterations` is set to a high-water bound.
- *                  Default: no-op (no slots set).
+ * @param sigma      Shift for shift-invert mode. Values near 0
+ *                   (e.g. -1e-8) target the lowest eigenmodes.
+ *                   The solver pre-factors (K - σM) once, then
+ *                   each IRAM iteration is a cheap forward/back-
+ *                   substitution. This is dramatically faster than
+ *                   standard mode for the smallest eigenvalues of
+ *                   large sparse systems.
+ * @param normalize  If true, M-orthonormalize eigenvectors so
+ *                   U' * M * U = I (Cholesky whitening). Default
+ *                   false — eigenvectors are returned in the form
+ *                   Spectra produces. Set true for downstream
+ *                   spectral synthesis / inner-product work.
+ * @param removeDC   If true, strip the DC (zero-eigenvalue) mode
+ *                   from the result. Default false. Set true when
+ *                   the input is a closed-mesh Laplacian and the
+ *                   null mode would dominate spectral filters.
+ * @param cancel     Optional cancellation token. The solver polls
+ *                   cancel.requested() once per Spectra perform_op
+ *                   call; on true, throws Error(Cancelled).
+ * @param progress   Optional observer of solver progress.
  *
  * Throws Error(EigensolveInvalidK) on k < 1 or k > N - 1.
  * Throws Error(Cancelled)          on cancel.requested().
  * Throws Error(EigensolveNotConverged) on Spectra failure with
  *                                          no partial result.
  */
-EigenResult solveEigenmodes(
+EigenResult eigen(
     const Eigen::SparseMatrix<double>& K,
     const Eigen::SparseMatrix<double>& M,
     int k,
-    double sigma = -1e-8,
-    const CancellationToken& cancel = {},
-    const ProgressObserver& progress = {}
+    double sigma                       = -1e-8,
+    bool normalize                     = false,
+    bool removeDC                      = false,
+    const CancellationToken& cancel    = {},
+    const ProgressObserver& progress   = {}
 );
 
-// ── Normalization ────────────────────────────────────────────
-
-/** M-orthonormalize: enforce U' * M * U = I via Cholesky whitening. */
-Eigen::MatrixXd normalizeEigenmodes(
+/**
+ * M-orthonormalize an eigenvector basis: U' * M * U = I.
+ * Cholesky-whitening fast path with eigen-decomposition fallback.
+ * Typically called via `eigen(..., normalize=true)`; this standalone
+ * entry point is for transforming pre-computed bases (e.g. arriving
+ * from MATLAB / Python).
+ */
+Eigen::MatrixXd normalize(
     const Eigen::MatrixXd& U,
     const Eigen::SparseMatrix<double>& M
 );
 
-/** Remove the DC mode (eigenvalue closest to zero). */
+/**
+ * Strip the DC (zero-eigenvalue) mode from an EigenResult.
+ * Returns a copy with the eigenvalue closest to zero removed.
+ * Typically called via `eigen(..., removeDC=true)`; this standalone
+ * entry point lets callers strip the DC mode from a pre-computed
+ * EigenResult.
+ */
 EigenResult removeDC(const EigenResult& result);
+
 
 // ── Poisson Solver ───────────────────────────────────────────
 
@@ -476,20 +527,20 @@ EigenResult removeDC(const EigenResult& result);
  * @param densityMap  sparse density: index → density value
  * @return            harmonic potential φ
  */
-Eigen::VectorXd solvePoisson(
+Eigen::VectorXd poisson(
     const Eigen::SparseMatrix<double>& K,
     const Eigen::SparseMatrix<double>& M,
-    CholeskyCache& cache,
+    ops::CholeskyCache& cache,
     const std::map<int, double>& densityMap
 );
 
 /** Convenience overload: forwards to (K, M) using ops.cotanLaplacian, ops.mass. */
-inline Eigen::VectorXd solvePoisson(
-    const MeshOperators& ops,
-    CholeskyCache& cache,
+inline Eigen::VectorXd poisson(
+    const ops::ManifoldOperators& ops,
+    ops::CholeskyCache& cache,
     const std::map<int, double>& densityMap
 ) {
-    return solvePoisson(ops.cotanLaplacian, ops.mass, cache, densityMap);
+    return poisson(ops.cotanLaplacian, ops.mass, cache, densityMap);
 }
 
 // ── Geodesic Distance (Heat Method) ──────────────────────────
@@ -509,7 +560,7 @@ inline Eigen::VectorXd solvePoisson(
 class HeatGeodesicSolverImpl;
 class HeatGeodesicSolver {
 public:
-    explicit HeatGeodesicSolver(ComputeContext& ctx, double tCoef = 1.0);
+    explicit HeatGeodesicSolver(Manifold& m, double tCoef = 1.0);
     ~HeatGeodesicSolver();
     HeatGeodesicSolver(const HeatGeodesicSolver&) = delete;
     HeatGeodesicSolver& operator=(const HeatGeodesicSolver&) = delete;
@@ -529,248 +580,61 @@ private:
  * @param sourceVertices  list of source vertex indices
  * @return                per-vertex geodesic distances
  */
-Eigen::VectorXd computeGeodesicDistance(
+Eigen::VectorXd heat(
     HeatGeodesicSolver& solver,
     const std::vector<int>& sourceVertices
 );
 
-// ── Hodge Decomposition ──────────────────────────────────────
+// ── Signed Heat Method (Feng & Crane 2024) ───────────────────
+//
+// Signed geodesic distance from a curve on the surface. Stateful
+// solver, same lifetime model as VectorHeatSolver. The curve is
+// expressed as a polyline of vertex indices; `isLoop` controls
+// whether the curve closes (last → first).
+//
+// Useful for region selection, flood fills, and morphological
+// operations on the mesh: positive distance one side of the
+// curve, negative the other. The level-set constraint keeps the
+// zero-set pinned exactly at the curve.
 
-struct HodgeResult {
-    // Scalar potentials (per vertex)
-    Eigen::VectorXd exactPotential;      // α
-    Eigen::VectorXd coExactPotentialF;   // β (per face)
-    Eigen::VectorXd coExactPotentialV;   // β averaged to vertices
-    Eigen::VectorXd combinedPotential;   // α + β
-    Eigen::VectorXd omega;               // input 1-form on edges
+class SignedHeatSolverImpl;
+class SignedHeatSolver {
+public:
+    explicit SignedHeatSolver(Manifold& m, double tCoef = 1.0);
+    ~SignedHeatSolver();
+    SignedHeatSolver(const SignedHeatSolver&) = delete;
+    SignedHeatSolver& operator=(const SignedHeatSolver&) = delete;
 
-    // 1-form components of the decomposition (all [nE])
-    Eigen::VectorXd dAlpha;              // exact 1-form: d(α)
-    Eigen::VectorXd deltaBeta;           // co-exact 1-form: δ(β)
-    Eigen::VectorXd gamma;               // harmonic 1-form: ω - dα - δβ
+    SignedHeatSolverImpl& impl();
 
-    // Face-centered vector fields via Whitney interpolation, each [nF, 3]
-    Eigen::MatrixXd omegaVectors;
-    Eigen::MatrixXd dAlphaVectors;
-    Eigen::MatrixXd deltaBetaVectors;
-    Eigen::MatrixXd gammaVectors;
+private:
+    std::unique_ptr<SignedHeatSolverImpl> impl_;
 };
 
-/**
- * Hodge/Helmholtz decomposition of a 1-form ω:
- *   ω = dα + δβ + γ
- *
- * Given random ω, returns:
- *   - α: scalar potential (vertex-based) — gradient part
- *   - β: scalar potential (face-based, averaged to vertices) — curl part
- *
- * @param dec    DEC operators (d0, d1, hodge1, hodge1Inverse)
- * @param omega  input 1-form on edges (random or user-supplied)
- */
-HodgeResult hodgeDecompose(
-    ComputeContext& ctx,
-    const DECOperators& dec,
-    CholeskyCache& cache,
-    const Eigen::VectorXd& omega
-);
-
-/** Generate a random 1-form on edges. */
-Eigen::VectorXd generateRandomOmega(int nE, unsigned int seed = 42);
-
-// ── Field Generators ─────────────────────────────────────────
-//
-// Analytic field synthesis. Mirrors the +bct.+field.+generate.*
-// family from the MATLAB reference toolbox; the cortical-flow
-// solvers (Hodge, Poisson, gradient flow) are source-agnostic and
-// consume fields produced here interchangeably with real activity
-// data loaded from Zarr.
-//
-// The validation pattern (see test_field_generators.cpp) is the
-// geometry-processing-js demo pattern: synthesize ω from known
-// α / β / γ contributions, run hodgeDecompose, verify the
-// algorithm recovers what was put in.
-
-/** Sparse delta vector: zeros everywhere except the listed source
- *  vertices, which take the supplied values. Useful as an initial
- *  condition for heat-method / Poisson workflows. */
-Eigen::VectorXd generateDelta(int nV, const std::map<int, double>& sources);
-
-/** Random vertex scalar field, uniform in [-1, 1]. Reproducible by
- *  seed. Used as the α (gradient potential) in decomposed-1-form
- *  synthesis. */
-Eigen::VectorXd generateRandomVertexScalar(int nV, unsigned int seed = 42);
-
-/** Random face scalar field, uniform in [-1, 1]. Reproducible by
- *  seed. Used as the β (curl potential) in decomposed-1-form
- *  synthesis. */
-Eigen::VectorXd generateRandomFaceScalar(int nF, unsigned int seed = 42);
-
-/** Extract the k-th eigenmode from a precomputed EigenResult as a
- *  vertex scalar field. */
-Eigen::VectorXd generateEigenmodeField(const EigenResult& eig, int k_index);
-
-/** Synthesize a 1-form on edges by combining independently-random
- *  exact and co-exact contributions:
- *
- *      ω = α_strength · (d0 · α_rand) + β_strength · (★₁⁻¹ d1ᵀ · β_rand)
- *
- *  where α_rand is a random vertex scalar (seed) and β_rand is a
- *  random face scalar (seed + 1). The Hodge decomposition of ω
- *  must recover the same dα and δβ within solver tolerance — this
- *  is the validation contract for hodgeDecompose.
- *
- *  γ_strength is reserved for the harmonic component but ignored in
- *  v1; harmonic basis computation is deferred (cortical meshes are
- *  genus 3-5 due to ventricle topology, so the harmonic space is
- *  non-trivial in principle, but its construction needs its own
- *  primitive and isn't required for the gpjs-style validation). */
-Eigen::VectorXd generateRandomDecomposed1Form(
-    const DECOperators& dec,
-    int nV, int nE, int nF,
-    double alphaStrength,
-    double betaStrength,
-    double gammaStrength,
-    unsigned int seed = 42
-);
-
-// ── Time-Varying Field Generators ────────────────────────────
-//
-// Spectral-evolution generators that produce [T, V] float32 arrays
-// suitable for the Timeline / activity slot. Both reuse precomputed
-// eigenmodes — no per-frame Cholesky needed, which is the spectral
-// method's defining feature: O(K) per timestep regardless of nV.
-//
-// Storage layout: Eigen::MatrixXf with shape (T, V), column-major
-// (Eigen default). Frame ti is `output.row(ti)`. When flattened
-// row-major to a Float32Array, this matches the [T, V] convention
-// used by the Zarr `recordings/.../activity` schema.
-//
-// Both functions assume the eigenmodes are M-orthonormalized — i.e.
-// the caller has already run normalizeEigenmodes() on solveEigenmodes
-// output. Failure to do so silently produces wrong amplitudes.
-
-/** Heat diffusion via spectral evolution.
- *
- *  Solves  ∂u/∂t = -α K u  on the domain, returning the full time
- *  series. M-weighted spatial mean is preserved exactly across all
- *  frames (heat equation invariant); only the zero-mean part evolves
- *  spectrally:
- *
- *      u(t) = u_mean + Σₖ ⟨u₀ - u_mean, φₖ⟩_M · exp(-α·t·λₖ) · φₖ
- *
- *  The DC mode (if present in `eig`) is harmless — its λ ≈ 0 means
- *  exp(-αtλ) ≈ 1 and it just reproduces the mean offset.
- *
- *  Agnostic in M: works on Voronoi mass (mesh) or node-weight
- *  diagonals (graph). M-orthonormality of `eig.eigenvectors`
- *  is the caller's responsibility regardless.
- *
- *  @param M          mass / inner-product matrix used for projection
- *  @param eig        precomputed eigenmodes (M-orthonormal, sorted ascending)
- *  @param u0         initial condition [n]
- *  @param timesteps  T values of t (any non-negative reals)
- *  @param alpha      diffusion coefficient
- *  @return           [T, n] float32 time series, frame-major
- */
-Eigen::MatrixXf generateHeatDiffusion(
-    const Eigen::SparseMatrix<double>& M,
-    const EigenResult& eig,
-    const Eigen::VectorXd& u0,
-    const std::vector<double>& timesteps,
-    double alpha = 1.0
-);
-
-/** Convenience overload: forwards to the (M, …) form using ops.mass. */
-inline Eigen::MatrixXf generateHeatDiffusion(
-    const MeshOperators& ops,
-    const EigenResult& eig,
-    const Eigen::VectorXd& u0,
-    const std::vector<double>& timesteps,
-    double alpha = 1.0
-) {
-    return generateHeatDiffusion(ops.mass, eig, u0, timesteps, alpha);
-}
-
-/** Damped wave field via per-mode oscillation.
- *
- *  Synthesizes a superposition of independently-damped harmonic
- *  oscillators on the mesh:
- *
- *      u(t,v) = Σₘ aₘ · exp(-γₘ·t) · cos(√λ_{kₘ}·t + φₘ) · φ_{kₘ}(v)
- *
- *  The angular frequency of each mode is √λ_{kₘ} (acoustic relation
- *  between Laplace eigenvalues and wave speeds). Useful for
- *  illustrative time-varying fields and for studying mode-mixing
- *  visualizations.
- *
- *  @param eig          precomputed eigenmodes (M-orthonormal)
- *  @param modeIndices  which eigenmodes to excite (size M)
- *  @param amplitudes   per-mode amplitude aₘ (size M)
- *  @param dampings     per-mode damping rate γₘ ≥ 0 (size M)
- *  @param phases       per-mode phase φₘ in radians (size M)
- *  @param timesteps    T values of t
- *  @return             [T, nV] float32 time series, frame-major
- */
-Eigen::MatrixXf generateDampedWave(
-    const EigenResult& eig,
-    const std::vector<int>& modeIndices,
-    const std::vector<double>& amplitudes,
-    const std::vector<double>& dampings,
-    const std::vector<double>& phases,
-    const std::vector<double>& timesteps
-);
-
-// ── Curvatures ───────────────────────────────────────────────
-
-struct CurvatureResult {
-    Eigen::VectorXd gaussian;        // K per vertex (angle defect)
-    Eigen::VectorXd mean;            // H per vertex
-    Eigen::VectorXd kMin;            // κ_min per vertex
-    Eigen::VectorXd kMax;            // κ_max per vertex
-    Eigen::MatrixXd principalDirMax; // [nV, 3] max principal direction lifted to 3D
+enum class SignedHeatLevelSet {
+    None = 0,        // unconstrained — curve may not lie exactly on the zero set
+    ZeroSet = 1,     // pin the zero level set to the curve (default)
+    Multiple = 2,    // pin each curve to its own level set
 };
 
-CurvatureResult computeCurvatures(ComputeContext& ctx);
-
-// ── Normal Estimators ────────────────────────────────────────
-
-enum class NormalType {
-    AngleWeighted,    // default (matches gpjs "Tip Angle Weighted")
-    AreaWeighted,     // weighted by face area
-    EqualWeighted,    // equal weighting (normalized sum)
-    SphereInscribed,  // (u × v) / (|u|² |v|²) per corner
-    MeanCurvature,    // cotangent-weighted (Laplace-Beltrami)
-    GaussCurvature    // dihedral angle / edge length weighted
-};
-
-/** Compute per-vertex normals using a given estimator.
- *  Returns [nV * 3] flat array (row-major). */
-Eigen::MatrixXd computeVertexNormals(ComputeContext& ctx, NormalType type);
-
-// ── Face Frames ──────────────────────────────────────────────
-
-/** Per-face orthonormal tangent frame.
+/** Signed geodesic distance from a curve to every vertex.
  *
- *  Each face f has an in-plane orthonormal basis (e1, e2) and a
- *  normal n, all 3D vectors in world coordinates. Used by:
- *    - GPU-side particle advection (frames define each face's
- *      local 2D coordinate system)
- *    - Tangent vector field visualization (face vectors expressed
- *      as 2D coords in (e1, e2) reconstruct in JS / shaders)
- *    - Texture mapping where a per-face frame is needed
- *
- *  Convention matches direction_field.cpp::faceOrthonormalBasis:
- *  e1 is the unit edge vector along f.halfedge(), e2 = n × e1.
- *  This is the same frame the trivial-connection direction field
- *  uses, so tangent vectors transported between faces are
- *  interpretable in the same coordinate system. */
-struct FaceFrames {
-    Eigen::MatrixXd e1;       // [nF, 3] — first tangent vector
-    Eigen::MatrixXd e2;       // [nF, 3] — second tangent (n × e1)
-    Eigen::MatrixXd normals;  // [nF, 3] — face normals
-};
+ *  @param curveVertices  ordered vertex indices defining the curve polyline
+ *  @param isLoop         if true, edge from last → first is included
+ *  @param levelSet       which level-set constraint to enforce
+ *  @return               [nV] signed distances (sign convention follows
+ *                        the curve's orientation; flip the input order
+ *                        to flip the sign) */
+Eigen::VectorXd signedHeat(
+    SignedHeatSolver& solver,
+    const std::vector<int>& curveVertices,
+    bool isLoop = true,
+    SignedHeatLevelSet levelSet = SignedHeatLevelSet::ZeroSet
+);
 
-FaceFrames computeFaceFrames(ComputeContext& ctx);
+} // namespace nxr::manifold::solve
+
+namespace nxr::manifold::query {
 
 // ── Geodesic Paths ───────────────────────────────────────────
 
@@ -783,69 +647,17 @@ FaceFrames computeFaceFrames(ComputeContext& ctx);
  *  the geodesic. N depends on the path complexity (typically
  *  O(diameter / mean-edge-length) on cortical surfaces).
  *
- *  Differs from `computeGeodesicDistance` (heat method) which
+ *  Differs from `heat` (heat method) which
  *  returns a scalar field on all vertices, not a path. */
 Eigen::MatrixXd tracePath(
-    ComputeContext& ctx,
+    Manifold& m,
     int vStart,
     int vEnd
 );
 
-// ── Surface Parametrization ──────────────────────────────────
+} // namespace nxr::manifold::query
 
-/** Boundary First Flattening (Sawhney & Crane 2017) — produces a
- *  conformal-by-default planar parametrization of the surface.
- *
- *  Returns a [V, 2] matrix of UV coordinates (u, v) per vertex.
- *  Mesh must have at least one boundary loop; for closed meshes
- *  the user must cut the surface first. The mesh in nxr-compute is
- *  ManifoldSurfaceMesh so boundary detection works automatically.
- *
- *  Used by texture-based visualizations (LIC, isoline rendering
- *  in UV space, anisotropic shaders). Lower angular distortion
- *  than LSCM, especially near complex boundaries. Uses
- *  geometry-central's bundled BFF implementation — no extra
- *  dependency.
- *
- *  Throws if the mesh has no boundary. */
-Eigen::MatrixXd computeUVCoordinates(ComputeContext& ctx);
-
-// ── Vector Field Operations ──────────────────────────────────
-
-/** Whitney interpolation: edge 1-form → face-centered 3D vectors.
- *  Formula: V(f) = (N × (a + b + c)) / (6A)
- *  Returns [nF, 3] matrix (row-major vectors). */
-Eigen::MatrixXd whitneyInterpolate(
-    ComputeContext& ctx,
-    const DECOperators& dec,
-    const Eigen::VectorXd& oneForm
-);
-
-/** Gradient of a vertex scalar field → face-centered 3D vectors.
- *  For triangle (vi, vj, vk): ∇u = (1 / 2A) Σ (uₖ - uᵢ) (N × eⱼᵢ)
- *  Returns [nF, 3] matrix. */
-Eigen::MatrixXd scalarGradient(
-    ComputeContext& ctx,
-    const Eigen::VectorXd& scalarField
-);
-
-// ── Isolines ─────────────────────────────────────────────────
-
-struct IsolineResult {
-    Eigen::MatrixXd positions;  // [segmentCount * 2, 3] endpoints of line segments
-    int segmentCount;
-};
-
-/** Extract isolines (contours) from a per-vertex scalar field.
- *  numLevels evenly-spaced contour values in [minValue, maxValue].
- *  If minValue == maxValue, auto-detects range from the data. */
-IsolineResult computeIsolines(
-    ComputeContext& ctx,
-    const Eigen::VectorXd& scalarField,
-    int numLevels = 20,
-    double minValue = 0.0,
-    double maxValue = 0.0
-);
+namespace nxr::manifold::transport {
 
 // ── Vector Heat Method (Sharp, Soliman, Crane 2019) ──────────
 //
@@ -868,14 +680,14 @@ IsolineResult computeIsolines(
 class VectorHeatSolverImpl;
 class VectorHeatSolver {
 public:
-    explicit VectorHeatSolver(ComputeContext& ctx, double tCoef = 1.0);
+    explicit VectorHeatSolver(Manifold& m, double tCoef = 1.0);
     ~VectorHeatSolver();
     VectorHeatSolver(const VectorHeatSolver&) = delete;
     VectorHeatSolver& operator=(const VectorHeatSolver&) = delete;
 
     // Internal — bindings should not call these directly.
     VectorHeatSolverImpl& impl();
-    ComputeContext& ctx();
+    Manifold& m();
 
 private:
     std::unique_ptr<VectorHeatSolverImpl> impl_;
@@ -893,7 +705,7 @@ private:
  *  are the parallel transport of those sources along geodesics.
  *
  *  @return [nV, 3] row-major world-space tangent vectors. */
-Eigen::MatrixXd vectorHeatTransport(
+Eigen::MatrixXd parallel(
     VectorHeatSolver& solver,
     const std::vector<int>& sourceVertices,
     const Eigen::MatrixXd& sourceVectors  // [nSources, 3]
@@ -905,7 +717,7 @@ Eigen::MatrixXd vectorHeatTransport(
  *  its nearest source, smoothly interpolated.
  *
  *  @return [nV] per-vertex scalars. */
-Eigen::VectorXd vectorHeatExtendScalar(
+Eigen::VectorXd extendScalar(
     VectorHeatSolver& solver,
     const std::vector<int>& sourceVertices,
     const Eigen::VectorXd& sourceValues   // [nSources]
@@ -943,7 +755,7 @@ enum class LogMapStrategy {
     AffineAdaptive = 2,  // Affine Heat Method, no prefactor, most accurate
 };
 
-LogMapResult vectorHeatLogMap(
+LogMapResult logMap(
     VectorHeatSolver& solver,
     int sourceVertex,
     LogMapStrategy strategy = LogMapStrategy::AffineLocal
@@ -952,65 +764,32 @@ LogMapResult vectorHeatLogMap(
 /** Karcher mean / surface center of a set of source vertices.
  *  Returns the 3D world position of the SurfacePoint that
  *  minimizes ∑ d(p, source_i)^p (default p=2 → Karcher mean). */
-Eigen::Vector3d vectorHeatFindCenter(
+Eigen::Vector3d findCenter(
     VectorHeatSolver& solver,
     const std::vector<int>& sourceVertices,
     int p = 2
 );
 
-// ── Signed Heat Method (Feng & Crane 2024) ───────────────────
-//
-// Signed geodesic distance from a curve on the surface. Stateful
-// solver, same lifetime model as VectorHeatSolver. The curve is
-// expressed as a polyline of vertex indices; `isLoop` controls
-// whether the curve closes (last → first).
-//
-// Useful for region selection, flood fills, and morphological
-// operations on the mesh: positive distance one side of the
-// curve, negative the other. The level-set constraint keeps the
-// zero-set pinned exactly at the curve.
+} // namespace nxr::manifold::transport
 
-class SignedHeatSolverImpl;
-class SignedHeatSolver {
-public:
-    explicit SignedHeatSolver(ComputeContext& ctx, double tCoef = 1.0);
-    ~SignedHeatSolver();
-    SignedHeatSolver(const SignedHeatSolver&) = delete;
-    SignedHeatSolver& operator=(const SignedHeatSolver&) = delete;
+namespace nxr::manifold::connection {
 
-    SignedHeatSolverImpl& impl();
+// ── Direction Field Design (Trivial Connections) ─────────────
 
-private:
-    std::unique_ptr<SignedHeatSolverImpl> impl_;
+struct DirectionFieldResult {
+    Eigen::VectorXd connections;         // φ per edge (1-form angles)
+    Eigen::MatrixXd directionVectors;    // [nF, 3] smooth direction field on faces
+    Eigen::MatrixXd orthogonalVectors;   // [nF, 3] 90° rotated direction field
+    double eulerCharacteristic;
+    bool gaussBonnetSatisfied;
 };
-
-enum class SignedHeatLevelSet {
-    None = 0,        // unconstrained — curve may not lie exactly on the zero set
-    ZeroSet = 1,     // pin the zero level set to the curve (default)
-    Multiple = 2,    // pin each curve to its own level set
-};
-
-/** Signed geodesic distance from a curve to every vertex.
- *
- *  @param curveVertices  ordered vertex indices defining the curve polyline
- *  @param isLoop         if true, edge from last → first is included
- *  @param levelSet       which level-set constraint to enforce
- *  @return               [nV] signed distances (sign convention follows
- *                        the curve's orientation; flip the input order
- *                        to flip the sign) */
-Eigen::VectorXd signedHeatDistance(
-    SignedHeatSolver& solver,
-    const std::vector<int>& curveVertices,
-    bool isLoop = true,
-    SignedHeatLevelSet levelSet = SignedHeatLevelSet::ZeroSet
-);
 
 // ── Smooth Direction Fields (NRoSy, Knöppel-Crane) ───────────
 //
 // Smoothest unit-norm direction field of order n via the
 // Knöppel-Crane formulation — minimizes Dirichlet energy on
 // the connection Laplacian, no prescribed singularities (they
-// emerge automatically). Distinct from `computeDirectionField`
+// emerge automatically). Distinct from `trivial`
 // above (which solves trivial connections with user-prescribed
 // singularities).
 //
@@ -1023,7 +802,7 @@ Eigen::VectorXd signedHeatDistance(
 // `alignToCurvature` returns the principal-curvature-aligned
 // field instead of pure smoothest (only meaningful for nSym ≥ 2).
 
-/** Result of `computeSmoothVertexField`. The face-based variant
+/** Result of `smoothVertex`. The face-based variant
  *  returns a plain Eigen::MatrixXd directly, since face stripes
  *  aren't a downstream consumer of its raw form. */
 struct SmoothVertexFieldResult {
@@ -1032,12 +811,29 @@ struct SmoothVertexFieldResult {
     int nSym;
 };
 
+/**
+ * Compute a smooth direction field with prescribed singularities.
+ * Uses the trivial connections algorithm (Crane, de Goes, Desbrun).
+ *
+ * Input: singularityMap — vertex index → singularity index (typically ±1 or ±0.5)
+ * The sum of indices MUST equal the mesh Euler characteristic (Gauss-Bonnet).
+ *
+ * Output: φ = δβ + γ (per-edge 1-form angles), plus the resulting
+ * direction and orthogonal vector fields on faces.
+ */
+DirectionFieldResult trivial(
+    Manifold& m,
+    const ops::DECOperators& dec,
+    ops::CholeskyCache& cache,
+    const std::map<int, double>& singularityMap
+);
+
 /** Compute the smoothest face-based direction field.
  *  Returns [nF, 3] world-space vectors (principal nSym-RoSy
  *  representative; the other nSym-1 directions are obtained by
  *  rotating in the face tangent plane). */
-Eigen::MatrixXd computeSmoothFaceField(
-    ComputeContext& ctx,
+Eigen::MatrixXd smoothFace(
+    Manifold& m,
     int nSym = 4,
     bool alignToCurvature = false
 );
@@ -1046,11 +842,82 @@ Eigen::MatrixXd computeSmoothFaceField(
  *  as input to stripe patterns).
  *  Returns the raw [nV * 2] Vector2 form alongside [nV, 3] world
  *  vectors, since stripes consume the Vector2 form internally. */
-SmoothVertexFieldResult computeSmoothVertexField(
-    ComputeContext& ctx,
+SmoothVertexFieldResult smoothVertex(
+    Manifold& m,
     int nSym = 2,
     bool alignToCurvature = false
 );
+
+} // namespace nxr::manifold::connection
+
+namespace nxr::manifold::solve {
+
+// ── Hodge Decomposition ──────────────────────────────────────
+
+struct HodgeResult {
+    // Scalar potentials (per vertex)
+    Eigen::VectorXd exactPotential;      // α
+    Eigen::VectorXd coExactPotentialF;   // β (per face)
+    Eigen::VectorXd coExactPotentialV;   // β averaged to vertices
+    Eigen::VectorXd combinedPotential;   // α + β
+    Eigen::VectorXd omega;               // input 1-form on edges
+
+    // 1-form components of the decomposition (all [nE])
+    Eigen::VectorXd dAlpha;              // exact 1-form: d(α)
+    Eigen::VectorXd deltaBeta;           // co-exact 1-form: δ(β)
+    Eigen::VectorXd gamma;               // harmonic 1-form: ω - dα - δβ
+
+    // Face-centered vector fields via Whitney interpolation, each [nF, 3]
+    Eigen::MatrixXd omegaVectors;
+    Eigen::MatrixXd dAlphaVectors;
+    Eigen::MatrixXd deltaBetaVectors;
+    Eigen::MatrixXd gammaVectors;
+};
+
+/**
+ * Hodge/Helmholtz decomposition of a 1-form ω:
+ *   ω = dα + δβ + γ
+ *
+ * Given random ω, returns:
+ *   - α: scalar potential (vertex-based) — gradient part
+ *   - β: scalar potential (face-based, averaged to vertices) — curl part
+ *
+ * @param dec    DEC operators (d0, d1, hodge1, hodge1Inverse)
+ * @param omega  input 1-form on edges (random or user-supplied)
+ */
+HodgeResult hodge(
+    Manifold& m,
+    const ops::DECOperators& dec,
+    ops::CholeskyCache& cache,
+    const Eigen::VectorXd& omega
+);
+
+} // namespace nxr::manifold::solve
+
+namespace nxr::manifold::parametrization {
+
+// ── Surface Parametrization ──────────────────────────────────
+
+/** Boundary First Flattening (Sawhney & Crane 2017) — produces a
+ *  conformal-by-default planar parametrization of the surface.
+ *
+ *  Returns a [V, 2] matrix of UV coordinates (u, v) per vertex.
+ *  Mesh must have at least one boundary loop; for closed meshes
+ *  the user must cut the surface first. The mesh in nxr-compute is
+ *  ManifoldSurfaceMesh so boundary detection works automatically.
+ *
+ *  Used by texture-based visualizations (LIC, isoline rendering
+ *  in UV space, anisotropic shaders). Lower angular distortion
+ *  than LSCM, especially near complex boundaries. Uses
+ *  geometry-central's bundled BFF implementation — no extra
+ *  dependency.
+ *
+ *  Throws if the mesh has no boundary. */
+Eigen::MatrixXd bff(Manifold& m);
+
+} // namespace nxr::manifold::parametrization
+
+namespace nxr::manifold::parametrization::stripes {
 
 // ── Stripe Patterns (Knöppel-Crane SIGGRAPH 2015) ────────────
 //
@@ -1070,48 +937,288 @@ struct StripePatternResult {
 };
 
 /** Stripe pattern with a uniform target frequency. The vertex
- *  field must be 2-RoSy (use `computeSmoothVertexField(ctx, 2)`
+ *  field must be 2-RoSy (use `smoothVertex(m, 2)`
  *  or pass an existing line field). */
-StripePatternResult computeStripePattern(
-    ComputeContext& ctx,
+StripePatternResult compute(
+    Manifold& m,
     const Eigen::VectorXd& vertexFieldRaw,  // [nV * 2] in vertex tangent basis
     double uniformFrequency,
     bool connectOnSingularities = true
 );
 
 /** Stripe pattern with per-vertex target frequencies. */
-StripePatternResult computeStripePatternFreq(
-    ComputeContext& ctx,
+StripePatternResult computeFreq(
+    Manifold& m,
     const Eigen::VectorXd& vertexFieldRaw,  // [nV * 2]
     const Eigen::VectorXd& frequencies,     // [nV]
     bool connectOnSingularities = true
 );
 
-// ── Direction Field Design (Trivial Connections) ─────────────
+} // namespace nxr::manifold::parametrization::stripes
 
-struct DirectionFieldResult {
-    Eigen::VectorXd connections;         // φ per edge (1-form angles)
-    Eigen::MatrixXd directionVectors;    // [nF, 3] smooth direction field on faces
-    Eigen::MatrixXd orthogonalVectors;   // [nF, 3] 90° rotated direction field
-    double eulerCharacteristic;
-    bool gaussBonnetSatisfied;
+namespace nxr::manifold::geometry {
+
+// ── Curvatures ───────────────────────────────────────────────
+
+struct CurvatureResult {
+    Eigen::VectorXd gaussian;        // K per vertex (angle defect)
+    Eigen::VectorXd mean;            // H per vertex
+    Eigen::VectorXd kMin;            // κ_min per vertex
+    Eigen::VectorXd kMax;            // κ_max per vertex
+    Eigen::MatrixXd principalDirMax; // [nV, 3] max principal direction lifted to 3D
 };
 
-/**
- * Compute a smooth direction field with prescribed singularities.
- * Uses the trivial connections algorithm (Crane, de Goes, Desbrun).
+CurvatureResult curvatures(Manifold& m);
+
+// ── Normal Estimators ────────────────────────────────────────
+
+enum class NormalType {
+    AngleWeighted,    // default (matches gpjs "Tip Angle Weighted")
+    AreaWeighted,     // weighted by face area
+    EqualWeighted,    // equal weighting (normalized sum)
+    SphereInscribed,  // (u × v) / (|u|² |v|²) per corner
+    MeanCurvature,    // cotangent-weighted (Laplace-Beltrami)
+    GaussCurvature    // dihedral angle / edge length weighted
+};
+
+/** Compute per-vertex normals using a given estimator.
+ *  Returns [nV * 3] flat array (row-major). */
+Eigen::MatrixXd normals(Manifold& m, NormalType type);
+
+// ── Face Frames ──────────────────────────────────────────────
+
+/** Per-face orthonormal tangent frame.
  *
- * Input: singularityMap — vertex index → singularity index (typically ±1 or ±0.5)
- * The sum of indices MUST equal the mesh Euler characteristic (Gauss-Bonnet).
+ *  Each face f has an in-plane orthonormal basis (e1, e2) and a
+ *  normal n, all 3D vectors in world coordinates. Used by:
+ *    - GPU-side particle advection (frames define each face's
+ *      local 2D coordinate system)
+ *    - Tangent vector field visualization (face vectors expressed
+ *      as 2D coords in (e1, e2) reconstruct in JS / shaders)
+ *    - Texture mapping where a per-face frame is needed
  *
- * Output: φ = δβ + γ (per-edge 1-form angles), plus the resulting
- * direction and orthogonal vector fields on faces.
- */
-DirectionFieldResult computeDirectionField(
-    ComputeContext& ctx,
+ *  Convention matches direction_field.cpp::faceOrthonormalBasis:
+ *  e1 is the unit edge vector along f.halfedge(), e2 = n × e1.
+ *  This is the same frame the trivial-connection direction field
+ *  uses, so tangent vectors transported between faces are
+ *  interpretable in the same coordinate system. */
+struct FaceFrames {
+    Eigen::MatrixXd e1;       // [nF, 3] — first tangent vector
+    Eigen::MatrixXd e2;       // [nF, 3] — second tangent (n × e1)
+    Eigen::MatrixXd normals;  // [nF, 3] — face normals
+};
+
+FaceFrames frames(Manifold& m);
+
+} // namespace nxr::manifold::geometry
+
+namespace nxr::field::generate {
+
+using nxr::manifold::Manifold;
+using nxr::manifold::solve::EigenResult;
+using nxr::manifold::ops::ManifoldOperators;
+using nxr::manifold::ops::DECOperators;
+
+// ── Field Generators ─────────────────────────────────────────
+//
+// Analytic field synthesis. Mirrors the +bct.+field.+generate.*
+// family from the MATLAB reference toolbox; the cortical-flow
+// solvers (Hodge, Poisson, gradient flow) are source-agnostic and
+// consume fields produced here interchangeably with real activity
+// data loaded from Zarr.
+//
+// The validation pattern (see test_field_generators.cpp) is the
+// geometry-processing-js demo pattern: synthesize ω from known
+// α / β / γ contributions, run hodge, verify the
+// algorithm recovers what was put in.
+
+/** Sparse delta vector: zeros everywhere except the listed source
+ *  vertices, which take the supplied values. Useful as an initial
+ *  condition for heat-method / Poisson workflows. */
+Eigen::VectorXd delta(int nV, const std::map<int, double>& sources);
+
+/** Random vertex scalar field, uniform in [-1, 1]. Reproducible by
+ *  seed. Used as the α (gradient potential) in decomposed-1-form
+ *  synthesis. */
+Eigen::VectorXd randomVertexScalar(int nV, unsigned int seed = 42);
+
+/** Random face scalar field, uniform in [-1, 1]. Reproducible by
+ *  seed. Used as the β (curl potential) in decomposed-1-form
+ *  synthesis. */
+Eigen::VectorXd randomFaceScalar(int nF, unsigned int seed = 42);
+
+/** Generate a random 1-form on edges. */
+Eigen::VectorXd randomOmega(int nE, unsigned int seed = 42);
+
+/** Extract the k-th eigenmode from a precomputed EigenResult as a
+ *  vertex scalar field. */
+Eigen::VectorXd eigenmodeField(const EigenResult& eig, int k_index);
+
+/** Synthesize a 1-form on edges by combining independently-random
+ *  exact and co-exact contributions:
+ *
+ *      ω = α_strength · (d0 · α_rand) + β_strength · (★₁⁻¹ d1ᵀ · β_rand)
+ *
+ *  where α_rand is a random vertex scalar (seed) and β_rand is a
+ *  random face scalar (seed + 1). The Hodge decomposition of ω
+ *  must recover the same dα and δβ within solver tolerance — this
+ *  is the validation contract for hodge.
+ *
+ *  γ_strength is reserved for the harmonic component but ignored in
+ *  v1; harmonic basis computation is deferred (cortical meshes are
+ *  genus 3-5 due to ventricle topology, so the harmonic space is
+ *  non-trivial in principle, but its construction needs its own
+ *  primitive and isn't required for the gpjs-style validation). */
+Eigen::VectorXd randomDecomposed1Form(
     const DECOperators& dec,
-    CholeskyCache& cache,
-    const std::map<int, double>& singularityMap
+    int nV, int nE, int nF,
+    double alphaStrength,
+    double betaStrength,
+    double gammaStrength,
+    unsigned int seed = 42
+);
+
+// ── Time-Varying Field Generators ────────────────────────────
+//
+// Spectral-evolution generators that produce [T, V] float32 arrays
+// suitable for the Timeline / activity slot. Both reuse precomputed
+// eigenmodes — no per-frame Cholesky needed, which is the spectral
+// method's defining feature: O(K) per timestep regardless of nV.
+//
+// Storage layout: Eigen::MatrixXf with shape (T, V), column-major
+// (Eigen default). Frame ti is `output.row(ti)`. When flattened
+// row-major to a Float32Array, this matches the [T, V] convention
+// used by the Zarr `recordings/.../activity` schema.
+//
+// Both functions assume the eigenmodes are M-orthonormalized — i.e.
+// the caller has already run normalize() on solve
+// output. Failure to do so silently produces wrong amplitudes.
+
+/** Heat diffusion via spectral evolution.
+ *
+ *  Solves  ∂u/∂t = -α K u  on the domain, returning the full time
+ *  series. M-weighted spatial mean is preserved exactly across all
+ *  frames (heat equation invariant); only the zero-mean part evolves
+ *  spectrally:
+ *
+ *      u(t) = u_mean + Σₖ ⟨u₀ - u_mean, φₖ⟩_M · exp(-α·t·λₖ) · φₖ
+ *
+ *  The DC mode (if present in `eig`) is harmless — its λ ≈ 0 means
+ *  exp(-αtλ) ≈ 1 and it just reproduces the mean offset.
+ *
+ *  Agnostic in M: works on Voronoi mass (mesh) or node-weight
+ *  diagonals (graph). M-orthonormality of `eig.eigenvectors`
+ *  is the caller's responsibility regardless.
+ *
+ *  @param M          mass / inner-product matrix used for projection
+ *  @param eig        precomputed eigenmodes (M-orthonormal, sorted ascending)
+ *  @param u0         initial condition [n]
+ *  @param timesteps  T values of t (any non-negative reals)
+ *  @param alpha      diffusion coefficient
+ *  @return           [T, n] float32 time series, frame-major
+ */
+Eigen::MatrixXf heatDiffusion(
+    const Eigen::SparseMatrix<double>& M,
+    const EigenResult& eig,
+    const Eigen::VectorXd& u0,
+    const std::vector<double>& timesteps,
+    double alpha = 1.0
+);
+
+/** Convenience overload: forwards to the (M, …) form using ops.mass. */
+inline Eigen::MatrixXf heatDiffusion(
+    const ManifoldOperators& ops,
+    const EigenResult& eig,
+    const Eigen::VectorXd& u0,
+    const std::vector<double>& timesteps,
+    double alpha = 1.0
+) {
+    return heatDiffusion(ops.mass, eig, u0, timesteps, alpha);
+}
+
+/** Damped wave field via per-mode oscillation.
+ *
+ *  Synthesizes a superposition of independently-damped harmonic
+ *  oscillators on the mesh:
+ *
+ *      u(t,v) = Σₘ aₘ · exp(-γₘ·t) · cos(√λ_{kₘ}·t + φₘ) · φ_{kₘ}(v)
+ *
+ *  The angular frequency of each mode is √λ_{kₘ} (acoustic relation
+ *  between Laplace eigenvalues and wave speeds). Useful for
+ *  illustrative time-varying fields and for studying mode-mixing
+ *  visualizations.
+ *
+ *  @param eig          precomputed eigenmodes (M-orthonormal)
+ *  @param modeIndices  which eigenmodes to excite (size M)
+ *  @param amplitudes   per-mode amplitude aₘ (size M)
+ *  @param dampings     per-mode damping rate γₘ ≥ 0 (size M)
+ *  @param phases       per-mode phase φₘ in radians (size M)
+ *  @param timesteps    T values of t
+ *  @return             [T, nV] float32 time series, frame-major
+ */
+Eigen::MatrixXf dampedWave(
+    const EigenResult& eig,
+    const std::vector<int>& modeIndices,
+    const std::vector<double>& amplitudes,
+    const std::vector<double>& dampings,
+    const std::vector<double>& phases,
+    const std::vector<double>& timesteps
+);
+
+} // namespace nxr::field::generate
+
+namespace nxr::field::interp {
+
+using nxr::manifold::Manifold;
+using nxr::manifold::ops::DECOperators;
+
+// ── Vector Field Operations ──────────────────────────────────
+
+/** Whitney interpolation: edge 1-form → face-centered 3D vectors.
+ *  Formula: V(f) = (N × (a + b + c)) / (6A)
+ *  Returns [nF, 3] matrix (row-major vectors). */
+Eigen::MatrixXd whitney(
+    Manifold& m,
+    const DECOperators& dec,
+    const Eigen::VectorXd& oneForm
+);
+
+} // namespace nxr::field::interp
+
+namespace nxr::field::op {
+
+using nxr::manifold::Manifold;
+
+/** Gradient of a vertex scalar field → face-centered 3D vectors.
+ *  For triangle (vi, vj, vk): ∇u = (1 / 2A) Σ (uₖ - uᵢ) (N × eⱼᵢ)
+ *  Returns [nF, 3] matrix. */
+Eigen::MatrixXd gradient(
+    Manifold& m,
+    const Eigen::VectorXd& scalarField
+);
+
+} // namespace nxr::field::op
+
+namespace nxr::field::extract {
+
+using nxr::manifold::Manifold;
+
+// ── Isolines ─────────────────────────────────────────────────
+
+struct IsolineResult {
+    Eigen::MatrixXd positions;  // [segmentCount * 2, 3] endpoints of line segments
+    int segmentCount;
+};
+
+/** Extract isoline (contours) from a per-vertex scalar field.
+ *  numLevels evenly-spaced contour values in [minValue, maxValue].
+ *  If minValue == maxValue, auto-detects range from the data. */
+IsolineResult isoline(
+    Manifold& m,
+    const Eigen::VectorXd& scalarField,
+    int numLevels = 20,
+    double minValue = 0.0,
+    double maxValue = 0.0
 );
 
 // ── Streamlines ──────────────────────────────────────────────
@@ -1131,12 +1238,54 @@ struct StreamlineResult {
  * @param stepCoef   step size = stepCoef * meanEdgeLength
  * @param maxSteps   max integration steps per streamline
  */
-StreamlineResult traceStreamlines(
-    ComputeContext& ctx,
+StreamlineResult streamline(
+    Manifold& m,
     const Eigen::MatrixXd& faceField,
     int numSeeds = 15,
     double stepCoef = 0.15,
     int maxSteps = 1000
 );
 
-} // namespace nxr::compute
+} // namespace nxr::field::extract
+
+// ── Backward-compat using-declarations ───────────────────────
+//
+// Existing callers (addon.cpp, MEX bindings, tests, downstream
+// consumers) reference these symbols at `nxr::manifold::*`. The
+// sub-namespace split above is a pure organization change; the
+// using-declarations below preserve every public name at its
+// pre-split location.
+
+namespace nxr::manifold {
+    // Type using-declarations only — function using-decls conflict with
+    // out-of-line definitions in src/*.cpp (the .cpp opens a sub-namespace
+    // block like `namespace nxr::manifold::connection { trivial(...) { … } }`
+    // and the using-decl `using connection::trivial` is treated as
+    // declaring `nxr::manifold::trivial`, which clashes with the
+    // canonical sub-namespace definition). Types don't have this issue.
+    //
+    // Consumers must use the sub-namespace paths for free functions
+    // (e.g. `nxr::manifold::ops::d0(m)`, `nxr::manifold::solve::eigen(...)`).
+    using ops::MassMatrixVariant;
+    using ops::ManifoldOperators;
+    using ops::DECOperators;
+    using ops::CholeskyCache;
+    using ops::laplacian::connection::ConnectionDomain;
+    using ops::laplacian::connection::ConnectionLaplacianFormat;
+    using ops::laplacian::connection::ConnectionLaplacianOptions;
+    using ops::laplacian::connection::ConnectionLaplacian;
+    using solve::EigenResult;
+    using solve::HeatGeodesicSolver;
+    using solve::SignedHeatSolver;
+    using solve::SignedHeatLevelSet;
+    using solve::HodgeResult;
+    using transport::VectorHeatSolver;
+    using transport::LogMapResult;
+    using transport::LogMapStrategy;
+    using connection::DirectionFieldResult;
+    using connection::SmoothVertexFieldResult;
+    using parametrization::stripes::StripePatternResult;
+    using geometry::CurvatureResult;
+    using geometry::NormalType;
+    using geometry::FaceFrames;
+} // namespace nxr::manifold

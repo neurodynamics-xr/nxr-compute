@@ -5,9 +5,9 @@
 #include <iostream>
 #include <cmath>
 
-namespace nxr::compute {
+namespace nxr::manifold::solve {
 
-Eigen::MatrixXd normalizeEigenmodes(
+Eigen::MatrixXd normalize(
     const Eigen::MatrixXd& U,
     const Eigen::SparseMatrix<double>& M
 ) {
@@ -104,4 +104,4 @@ EigenResult removeDC(const EigenResult& result) {
     return out;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::solve

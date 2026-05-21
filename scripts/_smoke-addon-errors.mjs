@@ -63,41 +63,41 @@ function assertThrows(label, expectedCode, fn) {
 console.log('[errors] verifying structured error translation')
 
 // 1. Out-of-range source vertex → InvalidInput from C++ checkVertexInRange.
-assertThrows('vectorHeatLogMap with out-of-range vertex', 'INVALID_INPUT',
-  () => addon.vectorHeatLogMap(ctx, /* sourceVertex = */ 9999))
+assertThrows('logMap with out-of-range vertex', 'INVALID_INPUT',
+  () => addon.logMap(ctx, /* sourceVertex = */ 9999))
 
 // 2. Out-of-range source vertex via transport.
-assertThrows('vectorHeatTransport with out-of-range vertex', 'INVALID_INPUT',
-  () => addon.vectorHeatTransport(ctx,
+assertThrows('parallel with out-of-range vertex', 'INVALID_INPUT',
+  () => addon.parallel(ctx,
     new Int32Array([99]),
     new Float64Array([1, 0, 0])))
 
 // 3. Mismatched array shape — Nx3 sourceVectors length must be 3*verts.
-assertThrows('vectorHeatTransport with mismatched array lengths', 'INVALID_INPUT',
-  () => addon.vectorHeatTransport(ctx,
+assertThrows('parallel with mismatched array lengths', 'INVALID_INPUT',
+  () => addon.parallel(ctx,
     new Int32Array([0, 1]),
     new Float64Array([1, 0, 0])))  // length 3, but 2 verts ⇒ need 6
 
 // 4. Empty curve to signed heat.
-assertThrows('signedHeatDistance on empty curve', 'INVALID_INPUT',
-  () => addon.signedHeatDistance(ctx, new Int32Array([]), true, 1))
+assertThrows('signedHeat on empty curve', 'INVALID_INPUT',
+  () => addon.signedHeat(ctx, new Int32Array([]), true, 1))
 
 // 5. Empty source set to findCenter.
-assertThrows('vectorHeatFindCenter on empty source set', 'INVALID_INPUT',
-  () => addon.vectorHeatFindCenter(ctx, new Int32Array([]), 2))
+assertThrows('findCenter on empty source set', 'INVALID_INPUT',
+  () => addon.findCenter(ctx, new Int32Array([]), 2))
 
-// 6. NotPrecomputed: heat diffusion before solveEigenmodes.
-assertThrows('generateHeatDiffusion before solveEigenmodes', 'NOT_PRECOMPUTED',
-  () => addon.generateHeatDiffusion(ctx, {
+// 6. NotPrecomputed: heat diffusion before solve.
+assertThrows('heatDiffusion before solve', 'NOT_PRECOMPUTED',
+  () => addon.heatDiffusion(ctx, {
     sourceVerts: new Int32Array([0]),
     sourceValues: new Float64Array([1.0]),
     timesteps: new Float64Array([0.0, 0.1]),
     alpha: 1.0,
   }))
 
-// 7. nSym < 1 ⇒ InvalidInput from computeSmoothFaceField.
-assertThrows('computeSmoothFaceField with nSym=0', 'INVALID_INPUT',
-  () => addon.computeSmoothFaceField(ctx, 0, false))
+// 7. nSym < 1 ⇒ InvalidInput from smoothFace.
+assertThrows('smoothFace with nSym=0', 'INVALID_INPUT',
+  () => addon.smoothFace(ctx, 0, false))
 
 if (failures > 0) {
   console.error(`[errors] ${failures} failure(s)`)

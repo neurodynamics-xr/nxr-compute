@@ -6,15 +6,15 @@
 #include <iostream>
 #include <cmath>
 
-namespace nxr::compute {
+namespace nxr::manifold::geometry {
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
 
-CurvatureResult computeCurvatures(ComputeContext& ctx) {
-    auto& mesh = ctx.mesh();
-    auto& geometry = ctx.geometry();
-    int nV = ctx.nV();
+CurvatureResult curvatures(Manifold& m) {
+    auto& mesh = m.mesh();
+    auto& geometry = m.geometry();
+    int nV = m.nV();
 
     CurvatureResult result;
     result.gaussian.resize(nV);
@@ -83,4 +83,4 @@ CurvatureResult computeCurvatures(ComputeContext& ctx) {
     return result;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::geometry

@@ -8,24 +8,24 @@
 #include <iostream>
 #include <limits>
 
-namespace nxr::compute {
+namespace nxr::field::extract {
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
 
-// Port of bioctreeapp/src/lib/compute/visualization/isolines.ts
+// Port of bioctreeapp/src/lib/compute/visualization/isoline.ts
 // For each triangle, for each contour level, find the exactly 2 edges
 // where the level crosses and emit a line segment between those crossings.
-IsolineResult computeIsolines(
-    ComputeContext& ctx,
+IsolineResult isoline(
+    Manifold& m,
     const Eigen::VectorXd& scalarField,
     int numLevels,
     double minValue,
     double maxValue
 ) {
-    auto& mesh = ctx.mesh();
-    auto& geom = ctx.geometry();
-    int nV = ctx.nV();
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
+    int nV = m.nV();
 
     IsolineResult result;
     result.segmentCount = 0;
@@ -122,10 +122,10 @@ IsolineResult computeIsolines(
         result.positions(i, 2) = pts[i * 3 + 2];
     }
 
-    std::cout << "[isolines] Extracted " << segCount << " segments across "
+    std::cout << "[isoline] Extracted " << segCount << " segments across "
               << numLevels << " levels" << std::endl;
 
     return result;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::field::extract

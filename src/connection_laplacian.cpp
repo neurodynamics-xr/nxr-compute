@@ -9,7 +9,7 @@
 #include <complex>
 #include <vector>
 
-namespace nxr::compute {
+namespace nxr::manifold::ops::laplacian::connection {
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
@@ -180,7 +180,7 @@ Eigen::SparseMatrix<double> lowerToReal2N(
 } // namespace
 
 ConnectionLaplacian assembleConnectionLaplacian(
-    ComputeContext& ctx,
+    Manifold& m,
     const ConnectionLaplacianOptions& opts
 ) {
     if (opts.nSym <= 0) {
@@ -190,21 +190,21 @@ ConnectionLaplacian assembleConnectionLaplacian(
                     "Common values: 1 (vector field), 2 (line field), 4 (cross field).");
     }
 
-    auto& geometry = ctx.geometry();
+    auto& geometry = m.geometry();
 
     std::vector<ComplexTriplet> triplets;
     int N = 0;
     switch (opts.domain) {
         case ConnectionDomain::Vertex:
-            N = ctx.nV();
+            N = m.nV();
             assembleVertexCL(geometry, opts.nSym, triplets);
             break;
         case ConnectionDomain::Face:
-            N = ctx.nF();
+            N = m.nF();
             assembleFaceCL(geometry, opts.nSym, triplets);
             break;
         case ConnectionDomain::EdgeCrouzeixRaviart:
-            N = ctx.nE();
+            N = m.nE();
             assembleEdgeCRCL(geometry, opts.nSym, triplets);
             break;
     }
@@ -256,4 +256,4 @@ ConnectionLaplacianFormat parseConnectionLaplacianFormat(const std::string& name
                 "' — expected 'real2N' or 'complex'.");
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::ops::laplacian::connection

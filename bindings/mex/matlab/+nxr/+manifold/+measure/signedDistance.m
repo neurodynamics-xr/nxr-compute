@@ -14,6 +14,6 @@ function d = signedDistance(mctx, curveVerts, isLoop, levelSet)
 %   sub-leaf becomes a sibling here.
     if nargin < 3, isLoop   = true;  end
     if nargin < 4, levelSet = 1;     end   % ZeroSet
-    d = nxr_compute('signedHeatDistance', mctx.V, mctx.F, ...
+    d = nxr_compute('signedHeat', mctx.V, mctx.F, ...
                     int32(curveVerts), logical(isLoop), int32(levelSet));
 end

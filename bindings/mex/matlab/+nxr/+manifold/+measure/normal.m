@@ -5,10 +5,10 @@ function n = normal(mctx, type)
 %
 %   Other estimators (area, equal, sphere-inscribed, mean-curvature,
 %   gauss-curvature) are not yet wired in the MEX dispatcher's
-%   assembleMeshOperators. The cached `mctx.vertexNormals` is the
+%   assembleManifoldOperators. The cached `mctx.normals` is the
 %   default angle-weighted variant.
     if nargin >= 2 && type ~= 0
         nxr.manifold.impl.notWired('measure.normal (type ~= 0)');
     end
-    n = mctx.vertexNormals;
+    n = mctx.normals;
 end

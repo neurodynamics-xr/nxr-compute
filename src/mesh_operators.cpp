@@ -6,14 +6,14 @@
 #include <vector>
 #include <iostream>
 
-namespace nxr::compute {
+namespace nxr::manifold {
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
 
-// ── ComputeContext implementation ────────────────────────────
+// ── Manifold implementation ────────────────────────────
 
-ComputeContext::ComputeContext(const double* vertices, int nV,
+Manifold::Manifold(const double* vertices, int nV,
                                 const int32_t* faces, int nF) {
     // Build polygon list from flat face array
     std::vector<std::vector<size_t>> polygons(nF);
@@ -36,14 +36,21 @@ ComputeContext::ComputeContext(const double* vertices, int nV,
     geometry_ = std::make_unique<VertexPositionGeometry>(*mesh_, positions);
 }
 
-ComputeContext::~ComputeContext() = default;
+Manifold::~Manifold() = default;
 
-int ComputeContext::nV() const { return static_cast<int>(mesh_->nVertices()); }
-int ComputeContext::nE() const { return static_cast<int>(mesh_->nEdges()); }
-int ComputeContext::nF() const { return static_cast<int>(mesh_->nFaces()); }
+int Manifold::nV() const { return static_cast<int>(mesh_->nVertices()); }
+int Manifold::nE() const { return static_cast<int>(mesh_->nEdges()); }
+int Manifold::nF() const { return static_cast<int>(mesh_->nFaces()); }
 
-ManifoldSurfaceMesh& ComputeContext::mesh() { return *mesh_; }
-VertexPositionGeometry& ComputeContext::geometry() { return *geometry_; }
+ManifoldSurfaceMesh& Manifold::mesh() { return *mesh_; }
+VertexPositionGeometry& Manifold::geometry() { return *geometry_; }
+
+} // namespace nxr::manifold
+
+namespace nxr::manifold::ops {
+
+using namespace geometrycentral;
+using namespace geometrycentral::surface;
 
 // ── Mass-matrix variant dispatch ─────────────────────────────
 //
@@ -138,14 +145,14 @@ void assembleMassTriplets(
 
 // ── Operator Assembly ────────────────────────────────────────
 
-MeshOperators assembleMeshOperators(ComputeContext& ctx,
+ManifoldOperators assembleManifoldOperators(Manifold& m,
                                     MassMatrixVariant variant) {
-    auto& mesh = ctx.mesh();
-    auto& geometry = ctx.geometry();
+    auto& mesh = m.mesh();
+    auto& geometry = m.geometry();
 
-    int nV = ctx.nV();
-    int nE = ctx.nE();
-    int nF = ctx.nF();
+    int nV = m.nV();
+    int nE = m.nE();
+    int nF = m.nF();
 
     // Pin the cotangent Laplacian — it's a view in the returned struct.
     // cotanLaplacian is already symmetric (cotan weights symmetric,
@@ -214,7 +221,7 @@ MeshOperators assembleMeshOperators(ComputeContext& ctx,
               << ", mass = " << variantName
               << ", mass nnz = " << mass.nonZeros() << ")" << std::endl;
 
-    return MeshOperators(
+    return ManifoldOperators(
         geometry.cotanLaplacian,
         std::move(mass),
         variant,
@@ -224,13 +231,13 @@ MeshOperators assembleMeshOperators(ComputeContext& ctx,
     );
 }
 
-MeshOperators assembleMeshOperators(
+ManifoldOperators assembleManifoldOperators(
     const double* vertices, int nV,
     const int32_t* faces, int nF,
     MassMatrixVariant variant
 ) {
-    ComputeContext ctx(vertices, nV, faces, nF);
-    return assembleMeshOperators(ctx, variant);
+    Manifold m(vertices, nV, faces, nF);
+    return assembleManifoldOperators(m, variant);
 }
 
 MassMatrixVariant parseMassMatrixVariant(const std::string& name) {
@@ -244,8 +251,10 @@ MassMatrixVariant parseMassMatrixVariant(const std::string& name) {
 
 // ── DEC Operators ────────────────────────────────────────────
 
-DECOperators assembleDECOperators(ComputeContext& ctx) {
-    auto& geometry = ctx.geometry();
+DECOperators assembleDECOperators(Manifold& m) {
+    auto& geometry = m.geometry();
+
+
     geometry.requireDECOperators();
     return DECOperators(
         geometry.d0,
@@ -257,4 +266,52 @@ DECOperators assembleDECOperators(ComputeContext& ctx) {
     );
 }
 
-} // namespace nxr::compute
+// ── Zero-copy passthrough accessors ──────────────────────────
+//
+// Each calls GC's require* once (no-op if cached) and returns the
+// cached field by const reference. Bit-identical to the matching
+// field on the struct returned by assembleDECOperators.
+
+const Eigen::SparseMatrix<double>& d0(Manifold& m) {
+    auto& geom = m.geometry();
+    geom.requireDECOperators();
+    return geom.d0;
+}
+
+const Eigen::SparseMatrix<double>& d1(Manifold& m) {
+    auto& geom = m.geometry();
+    geom.requireDECOperators();
+    return geom.d1;
+}
+
+const Eigen::SparseMatrix<double>& hodge0(Manifold& m) {
+    auto& geom = m.geometry();
+    geom.requireDECOperators();
+    return geom.hodge0;
+}
+
+const Eigen::SparseMatrix<double>& hodge1(Manifold& m) {
+    auto& geom = m.geometry();
+    geom.requireDECOperators();
+    return geom.hodge1;
+}
+
+const Eigen::SparseMatrix<double>& hodge2(Manifold& m) {
+    auto& geom = m.geometry();
+    geom.requireDECOperators();
+    return geom.hodge2;
+}
+
+const Eigen::SparseMatrix<double>& hodge1Inverse(Manifold& m) {
+    auto& geom = m.geometry();
+    geom.requireDECOperators();
+    return geom.hodge1Inverse;
+}
+
+const Eigen::VectorXd& vertexDualAreas(Manifold& m) {
+    auto& geom = m.geometry();
+    geom.requireVertexDualAreas();
+    return geom.vertexDualAreas.raw();
+}
+
+} // namespace nxr::manifold::ops

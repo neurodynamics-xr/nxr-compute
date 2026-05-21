@@ -8,7 +8,7 @@
 #include <iostream>
 #include <vector>
 
-namespace nxr::compute {
+namespace nxr::manifold::parametrization::stripes {
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
@@ -16,12 +16,12 @@ using namespace geometrycentral::surface;
 namespace {
 
 StripePatternResult buildStripeResult(
-    ComputeContext& ctx,
+    Manifold& m,
     const VertexData<Vector2>& field,
     const VertexData<double>& freqs,
     bool connectOnSingularities
 ) {
-    auto& geom = ctx.geometry();
+    auto& geom = m.geometry();
 
     // The convenience overload returns 3D polyline segments directly;
     // skip the per-corner phase intermediate that's only needed if you
@@ -67,8 +67,8 @@ VertexData<Vector2> unpackVertexField(SurfaceMesh& mesh,
 
 } // namespace
 
-StripePatternResult computeStripePattern(
-    ComputeContext& ctx,
+StripePatternResult compute(
+    Manifold& m,
     const Eigen::VectorXd& vertexFieldRaw,
     double uniformFrequency,
     bool connectOnSingularities
@@ -77,20 +77,20 @@ StripePatternResult computeStripePattern(
         throw Error(ErrorCode::InvalidInput,
             "uniformFrequency must be > 0");
     }
-    auto& mesh = ctx.mesh();
+    auto& mesh = m.mesh();
     auto field = unpackVertexField(mesh, vertexFieldRaw);
     VertexData<double> freqs(mesh, uniformFrequency);
-    return buildStripeResult(ctx, field, freqs, connectOnSingularities);
+    return buildStripeResult(m, field, freqs, connectOnSingularities);
 }
 
-StripePatternResult computeStripePatternFreq(
-    ComputeContext& ctx,
+StripePatternResult computeFreq(
+    Manifold& m,
     const Eigen::VectorXd& vertexFieldRaw,
     const Eigen::VectorXd& frequencies,
     bool connectOnSingularities
 ) {
-    auto& mesh = ctx.mesh();
-    int nV = ctx.nV();
+    auto& mesh = m.mesh();
+    int nV = m.nV();
     if (frequencies.size() != nV) {
         throw Error(ErrorCode::InvalidInput,
             "frequencies length must match nV");
@@ -100,7 +100,7 @@ StripePatternResult computeStripePatternFreq(
     for (Vertex v : mesh.vertices()) {
         freqs[v] = frequencies(static_cast<int>(v.getIndex()));
     }
-    return buildStripeResult(ctx, field, freqs, connectOnSingularities);
+    return buildStripeResult(m, field, freqs, connectOnSingularities);
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::parametrization::stripes

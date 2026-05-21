@@ -23,7 +23,7 @@ function mctx = context(V, F)
 %
 %   Lifetime: MATLAB is value-typed, so the struct is copied at every
 %   call boundary. The MEX dispatcher itself is stateless — each call
-%   rebuilds the C++ ComputeContext internally. Eager assembly here
+%   rebuilds the C++ Manifold internally. Eager assembly here
 %   pays the cotangent / Voronoi cost once per `nxr.manifold.context`
 %   call; downstream leaves operate on the resulting K and M directly,
 %   matching the WASM shim's lazy-cache semantics on first access.
@@ -36,7 +36,7 @@ function mctx = context(V, F)
     end
     validateattributes(F, {'int32'}, {'2d', 'ncols', 3}, 'context', 'F');
 
-    ops = nxr_compute('assembleMeshOperators', V, F);
+    ops = nxr_compute('assembleManifoldOperators', V, F);
 
     mctx        = struct();
     mctx.V      = V;

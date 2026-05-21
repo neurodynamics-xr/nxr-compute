@@ -7,7 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 
-namespace nxr::compute {
+namespace nxr::manifold::parametrization {
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
@@ -25,19 +25,19 @@ using namespace geometrycentral::surface;
 //
 // For closed meshes the caller must cut the surface to a disc
 // topology first; this function throws otherwise.
-Eigen::MatrixXd computeUVCoordinates(ComputeContext& ctx) {
-    auto& mesh = ctx.mesh();
-    auto& geom = ctx.geometry();
+Eigen::MatrixXd bff(Manifold& m) {
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
 
     if (mesh.nBoundaryLoops() == 0) {
         throw Error(ErrorCode::OpenMeshRequired,
-            "computeUVCoordinates: mesh has no boundary",
+            "bff: mesh has no boundary",
             "BFF requires an open mesh. Cut the surface to disc topology before calling.");
     }
 
     VertexData<Vector2> uvs = parameterizeBFF(mesh, geom);
 
-    int nV = ctx.nV();
+    int nV = m.nV();
     Eigen::MatrixXd out(nV, 2);
     for (Vertex v : mesh.vertices()) {
         int idx = static_cast<int>(v.getIndex());
@@ -52,4 +52,4 @@ Eigen::MatrixXd computeUVCoordinates(ComputeContext& ctx) {
     return out;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::parametrization

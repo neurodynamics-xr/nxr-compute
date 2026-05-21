@@ -4,12 +4,12 @@ function s = stripe(mctx, vertexFieldRaw, uniformFrequency, connectOnSingulariti
 %   s = nxr.manifold.uv.stripe(mctx, vertexFieldRaw, uniformFrequency, connectOnSingularities)
 %
 %   `vertexFieldRaw` is the V*2 raw nRoSy field returned by
-%   `nxr.manifold.interpolate.smoothVertexField` in its
+%   `nxr.manifold.interpolate.smoothVertex` in its
 %   `vertexFieldRaw` field.
     if nargin < 4
         connectOnSingularities = true;
     end
-    s = nxr_compute('computeStripePattern', mctx.V, mctx.F, ...
+    s = nxr_compute('compute', mctx.V, mctx.F, ...
                     vertexFieldRaw, uniformFrequency, ...
                     logical(connectOnSingularities));
 end

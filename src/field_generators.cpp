@@ -5,11 +5,14 @@
 #include <random>
 #include <stdexcept>
 
-namespace nxr::compute {
+namespace nxr::field::generate {
+
+using core::Error;
+using core::ErrorCode;
 
 // ── Static field generators ──────────────────────────────────
 
-Eigen::VectorXd generateDelta(int nV, const std::map<int, double>& sources) {
+Eigen::VectorXd delta(int nV, const std::map<int, double>& sources) {
     Eigen::VectorXd f = Eigen::VectorXd::Zero(nV);
     for (const auto& [idx, val] : sources) {
         if (idx >= 0 && idx < nV) f(idx) = val;
@@ -17,7 +20,7 @@ Eigen::VectorXd generateDelta(int nV, const std::map<int, double>& sources) {
     return f;
 }
 
-Eigen::VectorXd generateRandomVertexScalar(int nV, unsigned int seed) {
+Eigen::VectorXd randomVertexScalar(int nV, unsigned int seed) {
     std::mt19937 gen(seed);
     std::uniform_real_distribution<double> dist(-1.0, 1.0);
     Eigen::VectorXd f(nV);
@@ -25,7 +28,7 @@ Eigen::VectorXd generateRandomVertexScalar(int nV, unsigned int seed) {
     return f;
 }
 
-Eigen::VectorXd generateRandomFaceScalar(int nF, unsigned int seed) {
+Eigen::VectorXd randomFaceScalar(int nF, unsigned int seed) {
     std::mt19937 gen(seed);
     std::uniform_real_distribution<double> dist(-1.0, 1.0);
     Eigen::VectorXd f(nF);
@@ -33,15 +36,15 @@ Eigen::VectorXd generateRandomFaceScalar(int nF, unsigned int seed) {
     return f;
 }
 
-Eigen::VectorXd generateEigenmodeField(const EigenResult& eig, int k_index) {
+Eigen::VectorXd eigenmodeField(const EigenResult& eig, int k_index) {
     if (k_index < 0 || k_index >= eig.k) {
         throw Error(ErrorCode::InvalidInput,
-            "generateEigenmodeField: eigenmode index out of range");
+            "eigenmodeField: eigenmode index out of range");
     }
     return eig.eigenvectors.col(k_index);
 }
 
-Eigen::VectorXd generateRandomDecomposed1Form(
+Eigen::VectorXd randomDecomposed1Form(
     const DECOperators& dec,
     int nV, int nE, int nF,
     double alphaStrength,
@@ -50,11 +53,11 @@ Eigen::VectorXd generateRandomDecomposed1Form(
     unsigned int seed
 ) {
     // α (random vertex scalar) → exact 1-form  dα = d0 · α
-    Eigen::VectorXd alpha = generateRandomVertexScalar(nV, seed);
+    Eigen::VectorXd alpha = randomVertexScalar(nV, seed);
     Eigen::VectorXd dAlpha = dec.d0 * alpha;
 
     // β (random face scalar) → co-exact 1-form  δβ = ★₁⁻¹ · d1ᵀ · β
-    Eigen::VectorXd beta = generateRandomFaceScalar(nF, seed + 1);
+    Eigen::VectorXd beta = randomFaceScalar(nF, seed + 1);
     Eigen::VectorXd deltaBeta = dec.hodge1Inverse * (dec.d1.transpose() * beta);
 
     // γ (harmonic) — not synthesized in v1. For genus-0 surfaces the
@@ -70,7 +73,7 @@ Eigen::VectorXd generateRandomDecomposed1Form(
 
 // ── Time-varying field generators ────────────────────────────
 
-Eigen::MatrixXf generateHeatDiffusion(
+Eigen::MatrixXf heatDiffusion(
     const Eigen::SparseMatrix<double>& M,
     const EigenResult& eig,
     const Eigen::VectorXd& u0,
@@ -82,11 +85,11 @@ Eigen::MatrixXf generateHeatDiffusion(
 
     if (u0.size() != n) {
         throw Error(ErrorCode::InvalidInput,
-            "generateHeatDiffusion: u0 size must equal M.rows()");
+            "heatDiffusion: u0 size must equal M.rows()");
     }
     if (eig.eigenvectors.rows() != n) {
         throw Error(ErrorCode::InvalidInput,
-            "generateHeatDiffusion: eigenvectors row count must equal M.rows()");
+            "heatDiffusion: eigenvectors row count must equal M.rows()");
     }
 
     // M-weighted spatial mean is preserved exactly by the heat
@@ -115,7 +118,7 @@ Eigen::MatrixXf generateHeatDiffusion(
     return output;
 }
 
-Eigen::MatrixXf generateDampedWave(
+Eigen::MatrixXf dampedWave(
     const EigenResult& eig,
     const std::vector<int>& modeIndices,
     const std::vector<double>& amplitudes,
@@ -128,7 +131,7 @@ Eigen::MatrixXf generateDampedWave(
         static_cast<int>(dampings.size())   != M ||
         static_cast<int>(phases.size())     != M) {
         throw Error(ErrorCode::InvalidInput,
-            "generateDampedWave: modeIndices/amplitudes/dampings/phases "
+            "dampedWave: modeIndices/amplitudes/dampings/phases "
             "must have the same length");
     }
 
@@ -141,7 +144,7 @@ Eigen::MatrixXf generateDampedWave(
         int k = modeIndices[m];
         if (k < 0 || k >= eig.k) {
             throw Error(ErrorCode::InvalidInput,
-                "generateDampedWave: mode index out of range");
+                "dampedWave: mode index out of range");
         }
 
         // Numerical noise can push the DC eigenvalue slightly negative;
@@ -168,4 +171,4 @@ Eigen::MatrixXf generateDampedWave(
     return output;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::field::generate

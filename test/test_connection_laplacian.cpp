@@ -11,7 +11,7 @@
  *   - Complex matrix is Hermitian (||K - Kᴴ||_F < tol)
  *   - PSD (smallest eigenvalue ≈ regularization for nSym=1, > 0
  *     for nSym ∈ {2, 4})
- *   - End-to-end: `solveEigenmodes` on the real2N matrix paired with
+ *   - End-to-end: `solve` on the real2N matrix paired with
  *     a block-diagonal real mass matrix produces a non-zero smallest
  *     mode shape — the smoothest n-direction-field eigenpair
  *   - Domain / format string parsing round-trip and error paths
@@ -28,9 +28,24 @@
 #include <string>
 #include <vector>
 
-using nxr::compute::ConnectionDomain;
-using nxr::compute::ConnectionLaplacianFormat;
-using nxr::compute::ConnectionLaplacianOptions;
+using namespace nxr::manifold;
+using namespace nxr::manifold::solve;
+using namespace nxr::manifold::ops;
+using namespace nxr::manifold::ops::laplacian::connection;
+using namespace nxr::manifold::transport;
+using namespace nxr::manifold::connection;
+using namespace nxr::manifold::parametrization;
+using namespace nxr::manifold::parametrization::stripes;
+using namespace nxr::manifold::geometry;
+using namespace nxr::manifold::query;
+using namespace nxr::field::generate;
+using namespace nxr::field::interp;
+using namespace nxr::field::op;
+using namespace nxr::field::extract;
+
+using nxr::manifold::ops::laplacian::connection::ConnectionDomain;
+using nxr::manifold::ops::laplacian::connection::ConnectionLaplacianFormat;
+using nxr::manifold::ops::laplacian::connection::ConnectionLaplacianOptions;
 
 static int failures = 0;
 
@@ -99,8 +114,8 @@ int main() {
     generateIcosphere(V, F);
     int nV = static_cast<int>(V.size() / 3);
     int nF = static_cast<int>(F.size() / 3);
-    nxr::compute::ComputeContext ctx(V.data(), nV, F.data(), nF);
-    int nE = ctx.nE();
+    nxr::manifold::Manifold m(V.data(), nV, F.data(), nF);
+    int nE = m.nE();
 
     std::cout << "\nMesh: icosahedron, " << nV << " V, "
               << nE << " E, " << nF << " F\n";
@@ -125,7 +140,7 @@ int main() {
             opts.format = ConnectionLaplacianFormat::Real2N;
             opts.regularization = 1e-8;
 
-            auto cl = nxr::compute::assembleConnectionLaplacian(ctx, opts);
+            auto cl = nxr::manifold::ops::laplacian::connection::assembleConnectionLaplacian(m, opts);
 
             std::cout << "  nSym=" << nSym << " (real2N):\n";
 
@@ -143,7 +158,7 @@ int main() {
 
             // Complex form: test Hermitian property and complex dimension.
             opts.format = ConnectionLaplacianFormat::Complex;
-            auto clC = nxr::compute::assembleConnectionLaplacian(ctx, opts);
+            auto clC = nxr::manifold::ops::laplacian::connection::assembleConnectionLaplacian(m, opts);
             check(clC.outputDim == baseDim,
                   "complex outputDim == N");
             check(clC.K_complex.rows() == baseDim &&
@@ -170,8 +185,8 @@ int main() {
         o.nSym   = 4;
         o.format = ConnectionLaplacianFormat::Real2N;
 
-        auto a = nxr::compute::assembleConnectionLaplacian(ctx, o);
-        auto b = nxr::compute::assembleConnectionLaplacian(ctx, o);
+        auto a = nxr::manifold::ops::laplacian::connection::assembleConnectionLaplacian(m, o);
+        auto b = nxr::manifold::ops::laplacian::connection::assembleConnectionLaplacian(m, o);
 
         check(a.K_real.nonZeros() == b.K_real.nonZeros(),
               "same nnz on repeat assembly");
@@ -180,7 +195,7 @@ int main() {
               "same values on repeat assembly");
     }
 
-    // ── Composability with solveEigenmodes ────────────────────
+    // ── Composability with solve ────────────────────
     //
     // The smallest eigenpair of (K, M) on the connection-Laplacian
     // bundle reproduces the smoothest n-direction field. We use a
@@ -190,21 +205,21 @@ int main() {
     // is small enough that 6 modes converge in a fraction of a
     // second.
     {
-        std::cout << "\n── solveEigenmodes composition (vertex, nSym=4) ─────\n";
+        std::cout << "\n── solve composition (vertex, nSym=4) ─────\n";
         ConnectionLaplacianOptions o;
         o.domain         = ConnectionDomain::Vertex;
         o.nSym           = 4;
         o.regularization = 1e-6;   // larger shift so smallest eigenvalue is comfortably > 0
         o.format         = ConnectionLaplacianFormat::Real2N;
 
-        auto cl = nxr::compute::assembleConnectionLaplacian(ctx, o);
+        auto cl = nxr::manifold::ops::laplacian::connection::assembleConnectionLaplacian(m, o);
 
         // Mass: 2N × 2N identity (block-diagonal of I_V, I_V).
         Eigen::SparseMatrix<double> M(cl.outputDim, cl.outputDim);
         M.setIdentity();
 
         const int k = 6;
-        auto eig = nxr::compute::solveEigenmodes(cl.K_real, M, k);
+        auto eig = nxr::manifold::solve::eigen(cl.K_real, M, k);
 
         check(eig.k == k,                 "k modes returned");
         check(eig.nConverged == k,        "all modes converged");
@@ -234,24 +249,24 @@ int main() {
     // ── String parsers ────────────────────────────────────────
     {
         std::cout << "\n── parseConnectionDomain / parseConnectionLaplacianFormat ─────\n";
-        check(nxr::compute::parseConnectionDomain("vertex") == ConnectionDomain::Vertex,
+        check(nxr::manifold::ops::laplacian::connection::parseConnectionDomain("vertex") == ConnectionDomain::Vertex,
               "'vertex'");
-        check(nxr::compute::parseConnectionDomain("face") == ConnectionDomain::Face,
+        check(nxr::manifold::ops::laplacian::connection::parseConnectionDomain("face") == ConnectionDomain::Face,
               "'face'");
-        check(nxr::compute::parseConnectionDomain("edge") == ConnectionDomain::EdgeCrouzeixRaviart,
+        check(nxr::manifold::ops::laplacian::connection::parseConnectionDomain("edge") == ConnectionDomain::EdgeCrouzeixRaviart,
               "'edge'");
 
         bool threw = false;
-        try { (void) nxr::compute::parseConnectionDomain("nope"); }
-        catch (const nxr::compute::Error&) { threw = true; }
+        try { (void) nxr::manifold::ops::laplacian::connection::parseConnectionDomain("nope"); }
+        catch (const nxr::core::Error&) { threw = true; }
         check(threw, "unknown domain throws Error");
 
-        check(nxr::compute::parseConnectionLaplacianFormat("real2N")  == ConnectionLaplacianFormat::Real2N,  "'real2N'");
-        check(nxr::compute::parseConnectionLaplacianFormat("complex") == ConnectionLaplacianFormat::Complex, "'complex'");
+        check(nxr::manifold::ops::laplacian::connection::parseConnectionLaplacianFormat("real2N")  == ConnectionLaplacianFormat::Real2N,  "'real2N'");
+        check(nxr::manifold::ops::laplacian::connection::parseConnectionLaplacianFormat("complex") == ConnectionLaplacianFormat::Complex, "'complex'");
 
         threw = false;
-        try { (void) nxr::compute::parseConnectionLaplacianFormat("???"); }
-        catch (const nxr::compute::Error&) { threw = true; }
+        try { (void) nxr::manifold::ops::laplacian::connection::parseConnectionLaplacianFormat("???"); }
+        catch (const nxr::core::Error&) { threw = true; }
         check(threw, "unknown format throws Error");
 
         // nSym validation: nSym <= 0 must throw.
@@ -259,8 +274,8 @@ int main() {
         try {
             ConnectionLaplacianOptions bad;
             bad.nSym = 0;
-            (void) nxr::compute::assembleConnectionLaplacian(ctx, bad);
-        } catch (const nxr::compute::Error&) { threw = true; }
+            (void) nxr::manifold::ops::laplacian::connection::assembleConnectionLaplacian(m, bad);
+        } catch (const nxr::core::Error&) { threw = true; }
         check(threw, "nSym <= 0 throws Error");
     }
 

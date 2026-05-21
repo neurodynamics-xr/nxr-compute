@@ -6,16 +6,16 @@
  * or any MATLAB analysis pipeline.
  *
  * Usage from MATLAB:
- *   ops    = nxr_compute('assembleMeshOperators', V, F);
- *   eig    = nxr_compute('solveEigenmodes', ops.cotanLaplacian, ops.mass, k);
- *   eig.eigenvectors = nxr_compute('normalizeEigenmodes', eig.eigenvectors, ops.mass);
+ *   ops    = nxr_compute('assembleManifoldOperators', V, F);
+ *   eig    = nxr_compute('solve', ops.cotanLaplacian, ops.mass, k);
+ *   eig.eigenvectors = nxr_compute('normalize', eig.eigenvectors, ops.mass);
  *   eig    = nxr_compute('removeDC', eig);
  *   result = nxr_compute('precompute', V, F, k);   % shorthand for the whole pipeline
  *
  * V is Vx3 double; F is Fx3 (double / int32 / uint32) with 1-based
  * indices (MATLAB convention). All sparse outputs are CSC double.
  *
- * Cancellation: long-running commands (solveEigenmodes, precompute)
+ * Cancellation: long-running commands (solve, precompute)
  * honour Ctrl-C in MATLAB via libut's utIsInterruptPending — the
  * cancellation token polls it from inside nxr-compute's solver and throws
  * Error(Cancelled), which surfaces as MException 'nxr:cancelled'.
@@ -38,15 +38,15 @@
 // (libut.lib ships next to libmex.lib in the matlabroot/extern dir).
 extern "C" bool utIsInterruptPending();
 
-using namespace nxr::compute::mex;
+using namespace nxr::manifold::mex;
 
 namespace {
 
 // Build a CancellationToken that fires when MATLAB user hits Ctrl-C.
-// Wrapped in std::function so the same nxr::compute::CancellationToken type
+// Wrapped in std::function so the same nxr::core::CancellationToken type
 // covers both this and SAB-backed JS flags.
-nxr::compute::CancellationToken makeCtrlCToken() {
-    return nxr::compute::CancellationToken([]() {
+nxr::core::CancellationToken makeCtrlCToken() {
+    return nxr::core::CancellationToken([]() {
         return utIsInterruptPending();
     });
 }
@@ -55,8 +55,8 @@ nxr::compute::CancellationToken makeCtrlCToken() {
 // convention: 'nxr:nonManifold' rather than 'nxr:NON_MANIFOLD'.
 // MATLAB's MException identifier rules require a lowercase first
 // letter on each colon-segment.
-std::string toMatlabIdentifier(nxr::compute::ErrorCode code) {
-    std::string name(nxr::compute::errorCodeName(code));
+std::string toMatlabIdentifier(nxr::core::ErrorCode code) {
+    std::string name(nxr::core::errorCodeName(code));
     // Convert UPPER_SNAKE → camelCase: lowercase the first letter
     // and remove underscores, capitalizing the next char.
     std::string out;
@@ -78,52 +78,53 @@ std::string toMatlabIdentifier(nxr::compute::ErrorCode code) {
     return out;
 }
 
-// ── assembleMeshOperators(V, F) → struct ─────────────────────
+// ── assembleManifoldOperators(V, F) → struct ─────────────────────
 
 void cmdAssembleMeshOperators(int /*nlhs*/, mxArray** plhs,
                               int nrhs, const mxArray** prhs) {
     if (nrhs != 3) {
         throw std::invalid_argument(
-            "nxr_compute('assembleMeshOperators', V, F) takes exactly 2 arguments");
+            "nxr_compute('assembleManifoldOperators', V, F) takes exactly 2 arguments");
     }
     int nV = 0, nF = 0;
     auto verts = mxToVertexBuffer(prhs[1], nV);
     auto faces = mxToFaceBuffer(prhs[2], nF);
 
-    nxr::compute::ComputeContext ctx(verts.data(), nV, faces.data(), nF);
-    auto ops = nxr::compute::assembleMeshOperators(ctx);
-    plhs[0] = meshOperatorsToStruct(ops, ctx);
+    nxr::manifold::Manifold m(verts.data(), nV, faces.data(), nF);
+    auto ops = nxr::manifold::ops::assembleManifoldOperators(m);
+    plhs[0] = meshOperatorsToStruct(ops, m.nV(), m.nE(), m.nF());
 }
 
-// ── solveEigenmodes(K, M, k) → struct ────────────────────────
+// ── solve(K, M, k) → struct ────────────────────────
 
 void cmdSolveEigenmodes(int /*nlhs*/, mxArray** plhs,
                         int nrhs, const mxArray** prhs) {
     if (nrhs != 4) {
         throw std::invalid_argument(
-            "nxr_compute('solveEigenmodes', K, M, k) takes exactly 3 arguments");
+            "nxr_compute('solve', K, M, k) takes exactly 3 arguments");
     }
     auto K = mxToEigenSparse(prhs[1]);
     auto M = mxToEigenSparse(prhs[2]);
     int k = getIntArg(prhs[3]);
 
     // Ctrl-C polling lives entirely in the token; nxr-compute doesn't know about MATLAB.
-    auto result = nxr::compute::solveEigenmodes(K, M, k, -1e-8, makeCtrlCToken());
+    auto result = nxr::manifold::solve::eigen(K, M, k, -1e-8,
+        /*normalize=*/false, /*removeDC=*/false, makeCtrlCToken());
     plhs[0] = eigenResultToStruct(result);
 }
 
-// ── normalizeEigenmodes(U, M) → U ────────────────────────────
+// ── normalize(U, M) → U ────────────────────────────
 
 void cmdNormalizeEigenmodes(int /*nlhs*/, mxArray** plhs,
                             int nrhs, const mxArray** prhs) {
     if (nrhs != 3) {
         throw std::invalid_argument(
-            "nxr_compute('normalizeEigenmodes', U, M) takes exactly 2 arguments");
+            "nxr_compute('normalize', U, M) takes exactly 2 arguments");
     }
     auto U = mxToEigenMatrix(prhs[1]);
     auto M = mxToEigenSparse(prhs[2]);
 
-    auto Un = nxr::compute::normalizeEigenmodes(U, M);
+    auto Un = nxr::manifold::solve::normalize(U, M);
     plhs[0] = eigenMatrixToMx(Un);
 }
 
@@ -136,7 +137,7 @@ void cmdRemoveDC(int /*nlhs*/, mxArray** plhs,
             "nxr_compute('removeDC', eig) takes exactly 1 argument");
     }
     auto eig = mxToEigenResult(prhs[1]);
-    auto trimmed = nxr::compute::removeDC(eig);
+    auto trimmed = nxr::manifold::solve::removeDC(eig);
     plhs[0] = eigenResultToStruct(trimmed);
 }
 
@@ -157,18 +158,17 @@ void cmdPrecompute(int /*nlhs*/, mxArray** plhs,
     auto faces = mxToFaceBuffer(prhs[2], nF);
     int k = getIntArg(prhs[3]);
 
-    nxr::compute::ComputeContext ctx(verts.data(), nV, faces.data(), nF);
-    auto ops = nxr::compute::assembleMeshOperators(ctx);
-    auto eig = nxr::compute::solveEigenmodes(ops.cotanLaplacian, ops.mass, k, -1e-8, makeCtrlCToken());
-    eig.eigenvectors = nxr::compute::normalizeEigenmodes(eig.eigenvectors, ops.mass);
-    eig = nxr::compute::removeDC(eig);
+    nxr::manifold::Manifold m(verts.data(), nV, faces.data(), nF);
+    auto ops = nxr::manifold::ops::assembleManifoldOperators(m);
+    auto eig = nxr::manifold::solve::eigen(ops.cotanLaplacian, ops.mass, k, -1e-8,
+        /*normalize=*/true, /*removeDC=*/true, makeCtrlCToken());
 
     plhs[0] = eigenResultToStruct(eig);
 }
 
 // ── Vector heat method (Sharp, Soliman, Crane 2019) ─────────
 //
-// Each command builds a fresh ComputeContext + VectorHeatSolver per
+// Each command builds a fresh Manifold + VectorHeatSolver per
 // call. MEX is a stateless dispatcher (no holder pattern across
 // calls), so the factor cost is paid every invocation — fine for
 // MATLAB analysis pipelines where each cell typically does one solve.
@@ -180,7 +180,7 @@ void cmdVectorHeatTransport(int /*nlhs*/, mxArray** plhs,
                             int nrhs, const mxArray** prhs) {
     if (nrhs != 5) {
         throw std::invalid_argument(
-            "nxr_compute('vectorHeatTransport', V, F, sourceVerts, sourceVectors) "
+            "nxr_compute('parallel', V, F, sourceVerts, sourceVectors) "
             "takes exactly 4 arguments");
     }
     int nV = 0, nF = 0;
@@ -194,9 +194,9 @@ void cmdVectorHeatTransport(int /*nlhs*/, mxArray** plhs,
             "sourceVectors must be Nx3 with N = numel(sourceVerts)");
     }
 
-    nxr::compute::ComputeContext ctx(verts.data(), nV, faces.data(), nF);
-    nxr::compute::VectorHeatSolver vhm(ctx);
-    Eigen::MatrixXd out = nxr::compute::vectorHeatTransport(vhm, srcIdx, srcVecs);
+    nxr::manifold::Manifold m(verts.data(), nV, faces.data(), nF);
+    nxr::manifold::transport::VectorHeatSolver vhm(m);
+    Eigen::MatrixXd out = nxr::manifold::transport::parallel(vhm, srcIdx, srcVecs);
     plhs[0] = eigenMatrixToMx(out);             // V×3 column-major (MATLAB native)
 }
 
@@ -204,7 +204,7 @@ void cmdVectorHeatExtendScalar(int /*nlhs*/, mxArray** plhs,
                                int nrhs, const mxArray** prhs) {
     if (nrhs != 5) {
         throw std::invalid_argument(
-            "nxr_compute('vectorHeatExtendScalar', V, F, sourceVerts, sourceValues) "
+            "nxr_compute('extendScalar', V, F, sourceVerts, sourceValues) "
             "takes exactly 4 arguments");
     }
     int nV = 0, nF = 0;
@@ -217,9 +217,9 @@ void cmdVectorHeatExtendScalar(int /*nlhs*/, mxArray** plhs,
             "sourceValues must have the same length as sourceVerts");
     }
 
-    nxr::compute::ComputeContext ctx(verts.data(), nV, faces.data(), nF);
-    nxr::compute::VectorHeatSolver vhm(ctx);
-    Eigen::VectorXd out = nxr::compute::vectorHeatExtendScalar(vhm, srcIdx, srcVal);
+    nxr::manifold::Manifold m(verts.data(), nV, faces.data(), nF);
+    nxr::manifold::transport::VectorHeatSolver vhm(m);
+    Eigen::VectorXd out = nxr::manifold::transport::extendScalar(vhm, srcIdx, srcVal);
     plhs[0] = eigenVectorToMx(out);
 }
 
@@ -227,7 +227,7 @@ void cmdVectorHeatLogMap(int /*nlhs*/, mxArray** plhs,
                          int nrhs, const mxArray** prhs) {
     if (nrhs < 4 || nrhs > 5) {
         throw std::invalid_argument(
-            "nxr_compute('vectorHeatLogMap', V, F, sourceVertex, [strategy]) "
+            "nxr_compute('logMap', V, F, sourceVertex, [strategy]) "
             "takes 3 or 4 arguments");
     }
     int nV = 0, nF = 0;
@@ -236,13 +236,13 @@ void cmdVectorHeatLogMap(int /*nlhs*/, mxArray** plhs,
     int sourceVertex = getIntArg(prhs[3]) - 1;  // 1-based → 0-based
     int strategy = (nrhs >= 5)
         ? getIntArg(prhs[4])
-        : static_cast<int>(nxr::compute::LogMapStrategy::AffineLocal);
+        : static_cast<int>(nxr::manifold::transport::LogMapStrategy::AffineLocal);
 
-    nxr::compute::ComputeContext ctx(verts.data(), nV, faces.data(), nF);
-    nxr::compute::VectorHeatSolver vhm(ctx);
-    auto r = nxr::compute::vectorHeatLogMap(
+    nxr::manifold::Manifold m(verts.data(), nV, faces.data(), nF);
+    nxr::manifold::transport::VectorHeatSolver vhm(m);
+    auto r = nxr::manifold::transport::logMap(
         vhm, sourceVertex,
-        static_cast<nxr::compute::LogMapStrategy>(strategy));
+        static_cast<nxr::manifold::transport::LogMapStrategy>(strategy));
 
     const char* fields[] = {"logCoords", "sourceE1", "sourceE2"};
     mxArray* s = mxCreateStructMatrix(1, 1, 3, fields);
@@ -262,7 +262,7 @@ void cmdVectorHeatFindCenter(int /*nlhs*/, mxArray** plhs,
                              int nrhs, const mxArray** prhs) {
     if (nrhs < 4 || nrhs > 5) {
         throw std::invalid_argument(
-            "nxr_compute('vectorHeatFindCenter', V, F, sourceVerts, [p]) "
+            "nxr_compute('findCenter', V, F, sourceVerts, [p]) "
             "takes 3 or 4 arguments");
     }
     int nV = 0, nF = 0;
@@ -271,9 +271,9 @@ void cmdVectorHeatFindCenter(int /*nlhs*/, mxArray** plhs,
     auto srcIdx = mxToVertexIndices(prhs[3]);
     int p = (nrhs >= 5) ? getIntArg(prhs[4]) : 2;
 
-    nxr::compute::ComputeContext ctx(verts.data(), nV, faces.data(), nF);
-    nxr::compute::VectorHeatSolver vhm(ctx);
-    Eigen::Vector3d c = nxr::compute::vectorHeatFindCenter(vhm, srcIdx, p);
+    nxr::manifold::Manifold m(verts.data(), nV, faces.data(), nF);
+    nxr::manifold::transport::VectorHeatSolver vhm(m);
+    Eigen::Vector3d c = nxr::manifold::transport::findCenter(vhm, srcIdx, p);
     mxArray* out = mxCreateDoubleMatrix(1, 3, mxREAL);
     double* op = mxGetPr(out);
     op[0] = c.x(); op[1] = c.y(); op[2] = c.z();
@@ -286,7 +286,7 @@ void cmdSignedHeatDistance(int /*nlhs*/, mxArray** plhs,
                            int nrhs, const mxArray** prhs) {
     if (nrhs < 5 || nrhs > 6) {
         throw std::invalid_argument(
-            "nxr_compute('signedHeatDistance', V, F, curveVerts, isLoop, [levelSet]) "
+            "nxr_compute('signedHeat', V, F, curveVerts, isLoop, [levelSet]) "
             "takes 4 or 5 arguments");
     }
     int nV = 0, nF = 0;
@@ -296,13 +296,13 @@ void cmdSignedHeatDistance(int /*nlhs*/, mxArray** plhs,
     bool isLoop = getIntArg(prhs[4]) != 0;
     int  ls     = (nrhs >= 6)
         ? getIntArg(prhs[5])
-        : static_cast<int>(nxr::compute::SignedHeatLevelSet::ZeroSet);
+        : static_cast<int>(nxr::manifold::solve::SignedHeatLevelSet::ZeroSet);
 
-    nxr::compute::ComputeContext ctx(verts.data(), nV, faces.data(), nF);
-    nxr::compute::SignedHeatSolver shs(ctx);
-    Eigen::VectorXd out = nxr::compute::signedHeatDistance(
+    nxr::manifold::Manifold m(verts.data(), nV, faces.data(), nF);
+    nxr::manifold::solve::SignedHeatSolver shs(m);
+    Eigen::VectorXd out = nxr::manifold::solve::signedHeat(
         shs, curveIdx, isLoop,
-        static_cast<nxr::compute::SignedHeatLevelSet>(ls));
+        static_cast<nxr::manifold::solve::SignedHeatLevelSet>(ls));
     plhs[0] = eigenVectorToMx(out);
 }
 
@@ -312,7 +312,7 @@ void cmdComputeSmoothFaceField(int /*nlhs*/, mxArray** plhs,
                                int nrhs, const mxArray** prhs) {
     if (nrhs < 3 || nrhs > 5) {
         throw std::invalid_argument(
-            "nxr_compute('computeSmoothFaceField', V, F, [nSym], [alignToCurvature]) "
+            "nxr_compute('smoothFace', V, F, [nSym], [alignToCurvature]) "
             "takes 2, 3, or 4 arguments");
     }
     int nV = 0, nF = 0;
@@ -321,8 +321,8 @@ void cmdComputeSmoothFaceField(int /*nlhs*/, mxArray** plhs,
     int  nSym  = (nrhs >= 4) ? getIntArg(prhs[3])    : 4;
     bool align = (nrhs >= 5) ? (getIntArg(prhs[4]) != 0) : false;
 
-    nxr::compute::ComputeContext ctx(verts.data(), nV, faces.data(), nF);
-    Eigen::MatrixXd out = nxr::compute::computeSmoothFaceField(ctx, nSym, align);
+    nxr::manifold::Manifold m(verts.data(), nV, faces.data(), nF);
+    Eigen::MatrixXd out = nxr::manifold::connection::smoothFace(m, nSym, align);
     plhs[0] = eigenMatrixToMx(out);   // F×3
 }
 
@@ -330,7 +330,7 @@ void cmdComputeSmoothVertexField(int /*nlhs*/, mxArray** plhs,
                                  int nrhs, const mxArray** prhs) {
     if (nrhs < 3 || nrhs > 5) {
         throw std::invalid_argument(
-            "nxr_compute('computeSmoothVertexField', V, F, [nSym], [alignToCurvature]) "
+            "nxr_compute('smoothVertex', V, F, [nSym], [alignToCurvature]) "
             "takes 2, 3, or 4 arguments");
     }
     int nV = 0, nF = 0;
@@ -339,8 +339,8 @@ void cmdComputeSmoothVertexField(int /*nlhs*/, mxArray** plhs,
     int  nSym  = (nrhs >= 4) ? getIntArg(prhs[3])      : 2;
     bool align = (nrhs >= 5) ? (getIntArg(prhs[4]) != 0) : false;
 
-    nxr::compute::ComputeContext ctx(verts.data(), nV, faces.data(), nF);
-    auto r = nxr::compute::computeSmoothVertexField(ctx, nSym, align);
+    nxr::manifold::Manifold m(verts.data(), nV, faces.data(), nF);
+    auto r = nxr::manifold::connection::smoothVertex(m, nSym, align);
 
     const char* fields[] = {"vertexVectors", "vertexFieldRaw", "nSym"};
     mxArray* s = mxCreateStructMatrix(1, 1, 3, fields);
@@ -356,7 +356,7 @@ void cmdComputeSmoothVertexField(int /*nlhs*/, mxArray** plhs,
 // MATLAB users render with line() / patch() over consecutive pairs.
 
 namespace {
-mxArray* stripePatternResultToStruct(const nxr::compute::StripePatternResult& r) {
+mxArray* stripePatternResultToStruct(const nxr::manifold::parametrization::stripes::StripePatternResult& r) {
     const char* fields[] = {"positions", "segmentCount"};
     mxArray* s = mxCreateStructMatrix(1, 1, 2, fields);
     mxSetField(s, 0, "positions",    eigenMatrixToMx(r.positions));
@@ -369,7 +369,7 @@ void cmdComputeStripePattern(int /*nlhs*/, mxArray** plhs,
                              int nrhs, const mxArray** prhs) {
     if (nrhs < 5 || nrhs > 6) {
         throw std::invalid_argument(
-            "nxr_compute('computeStripePattern', V, F, vertexFieldRaw, frequency, [connect]) "
+            "nxr_compute('compute', V, F, vertexFieldRaw, frequency, [connect]) "
             "takes 4 or 5 arguments");
     }
     int nV = 0, nF = 0;
@@ -379,8 +379,8 @@ void cmdComputeStripePattern(int /*nlhs*/, mxArray** plhs,
     double freq = getDoubleArg(prhs[4]);
     bool connect = (nrhs >= 6) ? (getIntArg(prhs[5]) != 0) : true;
 
-    nxr::compute::ComputeContext ctx(verts.data(), nV, faces.data(), nF);
-    auto r = nxr::compute::computeStripePattern(ctx, raw, freq, connect);
+    nxr::manifold::Manifold m(verts.data(), nV, faces.data(), nF);
+    auto r = nxr::manifold::parametrization::stripes::compute(m, raw, freq, connect);
     plhs[0] = stripePatternResultToStruct(r);
 }
 
@@ -388,7 +388,7 @@ void cmdComputeStripePatternFreq(int /*nlhs*/, mxArray** plhs,
                                  int nrhs, const mxArray** prhs) {
     if (nrhs < 5 || nrhs > 6) {
         throw std::invalid_argument(
-            "nxr_compute('computeStripePatternFreq', V, F, vertexFieldRaw, frequencies, [connect]) "
+            "nxr_compute('computeFreq', V, F, vertexFieldRaw, frequencies, [connect]) "
             "takes 4 or 5 arguments");
     }
     int nV = 0, nF = 0;
@@ -398,8 +398,8 @@ void cmdComputeStripePatternFreq(int /*nlhs*/, mxArray** plhs,
     Eigen::VectorXd freqs = mxToEigenVector(prhs[4]);
     bool connect = (nrhs >= 6) ? (getIntArg(prhs[5]) != 0) : true;
 
-    nxr::compute::ComputeContext ctx(verts.data(), nV, faces.data(), nF);
-    auto r = nxr::compute::computeStripePatternFreq(ctx, raw, freqs, connect);
+    nxr::manifold::Manifold m(verts.data(), nV, faces.data(), nF);
+    auto r = nxr::manifold::parametrization::stripes::computeFreq(m, raw, freqs, connect);
     plhs[0] = stripePatternResultToStruct(r);
 }
 
@@ -429,32 +429,32 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
     }
 
     try {
-        if      (cmd == "assembleMeshOperators")   cmdAssembleMeshOperators(nlhs, plhs, nrhs, prhs);
-        else if (cmd == "solveEigenmodes")         cmdSolveEigenmodes(nlhs, plhs, nrhs, prhs);
-        else if (cmd == "normalizeEigenmodes")     cmdNormalizeEigenmodes(nlhs, plhs, nrhs, prhs);
+        if      (cmd == "assembleManifoldOperators")   cmdAssembleMeshOperators(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "solve")         cmdSolveEigenmodes(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "normalize")     cmdNormalizeEigenmodes(nlhs, plhs, nrhs, prhs);
         else if (cmd == "removeDC")                cmdRemoveDC(nlhs, plhs, nrhs, prhs);
         else if (cmd == "precompute")              cmdPrecompute(nlhs, plhs, nrhs, prhs);
-        else if (cmd == "vectorHeatTransport")     cmdVectorHeatTransport(nlhs, plhs, nrhs, prhs);
-        else if (cmd == "vectorHeatExtendScalar")  cmdVectorHeatExtendScalar(nlhs, plhs, nrhs, prhs);
-        else if (cmd == "vectorHeatLogMap")        cmdVectorHeatLogMap(nlhs, plhs, nrhs, prhs);
-        else if (cmd == "vectorHeatFindCenter")    cmdVectorHeatFindCenter(nlhs, plhs, nrhs, prhs);
-        else if (cmd == "signedHeatDistance")      cmdSignedHeatDistance(nlhs, plhs, nrhs, prhs);
-        else if (cmd == "computeSmoothFaceField")  cmdComputeSmoothFaceField(nlhs, plhs, nrhs, prhs);
-        else if (cmd == "computeSmoothVertexField") cmdComputeSmoothVertexField(nlhs, plhs, nrhs, prhs);
-        else if (cmd == "computeStripePattern")    cmdComputeStripePattern(nlhs, plhs, nrhs, prhs);
-        else if (cmd == "computeStripePatternFreq") cmdComputeStripePatternFreq(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "parallel")     cmdVectorHeatTransport(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "extendScalar")  cmdVectorHeatExtendScalar(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "logMap")        cmdVectorHeatLogMap(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "findCenter")    cmdVectorHeatFindCenter(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "signedHeat")      cmdSignedHeatDistance(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "smoothFace")  cmdComputeSmoothFaceField(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "smoothVertex") cmdComputeSmoothVertexField(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "compute")    cmdComputeStripePattern(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "computeFreq") cmdComputeStripePatternFreq(nlhs, plhs, nrhs, prhs);
         else if (cmd == "version")                 cmdVersion(nlhs, plhs, nrhs, prhs);
         else {
             mexErrMsgIdAndTxt("nxr:unknownCommand",
-                "Unknown command: \"%s\". Available: assembleMeshOperators, "
-                "solveEigenmodes, normalizeEigenmodes, removeDC, precompute, "
-                "vectorHeatTransport, vectorHeatExtendScalar, vectorHeatLogMap, "
-                "vectorHeatFindCenter, signedHeatDistance, computeSmoothFaceField, "
-                "computeSmoothVertexField, computeStripePattern, "
-                "computeStripePatternFreq, version.",
+                "Unknown command: \"%s\". Available: assembleManifoldOperators, "
+                "solve, normalize, removeDC, precompute, "
+                "parallel, extendScalar, logMap, "
+                "findCenter, signedHeat, smoothFace, "
+                "smoothVertex, compute, "
+                "computeFreq, version.",
                 cmd.c_str());
         }
-    } catch (const nxr::compute::Error& e) {
+    } catch (const nxr::core::Error& e) {
         // Route structured nxr-compute errors to MException identifiers MATLAB
         // can pattern-match (e.g. ME.identifier == "nxr:cancelled").
         std::string id = "nxr:" + toMatlabIdentifier(e.code());

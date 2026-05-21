@@ -1,6 +1,6 @@
 #pragma once
 
-// ── nxr::compute::CancellationToken — binding-agnostic cancel signal ──
+// ── nxr::core::CancellationToken — binding-agnostic cancel signal ──
 //
 // Long-running nxr-compute operations accept an optional CancellationToken.
 // The solver polls token.requested() at well-defined points (e.g.
@@ -35,7 +35,7 @@
 #include <functional>
 #include <utility>
 
-namespace nxr::compute {
+namespace nxr::core {
 
 class CancellationToken {
 public:
@@ -85,4 +85,4 @@ private:
     std::function<bool()>       poll_;
 };
 
-} // namespace nxr::compute
+} // namespace nxr::core

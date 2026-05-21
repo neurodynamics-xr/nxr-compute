@@ -2,9 +2,9 @@
 
 #include <iostream>
 
-namespace nxr::compute {
+namespace nxr::manifold::solve {
 
-Eigen::VectorXd solvePoisson(
+Eigen::VectorXd poisson(
     const Eigen::SparseMatrix<double>& K,
     const Eigen::SparseMatrix<double>& M,
     CholeskyCache& cache,
@@ -45,4 +45,4 @@ Eigen::VectorXd solvePoisson(
     return phi;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::solve

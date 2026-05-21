@@ -8,7 +8,7 @@
 #include <cmath>
 #include <complex>
 
-namespace nxr::compute {
+namespace nxr::manifold::connection {
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
@@ -34,17 +34,17 @@ Vector3 lift(const Vector2& t, const std::array<Vector3, 2>& basis) {
 
 } // namespace
 
-Eigen::MatrixXd computeSmoothFaceField(
-    ComputeContext& ctx,
+Eigen::MatrixXd smoothFace(
+    Manifold& m,
     int nSym,
     bool alignToCurvature
 ) {
     if (nSym < 1) {
         throw Error(ErrorCode::InvalidInput,
-            "computeSmoothFaceField: nSym must be >= 1");
+            "smoothFace: nSym must be >= 1");
     }
-    auto& mesh = ctx.mesh();
-    auto& geom = ctx.geometry();
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
 
     geom.requireFaceTangentBasis();
 
@@ -57,7 +57,7 @@ Eigen::MatrixXd computeSmoothFaceField(
         field = computeSmoothestFaceDirectionField(geom, nSym);
     }
 
-    int nF = ctx.nF();
+    int nF = m.nF();
     Eigen::MatrixXd out(nF, 3);
     for (Face f : mesh.faces()) {
         int fi = static_cast<int>(f.getIndex());
@@ -71,17 +71,17 @@ Eigen::MatrixXd computeSmoothFaceField(
     return out;
 }
 
-SmoothVertexFieldResult computeSmoothVertexField(
-    ComputeContext& ctx,
+SmoothVertexFieldResult smoothVertex(
+    Manifold& m,
     int nSym,
     bool alignToCurvature
 ) {
     if (nSym < 1) {
         throw Error(ErrorCode::InvalidInput,
-            "computeSmoothVertexField: nSym must be >= 1");
+            "smoothVertex: nSym must be >= 1");
     }
-    auto& mesh = ctx.mesh();
-    auto& geom = ctx.geometry();
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
 
     geom.requireVertexTangentBasis();
 
@@ -94,7 +94,7 @@ SmoothVertexFieldResult computeSmoothVertexField(
         vfield = computeSmoothestVertexDirectionField(geom, nSym);
     }
 
-    int nV = ctx.nV();
+    int nV = m.nV();
 
     SmoothVertexFieldResult out;
     out.nSym = nSym;
@@ -117,4 +117,4 @@ SmoothVertexFieldResult computeSmoothVertexField(
     return out;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::connection

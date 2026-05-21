@@ -22,7 +22,22 @@
 #include <cmath>
 #include <string>
 
-using nxr::compute::MassMatrixVariant;
+using namespace nxr::manifold;
+using namespace nxr::manifold::solve;
+using namespace nxr::manifold::ops;
+using namespace nxr::manifold::ops::laplacian::connection;
+using namespace nxr::manifold::transport;
+using namespace nxr::manifold::connection;
+using namespace nxr::manifold::parametrization;
+using namespace nxr::manifold::parametrization::stripes;
+using namespace nxr::manifold::geometry;
+using namespace nxr::manifold::query;
+using namespace nxr::field::generate;
+using namespace nxr::field::interp;
+using namespace nxr::field::op;
+using namespace nxr::field::extract;
+
+using nxr::manifold::ops::MassMatrixVariant;
 
 static void generateIcosphere(std::vector<double>& V, std::vector<int32_t>& F) {
     double t = (1.0 + std::sqrt(5.0)) / 2.0;
@@ -83,9 +98,9 @@ int main() {
     // total surface area is fixed by the embedding — compute it from
     // the Voronoi run as the reference and require all variants match
     // it exactly (within float roundoff).
-    nxr::compute::ComputeContext ctx(V.data(), nV, F.data(), nF);
-    auto refOps = nxr::compute::assembleMeshOperators(
-        ctx, MassMatrixVariant::Voronoi);
+    nxr::manifold::Manifold m(V.data(), nV, F.data(), nF);
+    auto refOps = nxr::manifold::ops::assembleManifoldOperators(
+        m, MassMatrixVariant::Voronoi);
     const double refArea = refOps.totalArea;
     std::cout << "Reference surface area (voronoi) = "
               << std::setprecision(12) << refArea << "\n";
@@ -101,8 +116,8 @@ int main() {
         std::cout << "\n── variant: " << variantName(v) << " ─────────\n";
 
         // Fresh context per variant — avoid any state leak between runs.
-        nxr::compute::ComputeContext localCtx(V.data(), nV, F.data(), nF);
-        auto ops = nxr::compute::assembleMeshOperators(localCtx, v);
+        nxr::manifold::Manifold localCtx(V.data(), nV, F.data(), nF);
+        auto ops = nxr::manifold::ops::assembleManifoldOperators(localCtx, v);
 
         check(ops.massVariant == v,                       "ops.massVariant tag");
         check(ops.mass.rows() == nV && ops.mass.cols() == nV,
@@ -148,7 +163,7 @@ int main() {
         // Run the eigensolver. Smallest 6 modes; should converge cheaply
         // on 12 vertices.
         const int k = 6;
-        auto eig = nxr::compute::solveEigenmodes(ops.cotanLaplacian, ops.mass, k);
+        auto eig = nxr::manifold::solve::eigen(ops.cotanLaplacian, ops.mass, k);
         check(eig.k == k,                                 "k modes returned");
         check(eig.nConverged == k,                        "all modes converged");
 
@@ -186,14 +201,14 @@ int main() {
 
     // Parser round-trip.
     std::cout << "\n── parseMassMatrixVariant() ─────────\n";
-    check(nxr::compute::parseMassMatrixVariant("voronoi")     == MassMatrixVariant::Voronoi,       "voronoi");
-    check(nxr::compute::parseMassMatrixVariant("barycentric") == MassMatrixVariant::Barycentric,   "barycentric");
-    check(nxr::compute::parseMassMatrixVariant("full")        == MassMatrixVariant::ConsistentFEM, "full");
+    check(nxr::manifold::ops::parseMassMatrixVariant("voronoi")     == MassMatrixVariant::Voronoi,       "voronoi");
+    check(nxr::manifold::ops::parseMassMatrixVariant("barycentric") == MassMatrixVariant::Barycentric,   "barycentric");
+    check(nxr::manifold::ops::parseMassMatrixVariant("full")        == MassMatrixVariant::ConsistentFEM, "full");
 
     bool threw = false;
     try {
-        (void) nxr::compute::parseMassMatrixVariant("nope");
-    } catch (const nxr::compute::Error&) {
+        (void) nxr::manifold::ops::parseMassMatrixVariant("nope");
+    } catch (const nxr::core::Error&) {
         threw = true;
     }
     check(threw,                                         "unknown name throws Error");

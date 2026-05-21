@@ -46,7 +46,7 @@ const faces = new Int32Array([
   4, 9, 5,  2, 4,11,  6, 2,10,  8, 6, 7,  9, 8, 1,
 ])
 
-const ctx = new nxr.ComputeContext(verts, faces)
+const ctx = new nxr.Manifold(verts, faces)
 const nV = ctx.nV(), nF = ctx.nF(), nE = ctx.nE()
 console.log(`[smoke-cl] context: nV=${nV}, nF=${nF}, nE=${nE}`)
 

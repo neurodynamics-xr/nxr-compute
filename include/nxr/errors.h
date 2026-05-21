@@ -1,6 +1,6 @@
 #pragma once
 
-// ── nxr::compute::Error — structured exception type ────────────────
+// ── nxr::core::Error — structured exception type ────────────────
 //
 // Every failure raised by nxr-compute is a Error carrying a stable
 // machine-readable ErrorCode plus a human-readable message and
@@ -20,7 +20,7 @@
 #include <string>
 #include <string_view>
 
-namespace nxr::compute {
+namespace nxr::core {
 
 enum class ErrorCode {
     InvalidInput,
@@ -70,4 +70,4 @@ private:
     std::string hint_;
 };
 
-} // namespace nxr::compute
+} // namespace nxr::core

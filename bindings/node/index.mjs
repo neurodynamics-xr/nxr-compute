@@ -6,7 +6,7 @@
 //   1. Flat surface (legacy, mirrors the addon's exports verbatim):
 //        const nxr = await initNxrCompute()
 //        const ctx = nxr.createContext(verts, faces)
-//        nxr.solveEigenmodes(ctx, 300)
+//        nxr.solve(ctx, 300)
 //
 //   2. Six-group nested namespace `nxr.manifold.*` (preferred for new code):
 //        const mctx = nxr.createManifoldContext(verts, faces)
@@ -25,8 +25,8 @@
 // `include/nxr/compute.h` and the per-binding glue layers.
 //
 // Surface delta vs WASM (the addon doesn't yet expose every embind
-// method): `measure.frame` (computeFaceFrames), `uv.bff`
-// (computeUVCoordinates), `operator.star0` / `star2` /
+// method): `measure.frame` (frames), `uv.bff`
+// (bff), `operator.star0` / `star2` /
 // `star1Inverse`, and a few normalize/removeDC helpers throw a stable
 // `Error` with code `NOT_WIRED_IN_ADDON` so consumers get a clear
 // signal rather than silent undefined behaviour. To unblock these,
@@ -117,22 +117,22 @@ function stubWarn(name) {
 function makeManifoldContext(rawCtx) {
   // Lazy caches for the bulk operator assemblies, identical to the
   // WASM shim. First access of any DEC piece triggers a single
-  // assembleDECOperators(); same for mass / cotanLaplacian.
+  // assembleDECOperators(); same for mass / stiffness.
   let _dec  = null
   let _mesh = null
   const dec  = () => (_dec  ??= addon.assembleDECOperators(rawCtx))
-  const mesh = () => (_mesh ??= addon.assembleMeshOperators(rawCtx))
+  const mesh = () => (_mesh ??= addon.assembleManifoldOperators(rawCtx))
 
   // ── solve ─────────────────────────────────────────────────────
   const solve = {
     poisson(sourceVerts, sourceValues) {
-      return addon.solvePoisson(rawCtx, asI32(sourceVerts), asF64(sourceValues))
+      return addon.poisson(rawCtx, asI32(sourceVerts), asF64(sourceValues))
     },
     /** Heat diffusion via spectral evolution. Requires `solve.eigen()`
      *  to have run at least once on this context — the addon stores
      *  the modes in its ContextHolder for the duration. */
     heat(sources, sourceValues, timesteps, alpha = 1.0) {
-      return addon.generateHeatDiffusion(
+      return addon.heatDiffusion(
         rawCtx,
         asI32(sources), asF64(sourceValues), asF64(timesteps), alpha,
       )
@@ -144,7 +144,7 @@ function makeManifoldContext(rawCtx) {
      *  natively returns `{ eigenvectors, eigenvalues, nV }` which we
      *  translate. */
     async eigen(k, sigma = -1e-8) {
-      const r = await addon.solveEigenmodes(rawCtx, k, sigma)
+      const r = await addon.solve(rawCtx, k, sigma)
       return {
         eigenvectors: r.eigenvectors,
         eigenvalues:  r.eigenvalues,
@@ -152,15 +152,10 @@ function makeManifoldContext(rawCtx) {
         nConverged:   r.eigenvalues.length,
       }
     },
-    /** Async — the addon runs the Hodge solve in a libuv worker
-     *  thread, so the JS event loop stays free during the d0ᵀ★₁d0
-     *  Cholesky back-sub and the d1★₁⁻¹d1ᵀ LU solve. Resolves to
-     *  the same `{ alpha, beta, gamma, omega, dAlpha, deltaBeta,
-     *  omegaVectors, ... }` shape as the previous sync version.
-     *  Provisional placement — Hodge–Helmholtz decomposition may be
+    /** Provisional placement — Hodge–Helmholtz decomposition may be
      *  reclassified to `operator.hodgeDecomp` in a future round. */
-    async hodge(omega) {
-      return await addon.hodgeDecompose(rawCtx, asF64(omega))
+    hodge(omega) {
+      return addon.hodge(rawCtx, asF64(omega))
     },
   }
 
@@ -179,9 +174,9 @@ function makeManifoldContext(rawCtx) {
     star1:        () => dec().hodge1,
     star2:        notWired('operator.star2'),
     star1Inverse: notWired('operator.star1Inverse'),
-    /** Mass matrix (sparse COO), variant-aware: diagonal for
-     *  Voronoi/Barycentric, sparse non-diagonal for ConsistentFEM.
-     *  Mirrors the WASM and MEX bindings' uniform exposure. */
+    /** Per-vertex Voronoi dual area (diagonal as Float64Array — the
+     *  addon's compact mass form). To get a full sparse mass matrix,
+     *  add a sparse-COO export in addon.cpp. */
     mass:         () => mesh().mass,
     stiffness:    () => mesh().cotanLaplacian,
     /** Cotangent Laplacian — same matrix as `operator.stiffness()`. */
@@ -202,10 +197,10 @@ function makeManifoldContext(rawCtx) {
     circle(v, r)  { return stubWarn('query.circle') },
     region(v, r)  { return stubWarn('query.region') },
     isoline(field, level) {
-      return addon.computeIsolines(rawCtx, asF64(field), 1, level, level)
+      return addon.isoline(rawCtx, asF64(field), 1, level, level)
     },
     center(sourceVerts, p = 2) {
-      return addon.vectorHeatFindCenter(rawCtx, asI32(sourceVerts), p)
+      return addon.findCenter(rawCtx, asI32(sourceVerts), p)
     },
   }
 
@@ -214,63 +209,60 @@ function makeManifoldContext(rawCtx) {
   //   mctx.measure.distance([0])
   //   mctx.measure.distance.signed([0,1,2], true)
   function distance(sourceVerts) {
-    return addon.computeGeodesicDistance(rawCtx, asI32(sourceVerts))
+    return addon.heat(rawCtx, asI32(sourceVerts))
   }
   distance.signed = function distanceSigned(curveVerts, isLoop = true, levelSet = 1) {
-    return addon.signedHeatDistance(rawCtx, asI32(curveVerts), isLoop, levelSet)
+    return addon.signedHeat(rawCtx, asI32(curveVerts), isLoop, levelSet)
   }
   const measure = {
     distance,
     area(region)            { return stubWarn('measure.area') },
     density(region, field)  { return stubWarn('measure.density') },
-    curvature()             { return addon.computeCurvatures(rawCtx) },
-    normal(type = 0)        { return addon.computeVertexNormals(rawCtx, type) },
-    /** computeFaceFrames is exposed in the WASM binding but not in
+    curvature()             { return addon.curvatures(rawCtx) },
+    normal(type = 0)        { return addon.normals(rawCtx, type) },
+    /** frames is exposed in the WASM binding but not in
      *  the addon yet — see surface-delta note above. */
     frame:                  notWired('measure.frame'),
   }
 
   // ── uv ────────────────────────────────────────────────────────
   const uv = {
-    /** computeUVCoordinates (BFF) is exposed in the WASM binding but
+    /** bff (BFF) is exposed in the WASM binding but
      *  not in the addon yet — see surface-delta note above. */
     bff:                    notWired('uv.bff'),
     logMap(sourceVertex, strategy = 1) {
-      return addon.vectorHeatLogMap(rawCtx, sourceVertex, strategy)
+      return addon.logMap(rawCtx, sourceVertex, strategy)
     },
     stripe(vertexFieldRaw, uniformFrequency, connectOnSingularities = true) {
-      return addon.computeStripePattern(rawCtx, asF64(vertexFieldRaw), uniformFrequency, connectOnSingularities)
+      return addon.compute(rawCtx, asF64(vertexFieldRaw), uniformFrequency, connectOnSingularities)
     },
     stripeFreq(vertexFieldRaw, frequencies, connectOnSingularities = true) {
-      return addon.computeStripePatternFreq(rawCtx, asF64(vertexFieldRaw), asF64(frequencies), connectOnSingularities)
+      return addon.computeFreq(rawCtx, asF64(vertexFieldRaw), asF64(frequencies), connectOnSingularities)
     },
   }
 
   // ── interpolate ───────────────────────────────────────────────
   const interpolate = {
     transport(sourceVerts, sourceVectors) {
-      return addon.vectorHeatTransport(rawCtx, asI32(sourceVerts), asF64(sourceVectors))
+      return addon.parallel(rawCtx, asI32(sourceVerts), asF64(sourceVectors))
     },
     extend(sourceVerts, sourceValues) {
-      return addon.vectorHeatExtendScalar(rawCtx, asI32(sourceVerts), asF64(sourceValues))
+      return addon.extendScalar(rawCtx, asI32(sourceVerts), asF64(sourceValues))
     },
-    /** Async — addon dispatches the d0ᵀ★₁d0 solve to a worker thread.
-     *  Returns Promise<{ connections, directionVectors, orthogonalVectors,
-     *  eulerCharacteristic, gaussBonnetSatisfied }>. */
-    async directionField(singVerts, singValues) {
-      return await addon.computeDirectionField(rawCtx, asI32(singVerts), asF64(singValues))
+    trivial(singVerts, singValues) {
+      return addon.trivial(rawCtx, asI32(singVerts), asF64(singValues))
     },
-    smoothFaceField(nSym = 4, alignToCurvature = false) {
-      return addon.computeSmoothFaceField(rawCtx, nSym, alignToCurvature)
+    smoothFace(nSym = 4, alignToCurvature = false) {
+      return addon.smoothFace(rawCtx, nSym, alignToCurvature)
     },
-    smoothVertexField(nSym = 2, alignToCurvature = false) {
-      return addon.computeSmoothVertexField(rawCtx, nSym, alignToCurvature)
+    smoothVertex(nSym = 2, alignToCurvature = false) {
+      return addon.smoothVertex(rawCtx, nSym, alignToCurvature)
     },
   }
 
   return {
     // Mesh sizes are not yet exposed as accessors on the addon's
-    // ContextHolder — derive from the assembled MeshOperators (which
+    // ContextHolder — derive from the assembled ManifoldOperators (which
     // is cached on first access anyway).
     nV: () => mesh().nV,
     nE: () => mesh().nE,
@@ -356,9 +348,9 @@ function makeFunctionalNamespace() {
     interpolate: {
       transport:         fwd('interpolate', 'transport'),
       extend:            fwd('interpolate', 'extend'),
-      directionField:    fwd('interpolate', 'directionField'),
-      smoothFaceField:   fwd('interpolate', 'smoothFaceField'),
-      smoothVertexField: fwd('interpolate', 'smoothVertexField'),
+      trivial:    fwd('interpolate', 'trivial'),
+      smoothFace:   fwd('interpolate', 'smoothFace'),
+      smoothVertex: fwd('interpolate', 'smoothVertex'),
     },
   }
 }
@@ -383,7 +375,7 @@ export async function initNxrCompute() {
 
 const api = {
   /** Flat surface: identical to the addon's raw exports.
-   *  `nxr.solveEigenmodes(ctx, k, …)` etc. */
+   *  `nxr.solve(ctx, k, …)` etc. */
   ...addon,
 
   /** Six-group nested namespace over the same compute context. */

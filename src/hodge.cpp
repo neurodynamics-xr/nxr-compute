@@ -5,11 +5,9 @@
 #include <iostream>
 #include <random>
 
-namespace nxr::compute {
+namespace nxr::field::generate {
 
-using namespace geometrycentral::surface;
-
-Eigen::VectorXd generateRandomOmega(int nE, unsigned int seed) {
+Eigen::VectorXd randomOmega(int nE, unsigned int seed) {
     std::mt19937 gen(seed);
     std::uniform_real_distribution<double> dist(-1.0, 1.0);
 
@@ -20,8 +18,17 @@ Eigen::VectorXd generateRandomOmega(int nE, unsigned int seed) {
     return omega;
 }
 
-HodgeResult hodgeDecompose(
-    ComputeContext& ctx,
+} // namespace nxr::field::generate
+
+namespace nxr::manifold::solve {
+
+using namespace geometrycentral::surface;
+using nxr::manifold::ops::DECOperators;
+using nxr::manifold::ops::CholeskyCache;
+using nxr::field::interp::whitney;
+
+HodgeResult hodge(
+    Manifold& m,
     const DECOperators& dec,
     CholeskyCache& cache,
     const Eigen::VectorXd& omega
@@ -31,9 +38,9 @@ HodgeResult hodgeDecompose(
     const auto& hodge1 = dec.hodge1;
     const auto& hodge1Inv = dec.hodge1Inverse;
 
-    int nV = ctx.nV();
+    int nV = m.nV();
     int nE = static_cast<int>(omega.size());
-    int nF = ctx.nF();
+    int nF = m.nF();
 
     HodgeResult result;
     result.omega = omega;
@@ -63,7 +70,7 @@ HodgeResult hodgeDecompose(
     result.gamma = omega - result.dAlpha - result.deltaBeta;
 
     // Average face β values to vertices (for visualization)
-    auto& mesh = ctx.mesh();
+    auto& mesh = m.mesh();
     Eigen::VectorXd vertSum = Eigen::VectorXd::Zero(nV);
     Eigen::VectorXi vertCount = Eigen::VectorXi::Zero(nV);
     for (Face f : mesh.faces()) {
@@ -82,10 +89,10 @@ HodgeResult hodgeDecompose(
     result.combinedPotential = result.exactPotential + result.coExactPotentialV;
 
     // ── Face-centered vector fields via Whitney interpolation ─
-    result.omegaVectors     = whitneyInterpolate(ctx, dec, result.omega);
-    result.dAlphaVectors    = whitneyInterpolate(ctx, dec, result.dAlpha);
-    result.deltaBetaVectors = whitneyInterpolate(ctx, dec, result.deltaBeta);
-    result.gammaVectors     = whitneyInterpolate(ctx, dec, result.gamma);
+    result.omegaVectors     = whitney(m, dec, result.omega);
+    result.dAlphaVectors    = whitney(m, dec, result.dAlpha);
+    result.deltaBetaVectors = whitney(m, dec, result.deltaBeta);
+    result.gammaVectors     = whitney(m, dec, result.gamma);
 
     std::cout << "[hodge] Decomposed 1-form. ||dα|| = " << result.dAlpha.norm()
               << ", ||δβ|| = " << result.deltaBeta.norm()
@@ -94,4 +101,4 @@ HodgeResult hodgeDecompose(
     return result;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::solve

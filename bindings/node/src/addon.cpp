@@ -5,7 +5,7 @@
  * accept TypedArrays (Float64Array, Int32Array) and return plain
  * JavaScript objects with TypedArray fields.
  *
- * The ComputeContext is held in a std::shared_ptr wrapped in a
+ * The Manifold is held in a std::shared_ptr wrapped in a
  * Napi::External so JavaScript can create a context once and reuse
  * it across multiple compute calls.
  */
@@ -19,11 +19,25 @@
 #include <string>
 #include <vector>
 
-using namespace nxr::compute;
+using namespace nxr::manifold;
+using namespace nxr::manifold::solve;
+using namespace nxr::manifold::ops;
+using namespace nxr::manifold::ops::laplacian::connection;
+using namespace nxr::manifold::transport;
+using namespace nxr::manifold::connection;
+using namespace nxr::manifold::parametrization;
+using namespace nxr::manifold::parametrization::stripes;
+using namespace nxr::manifold::geometry;
+using namespace nxr::manifold::query;
+using namespace nxr::field::generate;
+using namespace nxr::field::interp;
+using namespace nxr::field::op;
+using namespace nxr::field::extract;
+namespace solve_ns = nxr::manifold::solve;
 
 // ─── Synchronous error translation ──────────────────────────
 //
-// Every synchronous N-API entry point catches nxr::compute::Error
+// Every synchronous N-API entry point catches nxr::core::Error
 // and re-raises as a Napi::Error decorated with the structured
 // fields the AsyncWorker path already exposes:
 //
@@ -42,8 +56,8 @@ template <typename Fn>
 static Napi::Value nxrSyncCall(Napi::Env env, Fn&& fn) {
     try {
         return fn();
-    } catch (const nxr::compute::Error& e) {
-        std::string codeName(nxr::compute::errorCodeName(e.code()));
+    } catch (const nxr::core::Error& e) {
+        std::string codeName(nxr::core::errorCodeName(e.code()));
         std::string hint(e.hint());
         std::string msg = "[" + codeName + "] " + e.what();
         if (!hint.empty()) msg += " | hint: " + hint;
@@ -76,39 +90,35 @@ static Napi::Float64Array toFloat64Array(Napi::Env env, const Eigen::VectorXd& v
     return arr;
 }
 
-// Convert any Eigen matrix expression to a Float64Array (row-major
-// flat [rows*cols]) per the §11 binding storage convention. The
-// transpose (if needed) is delegated to Eigen via a RowMajor Map
-// assignment; Eigen dispatches to a vectorised memcpy when the
-// source is already row-major (e.g. MeshOperators::vertexNormals)
-// and to a vectorised transpose copy when it's column-major (eigen-
-// vectors, curvature principal directions, etc.). Templated so a
-// single call site handles both layouts.
-template <typename Derived>
-static Napi::Float64Array matrixToFloat64Array(Napi::Env env, const Eigen::MatrixBase<Derived>& m) {
-    Eigen::Index rows = m.rows();
-    Eigen::Index cols = m.cols();
-    auto arr = Napi::Float64Array::New(env, static_cast<size_t>(rows * cols));
-    using RowMajorMap = Eigen::Map<Eigen::Matrix<
-        double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>;
-    RowMajorMap(arr.Data(), rows, cols) = m;
+// Convert Eigen::MatrixXd (column-major) to Float64Array (row-major flat [rows*cols])
+// We flatten row-major so JavaScript can index as [v*k + k_idx]
+static Napi::Float64Array matrixToFloat64Array(Napi::Env env, const Eigen::MatrixXd& m) {
+    int rows = static_cast<int>(m.rows());
+    int cols = static_cast<int>(m.cols());
+    auto arr = Napi::Float64Array::New(env, rows * cols);
+    double* data = arr.Data();
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            data[r * cols + c] = m(r, c);
+        }
+    }
     return arr;
 }
 
-// Convert any Eigen float matrix expression to a Float32Array
-// (row-major flat). Used by time-varying generators that return
-// [T, V] activity-shaped arrays — row-major flattening matches the
-// Zarr `recordings/.../activity` schema so the renderer can slot
-// the result directly into the activity store. Same Eigen::Map-
-// dispatched transpose-or-memcpy pattern as matrixToFloat64Array.
-template <typename Derived>
-static Napi::Float32Array matrixToFloat32Array(Napi::Env env, const Eigen::MatrixBase<Derived>& m) {
-    Eigen::Index rows = m.rows();
-    Eigen::Index cols = m.cols();
-    auto arr = Napi::Float32Array::New(env, static_cast<size_t>(rows * cols));
-    using RowMajorMap = Eigen::Map<Eigen::Matrix<
-        float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>;
-    RowMajorMap(arr.Data(), rows, cols) = m;
+// Convert Eigen::MatrixXf (column-major) to Float32Array (row-major flat [rows*cols]).
+// Used by time-varying generators that return [T, V] activity-shaped arrays —
+// row-major flattening matches the Zarr `recordings/.../activity` schema so
+// the renderer can slot the result directly into the activity store.
+static Napi::Float32Array matrixToFloat32Array(Napi::Env env, const Eigen::MatrixXf& m) {
+    int rows = static_cast<int>(m.rows());
+    int cols = static_cast<int>(m.cols());
+    auto arr = Napi::Float32Array::New(env, rows * cols);
+    float* data = arr.Data();
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            data[r * cols + c] = m(r, c);
+        }
+    }
     return arr;
 }
 
@@ -183,12 +193,7 @@ static Napi::Object sparseComplexToCOO(Napi::Env env,
     return result;
 }
 
-// Convert diagonal of a sparse matrix to Float64Array. Used for
-// `dec.hodge1` — a strictly-diagonal matrix where nnz == n, so the
-// InnerIterator walk is O(n). Off-diagonal entries (if any) are
-// silently dropped. The CSC-iterator path is faster than
-// `M.diagonal()` here because the latter does a binary search per
-// element (O(n log nnz_per_col)).
+// Convert diagonal of a sparse matrix to Float64Array (for mass matrix compactness)
 static Napi::Float64Array sparseDiagonalToFloat64Array(Napi::Env env, const Eigen::SparseMatrix<double>& M) {
     int n = static_cast<int>(M.rows());
     auto arr = Napi::Float64Array::New(env, n);
@@ -202,8 +207,8 @@ static Napi::Float64Array sparseDiagonalToFloat64Array(Napi::Env env, const Eige
     return arr;
 }
 
-// ─── ComputeContext holder ───────────────────────────────────
-// Wraps a shared_ptr<ComputeContext> in a Napi::External so JS can
+// ─── Manifold holder ───────────────────────────────────
+// Wraps a shared_ptr<Manifold> in a Napi::External so JS can
 // pass the opaque handle around. The finalizer releases the C++ object.
 
 // Connection-Laplacian cache key: (domain, nSym, regularization, format).
@@ -212,33 +217,16 @@ static Napi::Float64Array sparseDiagonalToFloat64Array(Napi::Env env, const Eige
 // cache the assembled output keyed by all input parameters.
 using CLCacheKey = std::tuple<ConnectionDomain, int, double, ConnectionLaplacianFormat>;
 
-// ContextHolder owns the ComputeContext AND any operator views built on
-// top of it. MeshOperators / DECOperators hold const-references into the
-// context's geometry-central cached matrices (see the lifetime contract
-// in compute.h). Destruction order is shared_ptr-managed: ops/dec are
-// destroyed first when this struct dies, then ctx, so the references
-// are never left dangling.
-// Smooth-direction-field cache key: (nSym, alignToCurvature). The
-// underlying geometry-central functions
-// (computeSmoothest{Boundary}AlignedFace/VertexDirectionField) are
-// free functions with no Solver class — each call re-factorizes
-// internally. CLAUDE.md rule 9 (Pattern C) dictates caching the
-// OUTPUT at the binding level. Mirrors the existing WASM binding's
-// smoothFaceFieldCache_ / smoothVertexFieldCache_.
-using SmoothFieldKey = std::pair<int, bool>;
-
 struct ContextHolder {
-    std::shared_ptr<ComputeContext> ctx;
-    std::shared_ptr<MeshOperators> ops;     // view, lazy
-    std::shared_ptr<DECOperators> dec;      // view, lazy
+    std::shared_ptr<Manifold> manifold;
+    std::shared_ptr<ManifoldOperators> ops;     // cached after first assemble
+    std::shared_ptr<DECOperators> dec;      // cached after first DEC call
     std::shared_ptr<CholeskyCache> factors;   // pre-factored Cholesky/LU, lazy
     std::shared_ptr<EigenResult> eigenmodes; // populated by EigenSolveWorker
     std::shared_ptr<VectorHeatSolver> vhm;   // lazy
     std::shared_ptr<SignedHeatSolver> shs;   // lazy
     std::shared_ptr<HeatGeodesicSolver> heatGeo;  // lazy — Cholesky pre-factor at construction
     std::map<CLCacheKey, std::shared_ptr<ConnectionLaplacian>> connectionLaplacian;  // result-level cache
-    std::map<SmoothFieldKey, Eigen::MatrixXd>                    smoothFaceFieldCache;
-    std::map<SmoothFieldKey, SmoothVertexFieldResult>            smoothVertexFieldCache;
 };
 
 static void FinalizeContext(Napi::Env env, ContextHolder* holder) {
@@ -262,7 +250,7 @@ Napi::Value CreateContext(const Napi::CallbackInfo& info) {
     int nF = static_cast<int>(facesArr.ElementLength() / 3);
 
     auto holder = new ContextHolder();
-    holder->ctx = std::make_shared<ComputeContext>(
+    holder->manifold = std::make_shared<Manifold>(
         verticesArr.Data(), nV,
         facesArr.Data(), nF
     );
@@ -271,47 +259,24 @@ Napi::Value CreateContext(const Napi::CallbackInfo& info) {
     return Napi::External<ContextHolder>::New(env, holder, FinalizeContext);
 }
 
-// Forward declarations for the lazy-init helpers defined further below.
-static void ensureHeatGeo(ContextHolder* holder);
-
-// Inline lazy-init for the operator assemblies. These are the
-// per-context view structs over geometry-central's caches; first
-// access triggers the require* + struct construction, every
-// subsequent access is a no-op.
-static inline void ensureOps(ContextHolder* holder) {
-    if (!holder->ops) {
-        holder->ops = std::make_shared<MeshOperators>(
-            assembleMeshOperators(*holder->ctx));
-    }
-}
-static inline void ensureDec(ContextHolder* holder) {
-    if (!holder->dec) {
-        holder->dec = std::make_shared<DECOperators>(
-            assembleDECOperators(*holder->ctx));
-    }
-}
-
 static ContextHolder* getContext(const Napi::CallbackInfo& info, int argIdx = 0) {
     if (!info[argIdx].IsExternal()) {
-        Napi::TypeError::New(info.Env(), "Expected ComputeContext handle as argument").ThrowAsJavaScriptException();
+        Napi::TypeError::New(info.Env(), "Expected Manifold handle as argument").ThrowAsJavaScriptException();
         return nullptr;
     }
     return info[argIdx].As<Napi::External<ContextHolder>>().Data();
 }
 
-// ─── assembleMeshOperators(ctx) → { cotanLaplacian, mass, vertexDualAreas, vertexNormals, ... } ───
-//
-// Field names mirror geometry-central's canonical cache names so the JS
-// surface reads as a 1-to-1 viewer over GC. `mass` is variant-aware
-// (Voronoi / Barycentric / ConsistentFEM), exposed as sparse COO
-// uniformly regardless of variant.
+// ─── assembleManifoldOperators(m) → { cotanLaplacian, mass, vertexDualAreas, vertexNormals, ... } ───
 
 Napi::Value AssembleMeshOperators(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
     return nxrSyncCall(env, [&]() -> Napi::Value {
-        ensureOps(holder);
+        holder->ops = std::make_shared<ManifoldOperators>(
+            assembleManifoldOperators(*holder->manifold)
+        );
         const auto& ops = *holder->ops;
 
         auto result = Napi::Object::New(env);
@@ -320,21 +285,23 @@ Napi::Value AssembleMeshOperators(const Napi::CallbackInfo& info) {
         result.Set("vertexDualAreas", toFloat64Array(env, ops.vertexDualAreas));
         result.Set("vertexNormals",   matrixToFloat64Array(env, ops.vertexNormals));
         result.Set("totalArea",       Napi::Number::New(env, ops.totalArea));
-        result.Set("nV",              Napi::Number::New(env, holder->ctx->nV()));
-        result.Set("nE",              Napi::Number::New(env, holder->ctx->nE()));
-        result.Set("nF",              Napi::Number::New(env, holder->ctx->nF()));
+        result.Set("nV",              Napi::Number::New(env, holder->manifold->nV()));
+        result.Set("nE",              Napi::Number::New(env, holder->manifold->nE()));
+        result.Set("nF",              Napi::Number::New(env, holder->manifold->nF()));
         return result;
     });
 }
 
-// ─── assembleDECOperators(ctx) → { d0, d1, hodge1, hodge1Inv } ───
+// ─── assembleDECOperators(m) → { d0, d1, hodge1, hodge1Inv } ───
 
 Napi::Value AssembleDECOperators(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
     return nxrSyncCall(env, [&]() -> Napi::Value {
-        ensureDec(holder);
+        holder->dec = std::make_shared<DECOperators>(
+            assembleDECOperators(*holder->manifold)
+        );
         const auto& dec = *holder->dec;
 
         auto result = Napi::Object::New(env);
@@ -345,7 +312,7 @@ Napi::Value AssembleDECOperators(const Napi::CallbackInfo& info) {
     });
 }
 
-// ─── assembleConnectionLaplacian(ctx, options) → { K, baseDim, ... } ───
+// ─── assembleConnectionLaplacian(m, options) → { K, baseDim, ... } ───
 //
 // Options object: { domain?, nSym?, regularization?, format? }
 //   domain         : 'vertex' (default) | 'face' | 'edge'
@@ -392,7 +359,7 @@ Napi::Value AssembleConnectionLaplacian(const Napi::CallbackInfo& info) {
             it = holder->connectionLaplacian.emplace(
                 key,
                 std::make_shared<ConnectionLaplacian>(
-                    assembleConnectionLaplacian(*holder->ctx, opts)
+                    assembleConnectionLaplacian(*holder->manifold, opts)
                 )
             ).first;
         }
@@ -421,7 +388,7 @@ Napi::Value AssembleConnectionLaplacian(const Napi::CallbackInfo& info) {
     });
 }
 
-// ─── solveEigenmodes(ctx, k, cancelArr?, progressArr?) ───────
+// ─── solve(m, k, cancelArr?, progressArr?) ───────
 // AsyncWorker since this can take seconds.
 //
 // Optional cancel and progress are SharedArrayBuffer-backed
@@ -462,7 +429,11 @@ public:
 
     void Execute() override {
         try {
-            ensureOps(holder_);
+            if (!holder_->ops) {
+                holder_->ops = std::make_shared<ManifoldOperators>(
+                    assembleManifoldOperators(*holder_->manifold)
+                );
+            }
 
             // Build the cancellation token from the SAB-backed Int32Array.
             // std::atomic<int32_t> is layout/alignment-compatible with int32_t
@@ -480,18 +451,15 @@ public:
                 progress.residualMicro   = reinterpret_cast<std::atomic<int32_t>*>(progressPtr_ + 2);
             }
 
-            result_ = solveEigenmodes(holder_->ops->cotanLaplacian, holder_->ops->mass, k_,
-                                      -1e-8, cancel, progress);
-            // Normalize eigenvectors
-            result_.eigenvectors = normalizeEigenmodes(result_.eigenvectors, holder_->ops->mass);
-            // Remove DC
-            result_ = removeDC(result_);
+            result_ = solve::eigen(
+                holder_->ops->cotanLaplacian, holder_->ops->mass, k_,
+                -1e-8, /*normalize=*/true, /*removeDC=*/true, cancel, progress);
             // Cache on the holder so time-varying generators can reuse
             // without round-tripping the eigenmode arrays through IPC.
             holder_->eigenmodes = std::make_shared<EigenResult>(result_);
-        } catch (const nxr::compute::Error& e) {
+        } catch (const nxr::core::Error& e) {
             // Preserve structured error info for OnError to attach to the JS Error.
-            errorCode_   = std::string(nxr::compute::errorCodeName(e.code()));
+            errorCode_   = std::string(nxr::core::errorCodeName(e.code()));
             errorHint_   = std::string(e.hint());
             SetError(e.what());
         } catch (const std::exception& e) {
@@ -576,7 +544,7 @@ Napi::Value SolveEigenmodes(const Napi::CallbackInfo& info) {
     return promise;
 }
 
-// ─── solvePoisson(ctx, densityVertices, densityValues) ───────
+// ─── poisson(m, densityVertices, densityValues) ───────
 
 Napi::Value SolvePoisson(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -586,19 +554,23 @@ Napi::Value SolvePoisson(const Napi::CallbackInfo& info) {
         auto vertsArr = info[1].As<Napi::Int32Array>();
         auto valuesArr = info[2].As<Napi::Float64Array>();
 
-        ensureOps(holder);
+        if (!holder->ops) {
+            holder->ops = std::make_shared<ManifoldOperators>(
+                assembleManifoldOperators(*holder->manifold)
+            );
+        }
 
         std::map<int, double> densityMap;
         for (size_t i = 0; i < vertsArr.ElementLength(); i++) {
             densityMap[vertsArr[i]] = valuesArr[i];
         }
 
-        Eigen::VectorXd phi = solvePoisson(*holder->ops, *holder->factors, densityMap);
+        Eigen::VectorXd phi = solve_ns::poisson(*holder->ops, *holder->factors, densityMap);
         return toFloat64Array(env, phi);
     });
 }
 
-// ─── computeGeodesicDistance(ctx, sourceVertices) ────────────
+// ─── heat(m, sourceVertices) ────────────
 
 Napi::Value ComputeGeodesicDistance(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -616,111 +588,64 @@ Napi::Value ComputeGeodesicDistance(const Napi::CallbackInfo& info) {
         // across calls — its constructor pre-factors the Cholesky
         // systems (M+tA, A); subsequent calls do back-substitution
         // only. Same lifetime model as VectorHeatSolver / SignedHeatSolver.
-        ensureHeatGeo(holder);
-        Eigen::VectorXd dists = computeGeodesicDistance(*holder->heatGeo, sources);
+        if (!holder->heatGeo) {
+            holder->heatGeo = std::make_shared<HeatGeodesicSolver>(*holder->manifold);
+        }
+        Eigen::VectorXd dists = heat(*holder->heatGeo, sources);
         return toFloat64Array(env, dists);
     });
 }
 
-// ─── hodgeDecompose(ctx, omega?) — async, returns Promise<{...}> ─
-//
-// Wall-time at cortical scale (V≈165k, E≈495k) is dominated by the
-// d0ᵀ★₁d0 Cholesky back-substitution and the LU solve on d1★₁⁻¹d1ᵀ,
-// both ~1–2 s with the CholeskyCache warm. Move off the JS thread.
-// Inputs are deep-copied into the worker (omega vector) so the caller
-// can release the originating Float64Array immediately.
-
-class HodgeDecomposeWorker : public Napi::AsyncWorker {
-public:
-    HodgeDecomposeWorker(Napi::Env env, Napi::Value ctxExternal,
-                         ContextHolder* holder, Eigen::VectorXd omega)
-        : Napi::AsyncWorker(env),
-          deferred(Napi::Promise::Deferred::New(env)),
-          ctxRef_(Napi::Persistent(ctxExternal)),
-          holder_(holder),
-          omega_(std::move(omega)) {}
-
-    void Execute() override {
-        try {
-            ensureDec(holder_);
-            if (omega_.size() == 0) {
-                omega_ = generateRandomOmega(holder_->ctx->nE());
-            }
-            result_ = hodgeDecompose(*holder_->ctx, *holder_->dec, *holder_->factors, omega_);
-        } catch (const nxr::compute::Error& e) {
-            errorCode_ = std::string(nxr::compute::errorCodeName(e.code()));
-            errorHint_ = std::string(e.hint());
-            SetError(e.what());
-        } catch (const std::exception& e) {
-            errorCode_ = "INTERNAL_ERROR";
-            SetError(e.what());
-        }
-    }
-
-    void OnOK() override {
-        Napi::Env env = Env();
-        auto obj = Napi::Object::New(env);
-        obj.Set("alpha",            toFloat64Array(env, result_.exactPotential));
-        obj.Set("beta",             toFloat64Array(env, result_.coExactPotentialV));
-        obj.Set("combined",         toFloat64Array(env, result_.combinedPotential));
-        obj.Set("omega",            toFloat64Array(env, result_.omega));
-        obj.Set("dAlpha",           toFloat64Array(env, result_.dAlpha));
-        obj.Set("deltaBeta",        toFloat64Array(env, result_.deltaBeta));
-        obj.Set("gamma",            toFloat64Array(env, result_.gamma));
-        obj.Set("omegaVectors",     matrixToFloat64Array(env, result_.omegaVectors));
-        obj.Set("dAlphaVectors",    matrixToFloat64Array(env, result_.dAlphaVectors));
-        obj.Set("deltaBetaVectors", matrixToFloat64Array(env, result_.deltaBetaVectors));
-        obj.Set("gammaVectors",     matrixToFloat64Array(env, result_.gammaVectors));
-        deferred.Resolve(obj);
-    }
-
-    void OnError(const Napi::Error& e) override {
-        Napi::Env env = Env();
-        Napi::Error err = Napi::Error::New(env, e.Message());
-        if (!errorCode_.empty()) err.Set("code", Napi::String::New(env, errorCode_));
-        if (!errorHint_.empty()) err.Set("hint", Napi::String::New(env, errorHint_));
-        deferred.Reject(err.Value());
-    }
-
-    Napi::Promise GetPromise() { return deferred.Promise(); }
-
-private:
-    Napi::Promise::Deferred deferred;
-    Napi::Reference<Napi::Value> ctxRef_;
-    ContextHolder* holder_;
-    Eigen::VectorXd omega_;
-    HodgeResult result_;
-    std::string errorCode_;
-    std::string errorHint_;
-};
+// ─── hodge(m, omega?) — returns all scalars + vectors ─
 
 Napi::Value HodgeDecompose(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        if (!holder->dec) {
+            holder->dec = std::make_shared<DECOperators>(
+                assembleDECOperators(*holder->manifold)
+            );
+        }
 
-    // Deep-copy omega off the JS-owned TypedArray. Empty omega signals
-    // "generate random in Execute()" so the RNG cost also moves off the
-    // main thread.
-    Eigen::VectorXd omega;
-    if (info.Length() > 1 && info[1].IsTypedArray()) {
-        omega = toVectorXd(info[1].As<Napi::Float64Array>());
-    }
+        // Use provided omega or generate random
+        Eigen::VectorXd omega;
+        if (info.Length() > 1 && info[1].IsTypedArray()) {
+            omega = toVectorXd(info[1].As<Napi::Float64Array>());
+        } else {
+            omega = randomOmega(holder->manifold->nE());
+        }
 
-    auto* worker = new HodgeDecomposeWorker(env, info[0], holder, std::move(omega));
-    auto promise = worker->GetPromise();
-    worker->Queue();
-    return promise;
+        HodgeResult result = solve::hodge(*holder->manifold, *holder->dec, *holder->factors, omega);
+
+        auto obj = Napi::Object::New(env);
+        // Scalar potentials
+        obj.Set("alpha", toFloat64Array(env, result.exactPotential));
+        obj.Set("beta", toFloat64Array(env, result.coExactPotentialV));
+        obj.Set("combined", toFloat64Array(env, result.combinedPotential));
+        // Input 1-form and its components
+        obj.Set("omega", toFloat64Array(env, result.omega));
+        obj.Set("dAlpha", toFloat64Array(env, result.dAlpha));
+        obj.Set("deltaBeta", toFloat64Array(env, result.deltaBeta));
+        obj.Set("gamma", toFloat64Array(env, result.gamma));
+        // Face-centered vector fields [nF * 3]
+        obj.Set("omegaVectors", matrixToFloat64Array(env, result.omegaVectors));
+        obj.Set("dAlphaVectors", matrixToFloat64Array(env, result.dAlphaVectors));
+        obj.Set("deltaBetaVectors", matrixToFloat64Array(env, result.deltaBetaVectors));
+        obj.Set("gammaVectors", matrixToFloat64Array(env, result.gammaVectors));
+        return obj;
+    });
 }
 
-// ─── computeCurvatures(ctx) → { gaussian, mean, kMin, kMax, principalDir } ──
+// ─── curvatures(m) → { gaussian, mean, kMin, kMax, principalDir } ──
 
 Napi::Value ComputeCurvatures(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
     return nxrSyncCall(env, [&]() -> Napi::Value {
-        CurvatureResult result = computeCurvatures(*holder->ctx);
+        CurvatureResult result = curvatures(*holder->manifold);
 
         auto obj = Napi::Object::New(env);
         obj.Set("gaussian", toFloat64Array(env, result.gaussian));
@@ -732,7 +657,7 @@ Napi::Value ComputeCurvatures(const Napi::CallbackInfo& info) {
     });
 }
 
-// ─── computeVertexNormals(ctx, type) → Float64Array [nV*3] ──
+// ─── normals(m, type) → Float64Array [nV*3] ──
 
 Napi::Value ComputeVertexNormals(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -742,12 +667,12 @@ Napi::Value ComputeVertexNormals(const Napi::CallbackInfo& info) {
         int typeInt = info.Length() > 1 ? info[1].As<Napi::Number>().Int32Value() : 0;
         NormalType type = static_cast<NormalType>(typeInt);
 
-        Eigen::MatrixXd normals = computeVertexNormals(*holder->ctx, type);
-        return matrixToFloat64Array(env, normals);
+        Eigen::MatrixXd N = normals(*holder->manifold, type);
+        return matrixToFloat64Array(env, N);
     });
 }
 
-// ─── whitneyInterpolate(ctx, oneForm) → Float64Array [nF*3] ──
+// ─── whitney(m, oneForm) → Float64Array [nF*3] ──
 
 Napi::Value WhitneyInterpolate(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -757,14 +682,18 @@ Napi::Value WhitneyInterpolate(const Napi::CallbackInfo& info) {
         auto oneFormArr = info[1].As<Napi::Float64Array>();
         Eigen::VectorXd oneForm = toVectorXd(oneFormArr);
 
-        ensureDec(holder);
+        if (!holder->dec) {
+            holder->dec = std::make_shared<DECOperators>(
+                assembleDECOperators(*holder->manifold)
+            );
+        }
 
-        Eigen::MatrixXd vectors = whitneyInterpolate(*holder->ctx, *holder->dec, oneForm);
+        Eigen::MatrixXd vectors = whitney(*holder->manifold, *holder->dec, oneForm);
         return matrixToFloat64Array(env, vectors);
     });
 }
 
-// ─── scalarGradient(ctx, vertexScalars) → Float64Array [nF*3] ──
+// ─── gradient(m, vertexScalars) → Float64Array [nF*3] ──
 
 Napi::Value ScalarGradient(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -774,12 +703,12 @@ Napi::Value ScalarGradient(const Napi::CallbackInfo& info) {
         auto scalarsArr = info[1].As<Napi::Float64Array>();
         Eigen::VectorXd scalars = toVectorXd(scalarsArr);
 
-        Eigen::MatrixXd gradient = scalarGradient(*holder->ctx, scalars);
-        return matrixToFloat64Array(env, gradient);
+        Eigen::MatrixXd G = gradient(*holder->manifold, scalars);
+        return matrixToFloat64Array(env, G);
     });
 }
 
-// ─── computeIsolines(ctx, scalars, numLevels, min, max) → { positions, count } ──
+// ─── isoline(m, scalars, numLevels, min, max) → { positions, count } ──
 
 Napi::Value ComputeIsolines(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -793,7 +722,7 @@ Napi::Value ComputeIsolines(const Napi::CallbackInfo& info) {
         double minVal = info.Length() > 3 ? info[3].As<Napi::Number>().DoubleValue() : 0.0;
         double maxVal = info.Length() > 4 ? info[4].As<Napi::Number>().DoubleValue() : 0.0;
 
-        IsolineResult result = computeIsolines(*holder->ctx, scalars, numLevels, minVal, maxVal);
+        IsolineResult result = isoline(*holder->manifold, scalars, numLevels, minVal, maxVal);
 
         auto obj = Napi::Object::New(env);
         obj.Set("positions", matrixToFloat64Array(env, result.positions));
@@ -802,88 +731,40 @@ Napi::Value ComputeIsolines(const Napi::CallbackInfo& info) {
     });
 }
 
-// ─── computeDirectionField(ctx, singVerts, singValues) → Promise<{...}> ──
-//
-// Async for the same reason as hodgeDecompose: the d0ᵀ★₁d0 solve
-// dominates wall-time on cortical-sized meshes. The singularity map
-// is deep-copied into the worker.
-
-class DirectionFieldWorker : public Napi::AsyncWorker {
-public:
-    DirectionFieldWorker(Napi::Env env, Napi::Value ctxExternal,
-                         ContextHolder* holder, std::map<int, double> singMap)
-        : Napi::AsyncWorker(env),
-          deferred(Napi::Promise::Deferred::New(env)),
-          ctxRef_(Napi::Persistent(ctxExternal)),
-          holder_(holder),
-          singMap_(std::move(singMap)) {}
-
-    void Execute() override {
-        try {
-            ensureDec(holder_);
-            result_ = computeDirectionField(*holder_->ctx, *holder_->dec,
-                                            *holder_->factors, singMap_);
-        } catch (const nxr::compute::Error& e) {
-            errorCode_ = std::string(nxr::compute::errorCodeName(e.code()));
-            errorHint_ = std::string(e.hint());
-            SetError(e.what());
-        } catch (const std::exception& e) {
-            errorCode_ = "INTERNAL_ERROR";
-            SetError(e.what());
-        }
-    }
-
-    void OnOK() override {
-        Napi::Env env = Env();
-        auto obj = Napi::Object::New(env);
-        obj.Set("connections",          toFloat64Array(env, result_.connections));
-        obj.Set("directionVectors",     matrixToFloat64Array(env, result_.directionVectors));
-        obj.Set("orthogonalVectors",    matrixToFloat64Array(env, result_.orthogonalVectors));
-        obj.Set("eulerCharacteristic",  Napi::Number::New(env, result_.eulerCharacteristic));
-        obj.Set("gaussBonnetSatisfied", Napi::Boolean::New(env, result_.gaussBonnetSatisfied));
-        deferred.Resolve(obj);
-    }
-
-    void OnError(const Napi::Error& e) override {
-        Napi::Env env = Env();
-        Napi::Error err = Napi::Error::New(env, e.Message());
-        if (!errorCode_.empty()) err.Set("code", Napi::String::New(env, errorCode_));
-        if (!errorHint_.empty()) err.Set("hint", Napi::String::New(env, errorHint_));
-        deferred.Reject(err.Value());
-    }
-
-    Napi::Promise GetPromise() { return deferred.Promise(); }
-
-private:
-    Napi::Promise::Deferred deferred;
-    Napi::Reference<Napi::Value> ctxRef_;
-    ContextHolder* holder_;
-    std::map<int, double> singMap_;
-    DirectionFieldResult result_;
-    std::string errorCode_;
-    std::string errorHint_;
-};
+// ─── trivial(m, singVerts, singValues) → { ... } ──
 
 Napi::Value ComputeDirectionField(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
     if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        auto vertsArr = info[1].As<Napi::Int32Array>();
+        auto valsArr = info[2].As<Napi::Float64Array>();
 
-    auto vertsArr = info[1].As<Napi::Int32Array>();
-    auto valsArr  = info[2].As<Napi::Float64Array>();
+        if (!holder->dec) {
+            holder->dec = std::make_shared<DECOperators>(
+                assembleDECOperators(*holder->manifold)
+            );
+        }
 
-    std::map<int, double> singMap;
-    for (size_t i = 0; i < vertsArr.ElementLength(); i++) {
-        singMap[vertsArr[i]] = valsArr[i];
-    }
+        std::map<int, double> singMap;
+        for (size_t i = 0; i < vertsArr.ElementLength(); i++) {
+            singMap[vertsArr[i]] = valsArr[i];
+        }
 
-    auto* worker = new DirectionFieldWorker(env, info[0], holder, std::move(singMap));
-    auto promise = worker->GetPromise();
-    worker->Queue();
-    return promise;
+        DirectionFieldResult result = trivial(*holder->manifold, *holder->dec, *holder->factors, singMap);
+
+        auto obj = Napi::Object::New(env);
+        obj.Set("connections", toFloat64Array(env, result.connections));
+        obj.Set("directionVectors", matrixToFloat64Array(env, result.directionVectors));
+        obj.Set("orthogonalVectors", matrixToFloat64Array(env, result.orthogonalVectors));
+        obj.Set("eulerCharacteristic", Napi::Number::New(env, result.eulerCharacteristic));
+        obj.Set("gaussBonnetSatisfied", Napi::Boolean::New(env, result.gaussBonnetSatisfied));
+        return obj;
+    });
 }
 
-// ─── traceStreamlines(ctx, faceField, numSeeds, stepCoef, maxSteps) → { positions, count } ──
+// ─── streamline(m, faceField, numSeeds, stepCoef, maxSteps) → { positions, count } ──
 
 Napi::Value TraceStreamlines(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -891,7 +772,7 @@ Napi::Value TraceStreamlines(const Napi::CallbackInfo& info) {
     if (!holder) return env.Null();
     return nxrSyncCall(env, [&]() -> Napi::Value {
         auto fieldArr = info[1].As<Napi::Float64Array>();
-        int nF = holder->ctx->nF();
+        int nF = holder->manifold->nF();
         Eigen::MatrixXd faceField(nF, 3);
         const double* data = fieldArr.Data();
         for (int i = 0; i < nF; i++) {
@@ -904,7 +785,7 @@ Napi::Value TraceStreamlines(const Napi::CallbackInfo& info) {
         double stepCoef = info.Length() > 3 ? info[3].As<Napi::Number>().DoubleValue() : 0.15;
         int maxSteps = info.Length() > 4 ? info[4].As<Napi::Number>().Int32Value() : 1000;
 
-        StreamlineResult result = traceStreamlines(*holder->ctx, faceField, numSeeds, stepCoef, maxSteps);
+        StreamlineResult result = streamline(*holder->manifold, faceField, numSeeds, stepCoef, maxSteps);
 
         auto obj = Napi::Object::New(env);
         obj.Set("positions", matrixToFloat64Array(env, result.positions));
@@ -913,10 +794,10 @@ Napi::Value TraceStreamlines(const Napi::CallbackInfo& info) {
     });
 }
 
-// ─── generateHeatDiffusion(ctx, {sources, timesteps, alpha}) ────
+// ─── heatDiffusion(m, {sources, timesteps, alpha}) ────
 //
 // Returns a [T*nV] Float32Array (row-major frame-major) plus T and
-// nV. Eigenmodes must already be computed via solveEigenmodes.
+// nV. Eigenmodes must already be computed via solve.
 
 Napi::Value GenerateHeatDiffusion(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -924,11 +805,15 @@ Napi::Value GenerateHeatDiffusion(const Napi::CallbackInfo& info) {
     if (!holder) return env.Null();
     return nxrSyncCall(env, [&]() -> Napi::Value {
         if (!holder->eigenmodes) {
-            throw nxr::compute::Error(nxr::compute::ErrorCode::NotPrecomputed,
-                "generateHeatDiffusion: eigenmodes not computed",
-                "call solveEigenmodes first");
+            throw nxr::core::Error(nxr::core::ErrorCode::NotPrecomputed,
+                "heatDiffusion: eigenmodes not computed",
+                "call solve first");
         }
-        ensureOps(holder);
+        if (!holder->ops) {
+            holder->ops = std::make_shared<ManifoldOperators>(
+                assembleManifoldOperators(*holder->manifold)
+            );
+        }
 
         // args[1] = options object
         auto opts = info[1].As<Napi::Object>();
@@ -937,19 +822,19 @@ Napi::Value GenerateHeatDiffusion(const Napi::CallbackInfo& info) {
         auto timestepsArr = opts.Get("timesteps").As<Napi::Float64Array>();
         double alpha = opts.Get("alpha").As<Napi::Number>().DoubleValue();
 
-        int nV = holder->ctx->nV();
+        int nV = holder->manifold->nV();
         std::map<int, double> sourcesMap;
         for (size_t i = 0; i < sourceVertsArr.ElementLength(); i++) {
             sourcesMap[sourceVertsArr[i]] = sourceValuesArr[i];
         }
-        Eigen::VectorXd u0 = generateDelta(nV, sourcesMap);
+        Eigen::VectorXd u0 = delta(nV, sourcesMap);
 
         std::vector<double> timesteps(
             timestepsArr.Data(),
             timestepsArr.Data() + timestepsArr.ElementLength()
         );
 
-        Eigen::MatrixXf field = generateHeatDiffusion(
+        Eigen::MatrixXf field = heatDiffusion(
             *holder->ops, *holder->eigenmodes, u0, timesteps, alpha);
 
         auto result = Napi::Object::New(env);
@@ -960,7 +845,7 @@ Napi::Value GenerateHeatDiffusion(const Napi::CallbackInfo& info) {
     });
 }
 
-// ─── generateDampedWave(ctx, {modeIndices, amplitudes, dampings, phases, timesteps}) ─
+// ─── dampedWave(m, {modeIndices, amplitudes, dampings, phases, timesteps}) ─
 
 Napi::Value GenerateDampedWave(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -969,9 +854,9 @@ Napi::Value GenerateDampedWave(const Napi::CallbackInfo& info) {
 
     return nxrSyncCall(env, [&]() -> Napi::Value {
         if (!holder->eigenmodes) {
-            throw nxr::compute::Error(nxr::compute::ErrorCode::NotPrecomputed,
-                "generateDampedWave: eigenmodes not computed",
-                "call solveEigenmodes first");
+            throw nxr::core::Error(nxr::core::ErrorCode::NotPrecomputed,
+                "dampedWave: eigenmodes not computed",
+                "call solve first");
         }
 
         auto opts = info[1].As<Napi::Object>();
@@ -1002,7 +887,7 @@ Napi::Value GenerateDampedWave(const Napi::CallbackInfo& info) {
             tsArr.Data() + tsArr.ElementLength()
         );
 
-        Eigen::MatrixXf field = generateDampedWave(
+        Eigen::MatrixXf field = dampedWave(
             *holder->eigenmodes, modeIndices, amplitudes, dampings, phases, timesteps);
 
         auto result = Napi::Object::New(env);
@@ -1017,17 +902,12 @@ Napi::Value GenerateDampedWave(const Napi::CallbackInfo& info) {
 
 static void ensureVHM(ContextHolder* holder) {
     if (!holder->vhm) {
-        holder->vhm = std::make_shared<VectorHeatSolver>(*holder->ctx);
+        holder->vhm = std::make_shared<VectorHeatSolver>(*holder->manifold);
     }
 }
 static void ensureSHS(ContextHolder* holder) {
     if (!holder->shs) {
-        holder->shs = std::make_shared<SignedHeatSolver>(*holder->ctx);
-    }
-}
-static void ensureHeatGeo(ContextHolder* holder) {
-    if (!holder->heatGeo) {
-        holder->heatGeo = std::make_shared<HeatGeodesicSolver>(*holder->ctx);
+        holder->shs = std::make_shared<SignedHeatSolver>(*holder->manifold);
     }
 }
 
@@ -1040,7 +920,7 @@ Napi::Value VectorHeatTransport(const Napi::CallbackInfo& info) {
         auto vecsArr  = info[2].As<Napi::Float64Array>();
         int n = static_cast<int>(vertsArr.ElementLength());
         if (vecsArr.ElementLength() != static_cast<size_t>(n) * 3) {
-            throw nxr::compute::Error(nxr::compute::ErrorCode::InvalidInput,
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
                 "sourceVectors must be Nx3 (length 3*sources)");
         }
         std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + n);
@@ -1053,7 +933,7 @@ Napi::Value VectorHeatTransport(const Napi::CallbackInfo& info) {
         }
 
         ensureVHM(holder);
-        Eigen::MatrixXd out = vectorHeatTransport(*holder->vhm, verts, S);
+        Eigen::MatrixXd out = parallel(*holder->vhm, verts, S);
         return matrixToFloat64Array(env, out);
     });
 }
@@ -1067,7 +947,7 @@ Napi::Value VectorHeatExtendScalar(const Napi::CallbackInfo& info) {
         auto valsArr  = info[2].As<Napi::Float64Array>();
         int n = static_cast<int>(vertsArr.ElementLength());
         if (valsArr.ElementLength() != static_cast<size_t>(n)) {
-            throw nxr::compute::Error(nxr::compute::ErrorCode::InvalidInput,
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
                 "sourceVerts and sourceValues must have the same length");
         }
         std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + n);
@@ -1075,7 +955,7 @@ Napi::Value VectorHeatExtendScalar(const Napi::CallbackInfo& info) {
         std::memcpy(vals.data(), valsArr.Data(), n * sizeof(double));
 
         ensureVHM(holder);
-        Eigen::VectorXd out = vectorHeatExtendScalar(*holder->vhm, verts, vals);
+        Eigen::VectorXd out = extendScalar(*holder->vhm, verts, vals);
         return toFloat64Array(env, out);
     });
 }
@@ -1092,7 +972,7 @@ Napi::Value VectorHeatLogMap(const Napi::CallbackInfo& info) {
         auto strategy = static_cast<LogMapStrategy>(strategyInt);
 
         ensureVHM(holder);
-        LogMapResult r = vectorHeatLogMap(*holder->vhm, sourceVertex, strategy);
+        LogMapResult r = logMap(*holder->vhm, sourceVertex, strategy);
 
         auto obj = Napi::Object::New(env);
         obj.Set("logCoords", matrixToFloat64Array(env, r.logCoords));
@@ -1118,7 +998,7 @@ Napi::Value VectorHeatFindCenter(const Napi::CallbackInfo& info) {
         std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + vertsArr.ElementLength());
 
         ensureVHM(holder);
-        Eigen::Vector3d c = vectorHeatFindCenter(*holder->vhm, verts, p);
+        Eigen::Vector3d c = findCenter(*holder->vhm, verts, p);
         auto out = Napi::Float64Array::New(env, 3);
         out[0] = c.x(); out[1] = c.y(); out[2] = c.z();
         return out;
@@ -1142,7 +1022,7 @@ Napi::Value SignedHeatDistance(const Napi::CallbackInfo& info) {
         std::vector<int> verts(vertsArr.Data(), vertsArr.Data() + vertsArr.ElementLength());
 
         ensureSHS(holder);
-        Eigen::VectorXd out = signedHeatDistance(*holder->shs, verts, isLoop, ls);
+        Eigen::VectorXd out = signedHeat(*holder->shs, verts, isLoop, ls);
         return toFloat64Array(env, out);
     });
 }
@@ -1157,15 +1037,8 @@ Napi::Value ComputeSmoothFaceField(const Napi::CallbackInfo& info) {
         int  nSym             = info.Length() > 1 ? info[1].As<Napi::Number>().Int32Value() : 4;
         bool alignToCurvature = info.Length() > 2 ? info[2].As<Napi::Boolean>().Value()     : false;
 
-        const SmoothFieldKey key{nSym, alignToCurvature};
-        auto it = holder->smoothFaceFieldCache.find(key);
-        if (it == holder->smoothFaceFieldCache.end()) {
-            it = holder->smoothFaceFieldCache.emplace(
-                key,
-                computeSmoothFaceField(*holder->ctx, nSym, alignToCurvature)
-            ).first;
-        }
-        return matrixToFloat64Array(env, it->second);
+        Eigen::MatrixXd v = smoothFace(*holder->manifold, nSym, alignToCurvature);
+        return matrixToFloat64Array(env, v);
     });
 }
 
@@ -1177,15 +1050,7 @@ Napi::Value ComputeSmoothVertexField(const Napi::CallbackInfo& info) {
         int  nSym             = info.Length() > 1 ? info[1].As<Napi::Number>().Int32Value() : 2;
         bool alignToCurvature = info.Length() > 2 ? info[2].As<Napi::Boolean>().Value()     : false;
 
-        const SmoothFieldKey key{nSym, alignToCurvature};
-        auto it = holder->smoothVertexFieldCache.find(key);
-        if (it == holder->smoothVertexFieldCache.end()) {
-            it = holder->smoothVertexFieldCache.emplace(
-                key,
-                computeSmoothVertexField(*holder->ctx, nSym, alignToCurvature)
-            ).first;
-        }
-        const auto& r = it->second;
+        SmoothVertexFieldResult r = smoothVertex(*holder->manifold, nSym, alignToCurvature);
         auto obj = Napi::Object::New(env);
         obj.Set("vertexVectors",  matrixToFloat64Array(env, r.vertexVectors));
         obj.Set("vertexFieldRaw", toFloat64Array(env, r.vertexFieldRaw));
@@ -1206,7 +1071,7 @@ Napi::Value ComputeStripePattern(const Napi::CallbackInfo& info) {
         double freq   = info[2].As<Napi::Number>().DoubleValue();
         bool   connect = info.Length() > 3 ? info[3].As<Napi::Boolean>().Value() : true;
 
-        StripePatternResult r = computeStripePattern(*holder->ctx, raw, freq, connect);
+        StripePatternResult r = compute(*holder->manifold, raw, freq, connect);
         auto obj = Napi::Object::New(env);
         obj.Set("positions",    matrixToFloat64Array(env, r.positions));
         obj.Set("segmentCount", Napi::Number::New(env, r.segmentCount));
@@ -1225,7 +1090,7 @@ Napi::Value ComputeStripePatternFreq(const Napi::CallbackInfo& info) {
         Eigen::VectorXd freqs = toVectorXd(freqsArr);
         bool connect = info.Length() > 3 ? info[3].As<Napi::Boolean>().Value() : true;
 
-        StripePatternResult r = computeStripePatternFreq(*holder->ctx, raw, freqs, connect);
+        StripePatternResult r = computeFreq(*holder->manifold, raw, freqs, connect);
         auto obj = Napi::Object::New(env);
         obj.Set("positions",    matrixToFloat64Array(env, r.positions));
         obj.Set("segmentCount", Napi::Number::New(env, r.segmentCount));
@@ -1237,35 +1102,35 @@ Napi::Value ComputeStripePatternFreq(const Napi::CallbackInfo& info) {
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("createContext", Napi::Function::New(env, CreateContext));
-    exports.Set("assembleMeshOperators", Napi::Function::New(env, AssembleMeshOperators));
+    exports.Set("assembleManifoldOperators", Napi::Function::New(env, AssembleMeshOperators));
     exports.Set("assembleDECOperators", Napi::Function::New(env, AssembleDECOperators));
     exports.Set("assembleConnectionLaplacian", Napi::Function::New(env, AssembleConnectionLaplacian));
-    exports.Set("solveEigenmodes", Napi::Function::New(env, SolveEigenmodes));
-    exports.Set("solvePoisson", Napi::Function::New(env, SolvePoisson));
-    exports.Set("computeGeodesicDistance", Napi::Function::New(env, ComputeGeodesicDistance));
-    exports.Set("hodgeDecompose", Napi::Function::New(env, HodgeDecompose));
-    exports.Set("computeCurvatures", Napi::Function::New(env, ComputeCurvatures));
-    exports.Set("computeVertexNormals", Napi::Function::New(env, ComputeVertexNormals));
-    exports.Set("whitneyInterpolate", Napi::Function::New(env, WhitneyInterpolate));
-    exports.Set("scalarGradient", Napi::Function::New(env, ScalarGradient));
-    exports.Set("computeIsolines", Napi::Function::New(env, ComputeIsolines));
-    exports.Set("computeDirectionField", Napi::Function::New(env, ComputeDirectionField));
-    exports.Set("traceStreamlines", Napi::Function::New(env, TraceStreamlines));
-    exports.Set("generateHeatDiffusion", Napi::Function::New(env, GenerateHeatDiffusion));
-    exports.Set("generateDampedWave", Napi::Function::New(env, GenerateDampedWave));
+    exports.Set("solve", Napi::Function::New(env, SolveEigenmodes));
+    exports.Set("poisson", Napi::Function::New(env, SolvePoisson));
+    exports.Set("heat", Napi::Function::New(env, ComputeGeodesicDistance));
+    exports.Set("hodge", Napi::Function::New(env, HodgeDecompose));
+    exports.Set("curvatures", Napi::Function::New(env, ComputeCurvatures));
+    exports.Set("normals", Napi::Function::New(env, ComputeVertexNormals));
+    exports.Set("whitney", Napi::Function::New(env, WhitneyInterpolate));
+    exports.Set("gradient", Napi::Function::New(env, ScalarGradient));
+    exports.Set("isoline", Napi::Function::New(env, ComputeIsolines));
+    exports.Set("trivial", Napi::Function::New(env, ComputeDirectionField));
+    exports.Set("streamline", Napi::Function::New(env, TraceStreamlines));
+    exports.Set("heatDiffusion", Napi::Function::New(env, GenerateHeatDiffusion));
+    exports.Set("dampedWave", Napi::Function::New(env, GenerateDampedWave));
     // Vector heat method
-    exports.Set("vectorHeatTransport",    Napi::Function::New(env, VectorHeatTransport));
-    exports.Set("vectorHeatExtendScalar", Napi::Function::New(env, VectorHeatExtendScalar));
-    exports.Set("vectorHeatLogMap",       Napi::Function::New(env, VectorHeatLogMap));
-    exports.Set("vectorHeatFindCenter",   Napi::Function::New(env, VectorHeatFindCenter));
+    exports.Set("parallel",    Napi::Function::New(env, VectorHeatTransport));
+    exports.Set("extendScalar", Napi::Function::New(env, VectorHeatExtendScalar));
+    exports.Set("logMap",       Napi::Function::New(env, VectorHeatLogMap));
+    exports.Set("findCenter",   Napi::Function::New(env, VectorHeatFindCenter));
     // Signed heat method
-    exports.Set("signedHeatDistance",     Napi::Function::New(env, SignedHeatDistance));
+    exports.Set("signedHeat",     Napi::Function::New(env, SignedHeatDistance));
     // Smooth direction fields
-    exports.Set("computeSmoothFaceField",   Napi::Function::New(env, ComputeSmoothFaceField));
-    exports.Set("computeSmoothVertexField", Napi::Function::New(env, ComputeSmoothVertexField));
+    exports.Set("smoothFace",   Napi::Function::New(env, ComputeSmoothFaceField));
+    exports.Set("smoothVertex", Napi::Function::New(env, ComputeSmoothVertexField));
     // Stripe patterns
-    exports.Set("computeStripePattern",     Napi::Function::New(env, ComputeStripePattern));
-    exports.Set("computeStripePatternFreq", Napi::Function::New(env, ComputeStripePatternFreq));
+    exports.Set("compute",     Napi::Function::New(env, ComputeStripePattern));
+    exports.Set("computeFreq", Napi::Function::New(env, ComputeStripePatternFreq));
     return exports;
 }
 

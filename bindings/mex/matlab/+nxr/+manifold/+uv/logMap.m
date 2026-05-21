@@ -7,6 +7,6 @@ function lm = logMap(mctx, sourceVertex, strategy)
     if nargin < 3
         strategy = 1;   % AffineLocal
     end
-    lm = nxr_compute('vectorHeatLogMap', mctx.V, mctx.F, ...
+    lm = nxr_compute('logMap', mctx.V, mctx.F, ...
                      int32(sourceVertex), int32(strategy));
 end

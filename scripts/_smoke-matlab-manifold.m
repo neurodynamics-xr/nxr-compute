@@ -75,11 +75,11 @@ d = nxr.manifold.measure.signedDistance(mctx, int32([0 1 2]), false);
 check(numel(d) == 12 && all(isfinite(d)), 'measure.signedDistance length 12');
 
 % ── interpolate group ──────────────────────────────────────
-sff = nxr.manifold.interpolate.smoothFaceField(mctx, 4);
-check(numel(sff) == 60, 'interpolate.smoothFaceField → 20×3 vectors');
+sff = nxr.manifold.interpolate.smoothFace(mctx, 4);
+check(numel(sff) == 60, 'interpolate.smoothFace → 20×3 vectors');
 
-svf = nxr.manifold.interpolate.smoothVertexField(mctx, 2);
-check(numel(svf.vertexFieldRaw) == 24, 'interpolate.smoothVertexField → 12×2 raw');
+svf = nxr.manifold.interpolate.smoothVertex(mctx, 2);
+check(numel(svf.vertexFieldRaw) == 24, 'interpolate.smoothVertex → 12×2 raw');
 
 % ── uv group ───────────────────────────────────────────────
 stripes = nxr.manifold.uv.stripe(mctx, svf.vertexFieldRaw, 3.0);
@@ -115,7 +115,7 @@ expectNotWired('uv.bff',                           @() nxr.manifold.uv.bff(mctx)
 expectNotWired('operator.connectionLaplacian',     @() nxr.manifold.operator.connectionLaplacian(mctx, struct()));
 expectNotWired('operator.d0',                      @() nxr.manifold.operator.d0(mctx));
 expectNotWired('solve.poisson',                    @() nxr.manifold.solve.poisson(mctx, int32(0), 1));
-expectNotWired('interpolate.directionField',       @() nxr.manifold.interpolate.directionField(mctx, int32(0), 1));
+expectNotWired('interpolate.trivial',       @() nxr.manifold.interpolate.trivial(mctx, int32(0), 1));
 
 if failures == 0
     fprintf('\n[smoke-matlab-manifold] all assertions passed ✓\n');

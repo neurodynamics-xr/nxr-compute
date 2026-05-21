@@ -44,16 +44,16 @@ console.log(`[smoke] mesh: nV=${nV}, nF=${nF}`)
 
 // ── Build context + ops + eigenmodes ──────────────────────────────
 const ctx = addon.createContext(verts, faces)
-const ops = addon.assembleMeshOperators(ctx)
+const ops = addon.assembleManifoldOperators(ctx)
 console.log(`[smoke] ops: nV=${ops.nV}, nE=${ops.nE}, nF=${ops.nF}, totalArea=${ops.totalArea.toFixed(4)}`)
 
 const k = 6
-const eig = await addon.solveEigenmodes(ctx, k)
+const eig = await addon.solve(ctx, k)
 console.log(`[smoke] eigenmodes: k=${eig.k} (post-removeDC), nV=${eig.nV}`)
 const eigvals = Array.from(eig.eigenvalues).map(v => v.toFixed(4))
 console.log(`[smoke] eigenvalues: [${eigvals.join(', ')}]`)
 
-// ── generateHeatDiffusion ─────────────────────────────────────────
+// ── heatDiffusion ─────────────────────────────────────────
 //
 // Initial condition: positive delta at vertex 0, negative at vertex 3
 // (the two are antipodal on an icosahedron, so this is a clean
@@ -65,7 +65,7 @@ console.log(`[smoke] eigenvalues: [${eigvals.join(', ')}]`)
   const alpha        = 1.0
 
   const t0 = performance.now()
-  const heat = addon.generateHeatDiffusion(ctx, {
+  const heat = addon.heatDiffusion(ctx, {
     sourceVerts, sourceValues, timesteps, alpha,
   })
   const elapsed = (performance.now() - t0).toFixed(3)
@@ -97,7 +97,7 @@ console.log(`[smoke] eigenvalues: [${eigvals.join(', ')}]`)
   console.log(`[smoke]   ✓ asymptotic decay (max|u(10)|=${tailMax.toExponential(3)})`)
 }
 
-// ── generateDampedWave ────────────────────────────────────────────
+// ── dampedWave ────────────────────────────────────────────
 //
 // Excite mode 0 with amplitude 1.0 and small damping, evaluate over
 // one full period (T = 2π / √λ_0). Expect amplitude to decrease
@@ -110,7 +110,7 @@ console.log(`[smoke] eigenvalues: [${eigvals.join(', ')}]`)
   for (let i = 0; i < T; i++) timesteps[i] = (i / (T - 1)) * period
 
   const t0 = performance.now()
-  const wave = addon.generateDampedWave(ctx, {
+  const wave = addon.dampedWave(ctx, {
     modeIndices: new Int32Array([0]),
     amplitudes:  new Float64Array([1.0]),
     dampings:    new Float64Array([0.2]),

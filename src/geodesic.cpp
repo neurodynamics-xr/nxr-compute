@@ -6,7 +6,7 @@
 
 #include <iostream>
 
-namespace nxr::compute {
+namespace nxr::manifold::solve {
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
@@ -14,21 +14,21 @@ using namespace geometrycentral::surface;
 // ── Solver impl (PIMPL) ───────────────────────────────────
 //
 // Owns the geometry-central HeatMethodDistanceSolver plus a
-// reference to the ComputeContext. The solver factorizes both
+// reference to the Manifold. The solver factorizes both
 // Cholesky systems (M + tA, and A) at construction; subsequent
 // computeDistance() calls back-substitute only. Mirrors the
 // VectorHeatSolver / SignedHeatSolver pattern.
 
 class HeatGeodesicSolverImpl {
 public:
-    HeatGeodesicSolverImpl(ComputeContext& c, double tCoef)
-        : ctx(c), solver(c.geometry(), tCoef) {}
-    ComputeContext& ctx;
+    HeatGeodesicSolverImpl(Manifold& c, double tCoef)
+        : m(c), solver(c.geometry(), tCoef) {}
+    Manifold& m;
     HeatMethodDistanceSolver solver;
 };
 
-HeatGeodesicSolver::HeatGeodesicSolver(ComputeContext& ctx, double tCoef)
-    : impl_(std::make_unique<HeatGeodesicSolverImpl>(ctx, tCoef)) {}
+HeatGeodesicSolver::HeatGeodesicSolver(Manifold& m, double tCoef)
+    : impl_(std::make_unique<HeatGeodesicSolverImpl>(m, tCoef)) {}
 
 HeatGeodesicSolver::~HeatGeodesicSolver() = default;
 
@@ -36,13 +36,13 @@ HeatGeodesicSolverImpl& HeatGeodesicSolver::impl() { return *impl_; }
 
 // ── Free function ─────────────────────────────────────────
 
-Eigen::VectorXd computeGeodesicDistance(
+Eigen::VectorXd heat(
     HeatGeodesicSolver& solver,
     const std::vector<int>& sourceVertices
 ) {
     auto& s = solver.impl();
-    auto& mesh = s.ctx.mesh();
-    int nV = s.ctx.nV();
+    auto& mesh = s.m.mesh();
+    int nV = s.m.nV();
 
     // Build source vertex list for geometry-central
     std::vector<Vertex> sources;
@@ -67,4 +67,4 @@ Eigen::VectorXd computeGeodesicDistance(
     return result;
 }
 
-} // namespace nxr::compute
+} // namespace nxr::manifold::solve
