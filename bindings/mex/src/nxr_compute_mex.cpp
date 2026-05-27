@@ -226,30 +226,32 @@ void cmdAssembleMeshOperators(int /*nlhs*/, mxArray** plhs,
 void cmdSolveEigenmodes(int /*nlhs*/, mxArray** plhs,
                         int nrhs, const mxArray** prhs) {
     if (isHandleArg(nrhs, prhs)) {
-        if (nrhs != 3) {
+        if (nrhs < 3 || nrhs > 4) {
             throw std::invalid_argument(
-                "nxr_compute('solve', handle, k) takes exactly 2 arguments");
+                "nxr_compute('solve', handle, k, [sigma]) takes 2 or 3 arguments");
         }
         ContextHolder& h = getHolder(prhs[1]);
         auto& ops = ensureOps(h);
         int k = getIntArg(prhs[2]);
+        double sigma = (nrhs >= 4) ? getDoubleArg(prhs[3]) : -1e-8;
         auto result = nxr::manifold::solve::eigen(
-            ops.cotanLaplacian, ops.mass, k, -1e-8,
+            ops.cotanLaplacian, ops.mass, k, sigma,
             /*normalize=*/false, /*removeDC=*/false, makeCtrlCToken());
         h.eigCache = std::make_unique<nxr::manifold::solve::EigenResult>(result);
         plhs[0] = eigenResultToStruct(result);
         return;
     }
-    if (nrhs != 4) {
+    if (nrhs < 4 || nrhs > 5) {
         throw std::invalid_argument(
-            "nxr_compute('solve', K, M, k) takes exactly 3 arguments");
+            "nxr_compute('solve', K, M, k, [sigma]) takes 3 or 4 arguments");
     }
     auto K = mxToEigenSparse(prhs[1]);
     auto M = mxToEigenSparse(prhs[2]);
     int k = getIntArg(prhs[3]);
+    double sigma = (nrhs >= 5) ? getDoubleArg(prhs[4]) : -1e-8;
 
     // Ctrl-C polling lives entirely in the token; nxr-compute doesn't know about MATLAB.
-    auto result = nxr::manifold::solve::eigen(K, M, k, -1e-8,
+    auto result = nxr::manifold::solve::eigen(K, M, k, sigma,
         /*normalize=*/false, /*removeDC=*/false, makeCtrlCToken());
     plhs[0] = eigenResultToStruct(result);
 }
