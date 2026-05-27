@@ -68,8 +68,87 @@ err = max(abs(recomp - omega));
 assert(err < 1e-10, 'hodge recomposition dα+δβ+γ = ω (err %g)', err);
 fprintf('  hodge ✓ (recomposition err %.2e)\n', err);
 
+% ── Group D: geometric ───────────────────────────────────────
+cv = nxr_compute('curvatures', h);
+assert(numel(cv.gaussian) == nV, 'curvatures gaussian length nV');
+assert(abs(sum(cv.gaussian) - 4 * pi) < 1e-6, ...
+    'discrete Gauss-Bonnet: Σ gaussian = 2πχ = 4π (got %g)', sum(cv.gaussian));
+assert(isequal(size(cv.principalDirMax), [nV 3]), 'principalDirMax V×3');
+fprintf('  curvatures ✓ (Σκ_gauss = %.6f ≈ 4π)\n', sum(cv.gaussian));
+
+bffThrew = false;   % closed icosahedron has no boundary
+try
+    nxr_compute('bff', h);
+catch e
+    bffThrew = startsWith(e.identifier, 'nxr:');
+end
+assert(bffThrew, 'bff on a closed mesh should raise a structured nxr:* error');
+fprintf('  bff (closed-mesh throw) ✓\n');
+
+iso = nxr_compute('isoline', h, V(:, 3), 10);   % contours of the z-coordinate
+assert(iso.segmentCount >= 0, 'isoline segmentCount >= 0');
+assert(isequal(size(iso.positions), [iso.segmentCount * 2, 3]), 'isoline positions (2*segs)×3');
+fprintf('  isoline ✓ (segs=%d)\n', iso.segmentCount);
+
+df = nxr_compute('trivial', h, [1; 4], [1.0; 1.0]);   % Σindices = 2 = χ(sphere)
+assert(isequal(size(df.directionVectors), [nF 3]), 'trivial directionVectors F×3');
+assert(df.gaussBonnetSatisfied, 'trivial: Σindices = χ should satisfy Gauss-Bonnet');
+fprintf('  trivial ✓ (χ=%g, gaussBonnet=%d)\n', df.eulerCharacteristic, df.gaussBonnetSatisfied);
+
+ff = nxr_compute('smoothFace', h, 4);
+sl = nxr_compute('streamline', h, ff, 8);
+assert(sl.segmentCount >= 0, 'streamline segmentCount >= 0');
+assert(isequal(size(sl.positions), [sl.segmentCount * 2, 3]), 'streamline positions (2*segs)×3');
+fprintf('  streamline ✓ (segs=%d)\n', sl.segmentCount);
+
+% ── Group E: vector field ────────────────────────────────────
+rng(7);
+oneForm = randn(nE, 1);
+wv = nxr_compute('whitney', h, oneForm);
+assert(isequal(size(wv), [nF 3]) && all(isfinite(wv(:))), 'whitney → F×3 finite');
+fprintf('  whitney ✓\n');
+
+u = zeros(nV, 1); u(1) = 1.0;
+gr = nxr_compute('gradient', h, u);
+assert(isequal(size(gr), [nF 3]), 'gradient → F×3');
+assert(max(vecnorm(gr, 2, 2)) > 0, 'gradient nontrivial');
+fprintf('  gradient ✓\n');
+
+% ── Group F: time-varying generators (need eigenmodes) ───────
+nxr_compute('precompute', h, 6);
+
+ts = (0:4) * 0.1;
+hdif = nxr_compute('heatDiffusion', h, 1, 1.0, ts, 1.0);
+assert(isequal(size(hdif), [numel(ts) nV]), 'heatDiffusion → [T, nV]');
+assert(all(isfinite(hdif(:))), 'heatDiffusion finite');
+fprintf('  heatDiffusion ✓ ([T nV]=[%d %d])\n', size(hdif, 1), size(hdif, 2));
+
+dw = nxr_compute('dampedWave', h, [2; 3], [1.0; 1.0], [0.1; 0.1], [0.0; 0.0], (0:2) * 0.1);
+assert(isequal(size(dw), [3 nV]), 'dampedWave → [T, nV]');
+assert(all(isfinite(dw(:))), 'dampedWave finite');
+fprintf('  dampedWave ✓ ([T nV]=[%d %d])\n', size(dw, 1), size(dw, 2));
+
+om = nxr_compute('randomDecomposed1Form', h, 1.0, 1.0, 0.0, 42);
+assert(numel(om) == nE && all(isfinite(om)), 'randomDecomposed1Form length nE finite');
+hd2 = nxr_compute('hodge', h, om);
+assert(max(abs(hd2.dAlpha + hd2.deltaBeta + hd2.gamma - om)) < 1e-10, ...
+    'randomDecomposed1Form ∘ hodge round-trip');
+fprintf('  randomDecomposed1Form ✓\n');
+
+% generators before solve raise NotPrecomputed on a fresh handle
+h3 = nxr_compute('create', V, F);
+npThrew = false;
+try
+    nxr_compute('heatDiffusion', h3, 1, 1.0, ts, 1.0);
+catch e
+    npThrew = strcmp(e.identifier, 'nxr:notPrecomputed');
+end
+assert(npThrew, 'heatDiffusion before solve must raise nxr:notPrecomputed');
+nxr_compute('destroy', h3);
+fprintf('  notPrecomputed guard ✓\n');
+
 nxr_compute('destroy', h);
-fprintf('[test_mex_parity] Group B+C assertions passed ✓\n');
+fprintf('[test_mex_parity] all parity assertions passed ✓\n');
 
 % ── local helpers ─────────────────────────────────────────────
 function [V, F] = local_icosahedron()

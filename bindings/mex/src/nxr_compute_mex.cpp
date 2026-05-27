@@ -855,6 +855,168 @@ void cmdHodge(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
     plhs[0] = hodgeResultToStruct(r);
 }
 
+// Group D — geometric
+
+void cmdCurvatures(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 2) {
+        throw std::invalid_argument("nxr_compute('curvatures', handle) takes exactly 1 argument");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    plhs[0] = curvatureResultToStruct(nxr::manifold::geometry::curvatures(*h.ctx));
+}
+
+void cmdBff(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 2) {
+        throw std::invalid_argument("nxr_compute('bff', handle) takes exactly 1 argument");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    plhs[0] = eigenMatrixToMx(nxr::manifold::parametrization::bff(*h.ctx));   // [V, 2]
+}
+
+void cmdIsoline(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs < 3 || nrhs > 6) {
+        throw std::invalid_argument(
+            "nxr_compute('isoline', handle, scalarField, [numLevels], [minVal], [maxVal]) "
+            "takes 2 to 5 arguments");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    Eigen::VectorXd field = mxToEigenVector(prhs[2]);
+    int    numLevels = (nrhs >= 4) ? getIntArg(prhs[3])    : 20;
+    double minV      = (nrhs >= 5) ? getDoubleArg(prhs[4]) : 0.0;
+    double maxV      = (nrhs >= 6) ? getDoubleArg(prhs[5]) : 0.0;
+    auto r = nxr::field::extract::isoline(*h.ctx, field, numLevels, minV, maxV);
+    plhs[0] = positionsSegmentsToStruct(r.positions, r.segmentCount);
+}
+
+void cmdTrivial(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 4) {
+        throw std::invalid_argument(
+            "nxr_compute('trivial', handle, singVerts, singValues) takes exactly 3 arguments");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    auto idx = mxToVertexIndices(prhs[2]);   // 1-based → 0-based
+    auto val = mxToEigenVector(prhs[3]);
+    if (static_cast<std::size_t>(val.size()) != idx.size()) {
+        throw std::invalid_argument("singValues must match singVerts length");
+    }
+    std::map<int, double> sing;
+    for (std::size_t i = 0; i < idx.size(); ++i) {
+        sing[idx[i]] = val[static_cast<Eigen::Index>(i)];
+    }
+    auto r = nxr::manifold::connection::trivial(*h.ctx, ensureDec(h), *h.cache, sing);
+    plhs[0] = directionFieldResultToStruct(r);
+}
+
+void cmdStreamline(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs < 3 || nrhs > 6) {
+        throw std::invalid_argument(
+            "nxr_compute('streamline', handle, faceField, [numSeeds], [stepCoef], [maxSteps]) "
+            "takes 2 to 5 arguments");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    Eigen::MatrixXd faceField = mxToEigenMatrix(prhs[2]);   // [nF, 3]
+    int    numSeeds = (nrhs >= 4) ? getIntArg(prhs[3])    : 15;
+    double stepCoef = (nrhs >= 5) ? getDoubleArg(prhs[4]) : 0.15;
+    int    maxSteps = (nrhs >= 6) ? getIntArg(prhs[5])    : 1000;
+    auto r = nxr::field::extract::streamline(*h.ctx, faceField, numSeeds, stepCoef, maxSteps);
+    plhs[0] = positionsSegmentsToStruct(r.positions, r.segmentCount);
+}
+
+// Group E — vector field
+
+void cmdWhitney(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 3) {
+        throw std::invalid_argument("nxr_compute('whitney', handle, oneForm) takes exactly 2 arguments");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    Eigen::VectorXd oneForm = mxToEigenVector(prhs[2]);
+    Eigen::MatrixXd v = nxr::field::interp::whitney(*h.ctx, ensureDec(h), oneForm);
+    plhs[0] = eigenMatrixToMx(v);
+}
+
+void cmdGradient(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 3) {
+        throw std::invalid_argument("nxr_compute('gradient', handle, scalarField) takes exactly 2 arguments");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    Eigen::VectorXd scalar = mxToEigenVector(prhs[2]);
+    Eigen::MatrixXd g = nxr::field::op::gradient(*h.ctx, scalar);
+    plhs[0] = eigenMatrixToMx(g);
+}
+
+// Group F — time-varying generators (need a prior solve/precompute)
+
+void cmdHeatDiffusion(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs < 5 || nrhs > 6) {
+        throw std::invalid_argument(
+            "nxr_compute('heatDiffusion', handle, sourceVerts, sourceValues, timesteps, [alpha]) "
+            "takes 4 or 5 arguments");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    if (!h.eigCache) {
+        throw nxr::core::Error(nxr::core::ErrorCode::NotPrecomputed,
+            "heatDiffusion requires a prior solve/precompute on this handle");
+    }
+    auto idx = mxToVertexIndices(prhs[2]);
+    auto val = mxToEigenVector(prhs[3]);
+    if (static_cast<std::size_t>(val.size()) != idx.size()) {
+        throw std::invalid_argument("sourceValues must match sourceVerts length");
+    }
+    Eigen::VectorXd ts = mxToEigenVector(prhs[4]);
+    double alpha = (nrhs >= 6) ? getDoubleArg(prhs[5]) : 1.0;
+    std::map<int, double> sources;
+    for (std::size_t i = 0; i < idx.size(); ++i) {
+        sources[idx[i]] = val[static_cast<Eigen::Index>(i)];
+    }
+    Eigen::VectorXd u0 = nxr::field::generate::delta(h.ctx->nV(), sources);
+    std::vector<double> timesteps(ts.data(), ts.data() + ts.size());
+    Eigen::MatrixXf out = nxr::field::generate::heatDiffusion(
+        ensureOps(h), *h.eigCache, u0, timesteps, alpha);
+    plhs[0] = eigenMatrixXfToMx(out);
+}
+
+void cmdDampedWave(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 7) {
+        throw std::invalid_argument(
+            "nxr_compute('dampedWave', handle, modeIndices, amplitudes, dampings, phases, timesteps) "
+            "takes exactly 6 arguments");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    if (!h.eigCache) {
+        throw nxr::core::Error(nxr::core::ErrorCode::NotPrecomputed,
+            "dampedWave requires a prior solve/precompute on this handle");
+    }
+    auto modeIdx = mxToVertexIndices(prhs[2]);   // 1-based → 0-based mode columns
+    auto toVec = [](const mxArray* a) {
+        auto v = mxToEigenVector(a);
+        return std::vector<double>(v.data(), v.data() + v.size());
+    };
+    std::vector<double> amps   = toVec(prhs[3]);
+    std::vector<double> damps  = toVec(prhs[4]);
+    std::vector<double> phases = toVec(prhs[5]);
+    std::vector<double> ts     = toVec(prhs[6]);
+    Eigen::MatrixXf out = nxr::field::generate::dampedWave(
+        *h.eigCache, modeIdx, amps, damps, phases, ts);
+    plhs[0] = eigenMatrixXfToMx(out);
+}
+
+void cmdRandomDecomposed1Form(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs < 5 || nrhs > 6) {
+        throw std::invalid_argument(
+            "nxr_compute('randomDecomposed1Form', handle, alphaStr, betaStr, gammaStr, [seed]) "
+            "takes 4 or 5 arguments");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    auto& dec = ensureDec(h);
+    double aS = getDoubleArg(prhs[2]);
+    double bS = getDoubleArg(prhs[3]);
+    double gS = getDoubleArg(prhs[4]);
+    unsigned int seed = (nrhs >= 6) ? static_cast<unsigned int>(getIntArg(prhs[5])) : 42u;
+    Eigen::VectorXd omega = nxr::field::generate::randomDecomposed1Form(
+        dec, h.ctx->nV(), h.ctx->nE(), h.ctx->nF(), aS, bS, gS, seed);
+    plhs[0] = eigenVectorToMx(omega);
+}
+
 // ── version() → string ───────────────────────────────────────
 
 void cmdVersion(int /*nlhs*/, mxArray** plhs,
@@ -913,6 +1075,16 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "heat")                        cmdHeat(nlhs, plhs, nrhs, prhs);
         else if (cmd == "tracePath")                   cmdTracePath(nlhs, plhs, nrhs, prhs);
         else if (cmd == "hodge")                       cmdHodge(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "curvatures")                  cmdCurvatures(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "bff")                         cmdBff(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "isoline")                     cmdIsoline(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "trivial")                     cmdTrivial(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "streamline")                  cmdStreamline(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "whitney")                     cmdWhitney(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "gradient")                    cmdGradient(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "heatDiffusion")               cmdHeatDiffusion(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "dampedWave")                  cmdDampedWave(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "randomDecomposed1Form")       cmdRandomDecomposed1Form(nlhs, plhs, nrhs, prhs);
         else if (cmd == "version")                 cmdVersion(nlhs, plhs, nrhs, prhs);
         else {
             mexErrMsgIdAndTxt("nxr:unknownCommand",

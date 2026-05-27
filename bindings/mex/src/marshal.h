@@ -385,4 +385,47 @@ inline mxArray* hodgeResultToStruct(const nxr::manifold::solve::HodgeResult& r) 
     return s;
 }
 
+inline mxArray* curvatureResultToStruct(const nxr::manifold::geometry::CurvatureResult& r) {
+    const char* fields[] = {"gaussian", "mean", "kMin", "kMax", "principalDirMax"};
+    mxArray* s = mxCreateStructMatrix(1, 1, 5, fields);
+    mxSetField(s, 0, "gaussian",        eigenVectorToMx(r.gaussian));
+    mxSetField(s, 0, "mean",            eigenVectorToMx(r.mean));
+    mxSetField(s, 0, "kMin",            eigenVectorToMx(r.kMin));
+    mxSetField(s, 0, "kMax",            eigenVectorToMx(r.kMax));
+    mxSetField(s, 0, "principalDirMax", eigenMatrixToMx(r.principalDirMax));
+    return s;
+}
+
+// Shared by isoline / streamline (both are positions [2*segs, 3] + count).
+inline mxArray* positionsSegmentsToStruct(const Eigen::MatrixXd& positions, int segmentCount) {
+    const char* fields[] = {"positions", "segmentCount"};
+    mxArray* s = mxCreateStructMatrix(1, 1, 2, fields);
+    mxSetField(s, 0, "positions",    eigenMatrixToMx(positions));
+    mxSetField(s, 0, "segmentCount", mxCreateDoubleScalar(segmentCount));
+    return s;
+}
+
+inline mxArray* directionFieldResultToStruct(
+    const nxr::manifold::connection::DirectionFieldResult& r) {
+    const char* fields[] = {"connections", "directionVectors", "orthogonalVectors",
+                            "eulerCharacteristic", "gaussBonnetSatisfied"};
+    mxArray* s = mxCreateStructMatrix(1, 1, 5, fields);
+    mxSetField(s, 0, "connections",          eigenVectorToMx(r.connections));
+    mxSetField(s, 0, "directionVectors",     eigenMatrixToMx(r.directionVectors));
+    mxSetField(s, 0, "orthogonalVectors",    eigenMatrixToMx(r.orthogonalVectors));
+    mxSetField(s, 0, "eulerCharacteristic",  mxCreateDoubleScalar(r.eulerCharacteristic));
+    mxSetField(s, 0, "gaussBonnetSatisfied", mxCreateLogicalScalar(r.gaussBonnetSatisfied));
+    return s;
+}
+
+// MatrixXf [T, n] → double mxArray [T, n]. Both column-major; cast float→double.
+inline mxArray* eigenMatrixXfToMx(const Eigen::MatrixXf& m) {
+    mxArray* arr = mxCreateDoubleMatrix(m.rows(), m.cols(), mxREAL);
+    double* dst = mxGetPr(arr);
+    const float* src = m.data();
+    std::size_t n = static_cast<std::size_t>(m.rows()) * m.cols();
+    for (std::size_t i = 0; i < n; ++i) dst[i] = static_cast<double>(src[i]);
+    return arr;
+}
+
 } // namespace nxr::manifold::mex
