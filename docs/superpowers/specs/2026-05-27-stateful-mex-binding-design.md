@@ -1,6 +1,6 @@
 # Stateful MEX binding at WASM parity — design
 
-**Status:** approved 2026-05-27
+**Status:** implemented 2026-05-27 (branch `feat/stateful-mex-binding`)
 **Author:** Diellor Basha (with Claude as scribe)
 **Repository:** `nxr-compute`
 **Supersedes:** the rough draft formerly at `docs/matlab-mex.md`

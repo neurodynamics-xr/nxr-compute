@@ -8,6 +8,8 @@
 
 **Tech Stack:** C++17, Eigen, geometry-central, MATLAB MEX C-API (`matlab_add_mex`, R2018a interleaved-complex API), libut Ctrl-C bridge. Tests run through the MATLAB MCP server.
 
+> **Status: IMPLEMENTED** on branch `feat/stateful-mex-binding` (2026-05-27). All phases complete; `nxr_compute_mex_smoke.m`, `test_mex_context.m`, and `test_mex_parity.m` green on MATLAB R2023b / Apple Silicon (`.mexmaca64`).
+
 **Reference docs:** `docs/superpowers/specs/2026-05-27-stateful-mex-binding-design.md` (design), `include/nxr/compute.h` (verbatim API), `bindings/wasm/src/nxr_compute_wasm.cpp` (the stateful pattern to mirror), `scripts/_smoke-wasm.mjs` (the parity test to mirror).
 
 **Verbatim entry points used below** (from `include/nxr/compute.h`):

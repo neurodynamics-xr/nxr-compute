@@ -323,13 +323,12 @@ void cmdPrecompute(int /*nlhs*/, mxArray** plhs,
 
 // ── Vector heat method (Sharp, Soliman, Crane 2019) ─────────
 //
-// Each command builds a fresh Manifold + VectorHeatSolver per
-// call. MEX is a stateless dispatcher (no holder pattern across
-// calls), so the factor cost is paid every invocation — fine for
-// MATLAB analysis pipelines where each cell typically does one solve.
-// Callers needing repeated solves on the same mesh should batch the
-// inputs through the multi-source overloads (transport, extendScalar)
-// rather than calling once per source.
+// In the stateless (V, F) calling convention each command builds a
+// fresh Manifold + VectorHeatSolver per call, paying the factor cost
+// every invocation. In the handle convention the VectorHeatSolver is
+// cached on the ContextHolder via ensureVHM() — built once,
+// back-substitution only thereafter. Prefer a handle
+// (nxr_compute('create', V, F)) for repeated solves on one mesh.
 
 void cmdVectorHeatTransport(int /*nlhs*/, mxArray** plhs,
                             int nrhs, const mxArray** prhs) {
