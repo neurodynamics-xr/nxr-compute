@@ -88,8 +88,8 @@ hd  = nxr.manifold.solve.hodge(mctx, omega);          % omega: nE x 1
 lm = nxr.manifold.uv.logMap(mctx, 1);
 
 % interpolate
-faceField = nxr.manifold.interpolate.smoothFaceField(mctx, 4);
-vertField = nxr.manifold.interpolate.smoothVertexField(mctx, 2);
+faceField = nxr.manifold.interpolate.smoothFace(mctx, 4);
+vertField = nxr.manifold.interpolate.smoothVertex(mctx, 2);
 stripes   = nxr.manifold.uv.stripe(mctx, vertField.vertexFieldRaw, 3.0);
 
 % query

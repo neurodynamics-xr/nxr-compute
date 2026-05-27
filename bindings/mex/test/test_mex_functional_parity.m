@@ -80,6 +80,19 @@ assert(isequal(size(df.directionVectors), [nF 3]) && df.gaussBonnetSatisfied, ..
     'interpolate.trivial → F×3 field, Gauss-Bonnet satisfied');
 fprintf('  interpolate.trivial ✓\n');
 
+% ── logical-flag leaves (regression: getIntArg must accept logical, and
+%    smoothFace/smoothVertex must resolve under the WASM names) ──
+sd = nxr.manifold.measure.signedDistance(mctx, [12 6 2 8 11], true);
+assert(numel(sd) == nV && min(sd) < 0 && max(sd) > 0, 'measure.signedDistance straddles 0');
+sf = nxr.manifold.interpolate.smoothFace(mctx, 4);
+assert(isequal(size(sf), [nF 3]), 'interpolate.smoothFace → F×3');
+sv = nxr.manifold.interpolate.smoothVertex(mctx, 2);
+assert(isequal(size(sv.vertexVectors), [nV 3]) && numel(sv.vertexFieldRaw) == 2 * nV, ...
+    'interpolate.smoothVertex shapes');
+stp = nxr.manifold.uv.stripe(mctx, sv.vertexFieldRaw, 8.0);
+assert(stp.segmentCount >= 0, 'uv.stripe segmentCount >= 0');
+fprintf('  signedDistance + smoothFace/smoothVertex + stripe (logical flags) ✓\n');
+
 % ── uv.bff (closed mesh → structured throw, mirrors WASM) ─────
 bffThrew = false;
 try

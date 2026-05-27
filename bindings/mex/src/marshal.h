@@ -42,15 +42,20 @@ inline std::string getStringArg(const mxArray* arr) {
     return std::string(buf);
 }
 
+// Accept logical as well as numeric: MATLAB leaves naturally pass flags as
+// true/false (e.g. isLoop, alignToCurvature, connectOnSingularities), and a
+// MATLAB logical is NOT mxIsNumeric. mxGetScalar yields 0/1 for logicals.
 inline int getIntArg(const mxArray* arr) {
-    if (!mxIsNumeric(arr) || mxIsComplex(arr) || mxGetNumberOfElements(arr) != 1) {
+    if ((!mxIsNumeric(arr) && !mxIsLogical(arr)) || mxIsComplex(arr) ||
+        mxGetNumberOfElements(arr) != 1) {
         throw std::invalid_argument("expected a real scalar");
     }
     return static_cast<int>(mxGetScalar(arr));
 }
 
 inline double getDoubleArg(const mxArray* arr) {
-    if (!mxIsNumeric(arr) || mxIsComplex(arr) || mxGetNumberOfElements(arr) != 1) {
+    if ((!mxIsNumeric(arr) && !mxIsLogical(arr)) || mxIsComplex(arr) ||
+        mxGetNumberOfElements(arr) != 1) {
         throw std::invalid_argument("expected a real scalar");
     }
     return mxGetScalar(arr);
