@@ -15,11 +15,16 @@ fprintf('[nxr_compute_mex] starting smoke test\n');
 % deep at bindings/mex/test/, so the artifact resolves at
 % ../../../build/Release.
 thisDir = fileparts(mfilename('fullpath'));
-mexDir  = fullfile(thisDir, '..', '..', '..', 'build', 'Release');
+% Glob for the artifact so the test is independent of the per-platform
+% CMake output subdir and the host MEX extension (.mexmaca64/.mexa64/.mexw64).
+repoRoot = fullfile(thisDir, '..', '..', '..');
+hits = dir(fullfile(repoRoot, 'build', '**', ['nxr_compute.' mexext]));
+assert(~isempty(hits), 'nxr_compute.%s not found under %s/build', mexext, repoRoot);
+mexDir = hits(1).folder;
 addpath(mexDir);
 
-assert(exist(fullfile(mexDir, 'nxr_compute.mexw64'), 'file') == 3, ...
-    'nxr_compute.mexw64 not found in %s', mexDir);
+assert(exist(fullfile(mexDir, ['nxr_compute.' mexext]), 'file') == 3, ...
+    'nxr_compute.%s not found in %s', mexext, mexDir);
 
 % ── Sanity: version string ───────────────────────────────────
 v = nxr_compute('version');
