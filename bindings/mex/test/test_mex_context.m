@@ -82,6 +82,44 @@ end
 assert(caught2, 'unknown handle must raise nxr:invalidHandle');
 fprintf('  invalid-handle contract ✓\n');
 
+% ── remaining wired ops in handle mode (Phase 1.5) ────────────
+hOps = h2;   % still alive; created on the icosahedron
+
+pc = nxr_compute('precompute', hOps, 6);
+assert(pc.k == 5, 'precompute drops DC mode → k=5 (got %d)', pc.k);
+
+tp = nxr_compute('parallel', hOps, 1, [1 0 0]);
+assert(isequal(size(tp), [nV 3]), 'parallel → V×3');
+assert(any(vecnorm(tp, 2, 2) > 1e-6), 'parallel nontrivial');
+
+ex = nxr_compute('extendScalar', hOps, [1; 7], [1.0; 0.0]);
+assert(numel(ex) == nV, 'extendScalar → nV');
+
+lm = nxr_compute('logMap', hOps, 1);
+assert(isequal(size(lm.logCoords), [nV 2]), 'logMap → V×2');
+assert(norm(lm.logCoords(1, :)) < 1e-6, 'logMap zero at source');
+
+ct = nxr_compute('findCenter', hOps, [1; 2; 6]);
+assert(numel(ct) == 3 && all(isfinite(ct)), 'findCenter → finite 3-vec');
+
+sd = nxr_compute('signedHeat', hOps, [12; 6; 2; 8; 11], 1);
+assert(numel(sd) == nV && min(sd) < 0 && max(sd) > 0, 'signedHeat straddles zero');
+
+ff = nxr_compute('smoothFace', hOps, 4);
+assert(isequal(size(ff), [nF 3]), 'smoothFace → F×3');
+ff2 = nxr_compute('smoothFace', hOps, 4);
+assert(isequal(ff, ff2), 'smoothFace cached identical');
+
+vf = nxr_compute('smoothVertex', hOps, 2);
+assert(isequal(size(vf.vertexVectors), [nV 3]), 'smoothVertex vectors V×3');
+assert(numel(vf.vertexFieldRaw) == 2 * nV, 'smoothVertex raw 2*nV');
+assert(vf.nSym == 2, 'smoothVertex nSym round-trip');
+
+st = nxr_compute('compute', hOps, vf.vertexFieldRaw, 8.0);
+assert(st.segmentCount >= 0, 'stripes segmentCount >= 0');
+assert(isequal(size(st.positions), [st.segmentCount * 2, 3]), 'stripes positions (2*segs)×3');
+fprintf('  remaining wired ops (handle) ✓\n');
+
 % ── cleanup ───────────────────────────────────────────────────
 nxr_compute('destroy', h2);
 nxr_compute('destroy', hScaled);

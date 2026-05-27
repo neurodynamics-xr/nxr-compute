@@ -289,6 +289,20 @@ void cmdRemoveDC(int /*nlhs*/, mxArray** plhs,
 
 void cmdPrecompute(int /*nlhs*/, mxArray** plhs,
                    int nrhs, const mxArray** prhs) {
+    if (isHandleArg(nrhs, prhs)) {
+        if (nrhs != 3) {
+            throw std::invalid_argument(
+                "nxr_compute('precompute', handle, k) takes exactly 2 arguments");
+        }
+        ContextHolder& h = getHolder(prhs[1]);
+        auto& ops = ensureOps(h);
+        int k = getIntArg(prhs[2]);
+        auto eig = nxr::manifold::solve::eigen(ops.cotanLaplacian, ops.mass, k, -1e-8,
+            /*normalize=*/true, /*removeDC=*/true, makeCtrlCToken());
+        h.eigCache = std::make_unique<nxr::manifold::solve::EigenResult>(eig);
+        plhs[0] = eigenResultToStruct(eig);
+        return;
+    }
     if (nrhs != 4) {
         throw std::invalid_argument(
             "nxr_compute('precompute', V, F, k) takes exactly 3 arguments");
@@ -318,6 +332,24 @@ void cmdPrecompute(int /*nlhs*/, mxArray** plhs,
 
 void cmdVectorHeatTransport(int /*nlhs*/, mxArray** plhs,
                             int nrhs, const mxArray** prhs) {
+    if (isHandleArg(nrhs, prhs)) {
+        if (nrhs != 4) {
+            throw std::invalid_argument(
+                "nxr_compute('parallel', handle, sourceVerts, sourceVectors) "
+                "takes exactly 3 arguments");
+        }
+        ContextHolder& h = getHolder(prhs[1]);
+        auto srcIdx = mxToVertexIndices(prhs[2]);
+        auto srcVecs = mxToEigenMatrix(prhs[3]);
+        if (srcVecs.cols() != 3 ||
+            static_cast<std::size_t>(srcVecs.rows()) != srcIdx.size()) {
+            throw std::invalid_argument(
+                "sourceVectors must be Nx3 with N = numel(sourceVerts)");
+        }
+        Eigen::MatrixXd out = nxr::manifold::transport::parallel(ensureVHM(h), srcIdx, srcVecs);
+        plhs[0] = eigenMatrixToMx(out);
+        return;
+    }
     if (nrhs != 5) {
         throw std::invalid_argument(
             "nxr_compute('parallel', V, F, sourceVerts, sourceVectors) "
@@ -342,6 +374,23 @@ void cmdVectorHeatTransport(int /*nlhs*/, mxArray** plhs,
 
 void cmdVectorHeatExtendScalar(int /*nlhs*/, mxArray** plhs,
                                int nrhs, const mxArray** prhs) {
+    if (isHandleArg(nrhs, prhs)) {
+        if (nrhs != 4) {
+            throw std::invalid_argument(
+                "nxr_compute('extendScalar', handle, sourceVerts, sourceValues) "
+                "takes exactly 3 arguments");
+        }
+        ContextHolder& h = getHolder(prhs[1]);
+        auto srcIdx = mxToVertexIndices(prhs[2]);
+        auto srcVal = mxToEigenVector(prhs[3]);
+        if (static_cast<std::size_t>(srcVal.size()) != srcIdx.size()) {
+            throw std::invalid_argument(
+                "sourceValues must have the same length as sourceVerts");
+        }
+        Eigen::VectorXd out = nxr::manifold::transport::extendScalar(ensureVHM(h), srcIdx, srcVal);
+        plhs[0] = eigenVectorToMx(out);
+        return;
+    }
     if (nrhs != 5) {
         throw std::invalid_argument(
             "nxr_compute('extendScalar', V, F, sourceVerts, sourceValues) "
@@ -365,6 +414,34 @@ void cmdVectorHeatExtendScalar(int /*nlhs*/, mxArray** plhs,
 
 void cmdVectorHeatLogMap(int /*nlhs*/, mxArray** plhs,
                          int nrhs, const mxArray** prhs) {
+    if (isHandleArg(nrhs, prhs)) {
+        if (nrhs < 3 || nrhs > 4) {
+            throw std::invalid_argument(
+                "nxr_compute('logMap', handle, sourceVertex, [strategy]) "
+                "takes 2 or 3 arguments");
+        }
+        ContextHolder& h = getHolder(prhs[1]);
+        int sourceVertex = getIntArg(prhs[2]) - 1;
+        int strategy = (nrhs >= 4)
+            ? getIntArg(prhs[3])
+            : static_cast<int>(nxr::manifold::transport::LogMapStrategy::AffineLocal);
+        auto r = nxr::manifold::transport::logMap(
+            ensureVHM(h), sourceVertex,
+            static_cast<nxr::manifold::transport::LogMapStrategy>(strategy));
+        const char* fields[] = {"logCoords", "sourceE1", "sourceE2"};
+        mxArray* s = mxCreateStructMatrix(1, 1, 3, fields);
+        mxSetField(s, 0, "logCoords", eigenMatrixToMx(r.logCoords));
+        mxArray* e1 = mxCreateDoubleMatrix(1, 3, mxREAL);
+        mxArray* e2 = mxCreateDoubleMatrix(1, 3, mxREAL);
+        double* e1p = mxGetPr(e1);
+        double* e2p = mxGetPr(e2);
+        e1p[0] = r.sourceE1.x(); e1p[1] = r.sourceE1.y(); e1p[2] = r.sourceE1.z();
+        e2p[0] = r.sourceE2.x(); e2p[1] = r.sourceE2.y(); e2p[2] = r.sourceE2.z();
+        mxSetField(s, 0, "sourceE1", e1);
+        mxSetField(s, 0, "sourceE2", e2);
+        plhs[0] = s;
+        return;
+    }
     if (nrhs < 4 || nrhs > 5) {
         throw std::invalid_argument(
             "nxr_compute('logMap', V, F, sourceVertex, [strategy]) "
@@ -400,6 +477,22 @@ void cmdVectorHeatLogMap(int /*nlhs*/, mxArray** plhs,
 
 void cmdVectorHeatFindCenter(int /*nlhs*/, mxArray** plhs,
                              int nrhs, const mxArray** prhs) {
+    if (isHandleArg(nrhs, prhs)) {
+        if (nrhs < 3 || nrhs > 4) {
+            throw std::invalid_argument(
+                "nxr_compute('findCenter', handle, sourceVerts, [p]) "
+                "takes 2 or 3 arguments");
+        }
+        ContextHolder& h = getHolder(prhs[1]);
+        auto srcIdx = mxToVertexIndices(prhs[2]);
+        int p = (nrhs >= 4) ? getIntArg(prhs[3]) : 2;
+        Eigen::Vector3d c = nxr::manifold::transport::findCenter(ensureVHM(h), srcIdx, p);
+        mxArray* out = mxCreateDoubleMatrix(1, 3, mxREAL);
+        double* op = mxGetPr(out);
+        op[0] = c.x(); op[1] = c.y(); op[2] = c.z();
+        plhs[0] = out;
+        return;
+    }
     if (nrhs < 4 || nrhs > 5) {
         throw std::invalid_argument(
             "nxr_compute('findCenter', V, F, sourceVerts, [p]) "
@@ -424,6 +517,24 @@ void cmdVectorHeatFindCenter(int /*nlhs*/, mxArray** plhs,
 
 void cmdSignedHeatDistance(int /*nlhs*/, mxArray** plhs,
                            int nrhs, const mxArray** prhs) {
+    if (isHandleArg(nrhs, prhs)) {
+        if (nrhs < 4 || nrhs > 5) {
+            throw std::invalid_argument(
+                "nxr_compute('signedHeat', handle, curveVerts, isLoop, [levelSet]) "
+                "takes 3 or 4 arguments");
+        }
+        ContextHolder& h = getHolder(prhs[1]);
+        auto curveIdx = mxToVertexIndices(prhs[2]);
+        bool isLoop = getIntArg(prhs[3]) != 0;
+        int ls = (nrhs >= 5)
+            ? getIntArg(prhs[4])
+            : static_cast<int>(nxr::manifold::solve::SignedHeatLevelSet::ZeroSet);
+        Eigen::VectorXd out = nxr::manifold::solve::signedHeat(
+            ensureSHS(h), curveIdx, isLoop,
+            static_cast<nxr::manifold::solve::SignedHeatLevelSet>(ls));
+        plhs[0] = eigenVectorToMx(out);
+        return;
+    }
     if (nrhs < 5 || nrhs > 6) {
         throw std::invalid_argument(
             "nxr_compute('signedHeat', V, F, curveVerts, isLoop, [levelSet]) "
@@ -450,6 +561,24 @@ void cmdSignedHeatDistance(int /*nlhs*/, mxArray** plhs,
 
 void cmdComputeSmoothFaceField(int /*nlhs*/, mxArray** plhs,
                                int nrhs, const mxArray** prhs) {
+    if (isHandleArg(nrhs, prhs)) {
+        if (nrhs < 2 || nrhs > 4) {
+            throw std::invalid_argument(
+                "nxr_compute('smoothFace', handle, [nSym], [alignToCurvature]) "
+                "takes 1, 2, or 3 arguments");
+        }
+        ContextHolder& h = getHolder(prhs[1]);
+        int  nSym  = (nrhs >= 3) ? getIntArg(prhs[2])      : 4;
+        bool align = (nrhs >= 4) ? (getIntArg(prhs[3]) != 0) : false;
+        auto key = std::make_pair(nSym, align);
+        auto it = h.smoothFaceFieldCache.find(key);
+        if (it == h.smoothFaceFieldCache.end()) {
+            Eigen::MatrixXd v = nxr::manifold::connection::smoothFace(*h.ctx, nSym, align);
+            it = h.smoothFaceFieldCache.emplace(key, std::move(v)).first;
+        }
+        plhs[0] = eigenMatrixToMx(it->second);
+        return;
+    }
     if (nrhs < 3 || nrhs > 5) {
         throw std::invalid_argument(
             "nxr_compute('smoothFace', V, F, [nSym], [alignToCurvature]) "
@@ -468,6 +597,30 @@ void cmdComputeSmoothFaceField(int /*nlhs*/, mxArray** plhs,
 
 void cmdComputeSmoothVertexField(int /*nlhs*/, mxArray** plhs,
                                  int nrhs, const mxArray** prhs) {
+    if (isHandleArg(nrhs, prhs)) {
+        if (nrhs < 2 || nrhs > 4) {
+            throw std::invalid_argument(
+                "nxr_compute('smoothVertex', handle, [nSym], [alignToCurvature]) "
+                "takes 1, 2, or 3 arguments");
+        }
+        ContextHolder& h = getHolder(prhs[1]);
+        int  nSym  = (nrhs >= 3) ? getIntArg(prhs[2])      : 2;
+        bool align = (nrhs >= 4) ? (getIntArg(prhs[3]) != 0) : false;
+        auto key = std::make_pair(nSym, align);
+        auto it = h.smoothVertexFieldCache.find(key);
+        if (it == h.smoothVertexFieldCache.end()) {
+            auto r = nxr::manifold::connection::smoothVertex(*h.ctx, nSym, align);
+            it = h.smoothVertexFieldCache.emplace(key, std::move(r)).first;
+        }
+        const auto& r = it->second;
+        const char* fields[] = {"vertexVectors", "vertexFieldRaw", "nSym"};
+        mxArray* s = mxCreateStructMatrix(1, 1, 3, fields);
+        mxSetField(s, 0, "vertexVectors",  eigenMatrixToMx(r.vertexVectors));
+        mxSetField(s, 0, "vertexFieldRaw", eigenVectorToMx(r.vertexFieldRaw));
+        mxSetField(s, 0, "nSym",           mxCreateDoubleScalar(r.nSym));
+        plhs[0] = s;
+        return;
+    }
     if (nrhs < 3 || nrhs > 5) {
         throw std::invalid_argument(
             "nxr_compute('smoothVertex', V, F, [nSym], [alignToCurvature]) "
@@ -507,6 +660,20 @@ mxArray* stripePatternResultToStruct(const nxr::manifold::parametrization::strip
 
 void cmdComputeStripePattern(int /*nlhs*/, mxArray** plhs,
                              int nrhs, const mxArray** prhs) {
+    if (isHandleArg(nrhs, prhs)) {
+        if (nrhs < 4 || nrhs > 5) {
+            throw std::invalid_argument(
+                "nxr_compute('compute', handle, vertexFieldRaw, frequency, [connect]) "
+                "takes 3 or 4 arguments");
+        }
+        ContextHolder& h = getHolder(prhs[1]);
+        Eigen::VectorXd raw = mxToEigenVector(prhs[2]);
+        double freq = getDoubleArg(prhs[3]);
+        bool connect = (nrhs >= 5) ? (getIntArg(prhs[4]) != 0) : true;
+        auto r = nxr::manifold::parametrization::stripes::compute(*h.ctx, raw, freq, connect);
+        plhs[0] = stripePatternResultToStruct(r);
+        return;
+    }
     if (nrhs < 5 || nrhs > 6) {
         throw std::invalid_argument(
             "nxr_compute('compute', V, F, vertexFieldRaw, frequency, [connect]) "
@@ -526,6 +693,20 @@ void cmdComputeStripePattern(int /*nlhs*/, mxArray** plhs,
 
 void cmdComputeStripePatternFreq(int /*nlhs*/, mxArray** plhs,
                                  int nrhs, const mxArray** prhs) {
+    if (isHandleArg(nrhs, prhs)) {
+        if (nrhs < 4 || nrhs > 5) {
+            throw std::invalid_argument(
+                "nxr_compute('computeFreq', handle, vertexFieldRaw, frequencies, [connect]) "
+                "takes 3 or 4 arguments");
+        }
+        ContextHolder& h = getHolder(prhs[1]);
+        Eigen::VectorXd raw   = mxToEigenVector(prhs[2]);
+        Eigen::VectorXd freqs = mxToEigenVector(prhs[3]);
+        bool connect = (nrhs >= 5) ? (getIntArg(prhs[4]) != 0) : true;
+        auto r = nxr::manifold::parametrization::stripes::computeFreq(*h.ctx, raw, freqs, connect);
+        plhs[0] = stripePatternResultToStruct(r);
+        return;
+    }
     if (nrhs < 5 || nrhs > 6) {
         throw std::invalid_argument(
             "nxr_compute('computeFreq', V, F, vertexFieldRaw, frequencies, [connect]) "
