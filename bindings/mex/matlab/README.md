@@ -75,11 +75,17 @@ oneShot = nxr.manifold.solve.precompute(mctx, 6);
 K = nxr.manifold.operator.stiffness(mctx);
 M = nxr.manifold.operator.mass(mctx);
 
-% measure
-d = nxr.manifold.measure.signedDistance(mctx, [0 1 2], false);
+% measure  (1-based indices)
+d   = nxr.manifold.measure.signedDistance(mctx, [1 2 3], false);
+g   = nxr.manifold.measure.distance(mctx, 1);        % geodesic from vertex 1
+cur = nxr.manifold.measure.curvature(mctx);
+
+% solve
+phi = nxr.manifold.solve.poisson(mctx, [1 7], [1 -1]);
+hd  = nxr.manifold.solve.hodge(mctx, omega);          % omega: nE x 1
 
 % uv
-lm = nxr.manifold.uv.logMap(mctx, 0);
+lm = nxr.manifold.uv.logMap(mctx, 1);
 
 % interpolate
 faceField = nxr.manifold.interpolate.smoothFaceField(mctx, 4);
@@ -87,46 +93,34 @@ vertField = nxr.manifold.interpolate.smoothVertexField(mctx, 2);
 stripes   = nxr.manifold.uv.stripe(mctx, vertField.vertexFieldRaw, 3.0);
 
 % query
-center = nxr.manifold.query.center(mctx, [0 1 2]);
+center = nxr.manifold.query.center(mctx, [1 2 3]);
 ```
 
-## Surface delta vs WASM / N-API
+## Parity with the WASM six-group surface
 
-> **Note:** this delta is about the **functional `.m` leaves** in
-> `+nxr/+manifold/`, not the dispatcher. The MEX dispatcher now
-> implements the full WASM `ContextWrapper` surface in **handle mode**
-> (see the section above) — `poisson`, `heat`, `hodge`, `curvatures`,
-> `bff`, `isoline`, `assembleConnectionLaplacian`, etc. are all callable
-> as `nxr_compute('<cmd>', h, ...)`. The leaves below remain stubbed
-> only because pointing them at the handle API is an application-side
-> decision (the functional package is deliberately left unchanged).
+Every `nxr.manifold.*` leaf the WASM binding exposes is now wired to the
+MEX dispatcher via a transient context handle
+(`nxr.manifold.impl.withHandle`): each leaf does `create → op → destroy`,
+preserving the functional API's stateless, rebuild-per-call semantics
+while reusing the dispatcher's handle commands.
 
-Several leaves are wired in the WASM and N-API bindings but not yet in
-the MEX dispatcher. Calling them throws an `MException` with identifier
-`nxr:notWiredInMex` and a message starting `[NOT_WIRED_IN_MEX]`. To
-enable any of them:
+Newly wired (previously `notWired`):
 
-1. Add a `cmdXxx(nlhs, plhs, nrhs, prhs)` function in
-   `bindings/mex/src/nxr_compute_mex.cpp`.
-2. Add an `else if (cmd == "...")` line in `mexFunction()`.
-3. Replace the `nxr.manifold.impl.notWired(...)` body in the
-   corresponding `.m` leaf with the actual `nxr_compute('...', ...)`
-   call.
-
-Currently NOT_WIRED_IN_MEX:
-
-- `solve.poisson`, `solve.heat`, `solve.hodge`
-- `operator.connectionLaplacian`, `operator.d0`, `operator.d1`,
-  `operator.star0`, `operator.star1`, `operator.star2`,
-  `operator.star1Inverse`
+- `solve.poisson`, `solve.hodge`, `solve.heat` (spectral diffusion —
+  runs an internal `precompute`; see its help for the `k` argument)
+- `operator.d0`, `operator.d1`, `operator.star0`, `operator.star1`,
+  `operator.star2`, `operator.star1Inverse`, `operator.connectionLaplacian`
+- `measure.distance` (geodesic), `measure.curvature`, `measure.frame`,
+  `measure.normal` (all estimators, not just the cached angle-weighted one)
 - `query.isoline`
-- `measure.distance`, `measure.curvature`, `measure.frame`
 - `uv.bff`
-- `interpolate.directionField`
+- `interpolate.trivial` (was the misnamed `directionField.m`; the file is
+  now `trivial.m`, matching the WASM `interpolate.trivial` name)
 
-Stubs (round-1 placeholders, not exposed in any binding yet):
-`query.line`, `query.circle`, `query.region`, `measure.area`,
-`measure.density`.
+Still stubs — intentionally, because they are `stubMarker` stubs in the
+WASM binding too (so this is already parity): `query.line`,
+`query.circle`, `query.region`, `measure.area`, `measure.density`. They
+return a `struct('method', 'todo', ...)` marker and warn once.
 
 ## API differences from JS / WASM
 
@@ -137,10 +131,12 @@ Stubs (round-1 placeholders, not exposed in any binding yet):
 - **`measure.distance.signed` becomes a sibling.** MATLAB doesn't
   support method-attached function dispatch, so the signed-heat leaf
   is renamed to `measure.signedDistance(mctx, ...)`.
-- **0-based vs 1-based indices.** MATLAB conventions are 1-based, but
-  the underlying nxr-compute uses 0-based vertex / face indices to
-  match three.js / Eigen / NumPy. Pass 0-based indices through these
-  wrappers; the package does not auto-convert.
+- **1-based indices (MATLAB-native).** Pass 1-based vertex / face
+  indices to these wrappers, as everywhere else in MATLAB. The MEX
+  marshalling converts to nxr-compute's internal 0-based convention at
+  the boundary (`mxToVertexIndices` / `mxToFaceBuffer` subtract 1), so
+  callers never see 0-based indices. (The JS / WASM bindings, by
+  contrast, are 0-based to match three.js / Eigen / NumPy.)
 - **`solve.eigen` is synchronous** here, unlike the N-API addon
   (which runs it in a libuv worker). The eigensolver releases MATLAB
   Ctrl-C via `utIsInterruptPending`.

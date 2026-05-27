@@ -1,14 +1,20 @@
 function n = normal(mctx, type)
-%NORMAL  Per-vertex normals — eagerly computed by `nxr.manifold.context`.
-%   n = nxr.manifold.measure.normal(mctx)
-%   n = nxr.manifold.measure.normal(mctx, type)   % only `type=0` (angle) supported
+%NORMAL  Per-vertex normals by estimator.
+%   n = nxr.manifold.measure.normal(mctx)         % 'angle' (default, cached)
+%   n = nxr.manifold.measure.normal(mctx, type)   % estimator name
 %
-%   Other estimators (area, equal, sphere-inscribed, mean-curvature,
-%   gauss-curvature) are not yet wired in the MEX dispatcher's
-%   assembleManifoldOperators. The cached `mctx.normals` is the
-%   default angle-weighted variant.
-    if nargin >= 2 && type ~= 0
-        nxr.manifold.impl.notWired('measure.normal (type ~= 0)');
+%   type is one of 'angle' (default) | 'area' | 'equal' | 'sphere' |
+%   'mean' | 'gauss'. Omitting type (or the legacy numeric 0) returns the
+%   cached angle-weighted normals from nxr.manifold.context; any other
+%   estimator is computed on demand. Returns [nV x 3].
+    if nargin < 2 || isempty(type) || (isnumeric(type) && isequal(type, 0))
+        n = mctx.vertexNormals;   % cached angle-weighted normals from context()
+        return;
     end
-    n = mctx.normals;
+    if isnumeric(type)
+        error('nxr:invalidInput', ...
+            ['numeric normal type %g is not supported; pass a name string ' ...
+             '(angle|area|equal|sphere|mean|gauss)'], type);
+    end
+    n = nxr.manifold.impl.withHandle(mctx, @(h) nxr_compute('normals', h, type));
 end
