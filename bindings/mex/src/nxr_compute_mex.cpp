@@ -26,10 +26,14 @@
 #include "mex.h"
 
 #include <cctype>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <tuple>
+#include <unordered_map>
+#include <utility>
 
 // libut is MATLAB's internal utilities lib. utIsInterruptPending()
 // is the canonical Ctrl-C bridge used by libigl-matlab, gptoolbox,
@@ -78,10 +82,131 @@ std::string toMatlabIdentifier(nxr::core::ErrorCode code) {
     return out;
 }
 
+// ── Stateful context handle map ──────────────────────────────
+//
+// MEX analogue of the WASM ContextWrapper (bindings/wasm/src/
+// nxr_compute_wasm.cpp). Each ContextHolder keeps the geometry-central
+// mesh, the assembled operators, the CholeskyCache, the cached eigen
+// result, and the stateful geometry-central solvers alive across calls,
+// so repeated ops on one mesh skip the halfedge rebuild + refactorization.
+// The uint64 handle returned to MATLAB is the proxy-pointer analogue.
+//
+// Single-threaded: MEX is invoked from MATLAB's one thread; no mutex.
+
+struct ContextHolder {
+    std::unique_ptr<nxr::manifold::Manifold>                      ctx;
+    std::unique_ptr<nxr::manifold::ops::ManifoldOperators>        ops;       // lazy: ensureOps
+    std::unique_ptr<nxr::manifold::ops::DECOperators>             dec;       // lazy: ensureDec
+    std::unique_ptr<nxr::manifold::ops::CholeskyCache>            cache;     // built at create
+    std::unique_ptr<nxr::manifold::solve::EigenResult>            eigCache;  // set by solve/precompute
+    std::unique_ptr<nxr::manifold::transport::VectorHeatSolver>   vhm;       // lazy: ensureVHM
+    std::unique_ptr<nxr::manifold::solve::SignedHeatSolver>       shs;       // lazy: ensureSHS
+    std::unique_ptr<nxr::manifold::solve::HeatGeodesicSolver>     heatGeo;   // lazy: ensureHeatGeo
+
+    std::map<std::pair<int, bool>, Eigen::MatrixXd>              smoothFaceFieldCache;
+    std::map<std::pair<int, bool>,
+             nxr::manifold::connection::SmoothVertexFieldResult> smoothVertexFieldCache;
+
+    using CLKey = std::tuple<
+        nxr::manifold::ops::laplacian::connection::ConnectionDomain,
+        int, double,
+        nxr::manifold::ops::laplacian::connection::ConnectionLaplacianFormat>;
+    std::map<CLKey, std::shared_ptr<
+        nxr::manifold::ops::laplacian::connection::ConnectionLaplacian>> clCache;
+};
+
+static uint64_t sNextHandle = 1;
+static std::unordered_map<uint64_t, ContextHolder> sContexts;
+
+// True iff prhs[1] is a scalar uint64 (drives additive handle dispatch).
+bool isHandleArg(int nrhs, const mxArray** prhs) {
+    return nrhs >= 2 && mxIsUint64(prhs[1]) && mxGetNumberOfElements(prhs[1]) == 1;
+}
+
+// Resolve the holder for a uint64 handle; throw nxr:invalidHandle on miss.
+// References to unordered_map elements stay valid across rehash, so the
+// returned reference is safe to hold for the duration of one command.
+ContextHolder& getHolder(const mxArray* arr) {
+    if (!mxIsUint64(arr) || mxGetNumberOfElements(arr) != 1) {
+        throw nxr::core::Error(nxr::core::ErrorCode::InvalidHandle,
+            "expected a scalar uint64 context handle");
+    }
+    uint64_t h = *static_cast<const uint64_t*>(mxGetData(arr));
+    auto it = sContexts.find(h);
+    if (it == sContexts.end()) {
+        throw nxr::core::Error(nxr::core::ErrorCode::InvalidHandle,
+            "invalid or destroyed context handle");
+    }
+    return it->second;
+}
+
+// Lazy initialisers — construct once, reuse (mirror WASM ensure*).
+nxr::manifold::ops::ManifoldOperators& ensureOps(ContextHolder& h) {
+    if (!h.ops) h.ops = std::make_unique<nxr::manifold::ops::ManifoldOperators>(
+        nxr::manifold::ops::assembleManifoldOperators(*h.ctx));
+    return *h.ops;
+}
+nxr::manifold::ops::DECOperators& ensureDec(ContextHolder& h) {
+    if (!h.dec) h.dec = std::make_unique<nxr::manifold::ops::DECOperators>(
+        nxr::manifold::ops::assembleDECOperators(*h.ctx));
+    return *h.dec;
+}
+nxr::manifold::transport::VectorHeatSolver& ensureVHM(ContextHolder& h) {
+    if (!h.vhm) h.vhm = std::make_unique<nxr::manifold::transport::VectorHeatSolver>(*h.ctx);
+    return *h.vhm;
+}
+nxr::manifold::solve::SignedHeatSolver& ensureSHS(ContextHolder& h) {
+    if (!h.shs) h.shs = std::make_unique<nxr::manifold::solve::SignedHeatSolver>(*h.ctx);
+    return *h.shs;
+}
+nxr::manifold::solve::HeatGeodesicSolver& ensureHeatGeo(ContextHolder& h) {
+    if (!h.heatGeo) h.heatGeo = std::make_unique<nxr::manifold::solve::HeatGeodesicSolver>(*h.ctx);
+    return *h.heatGeo;
+}
+
+// ── create / destroy ─────────────────────────────────────────
+
+void cmdCreate(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 3) {
+        throw std::invalid_argument(
+            "nxr_compute('create', V, F) takes exactly 2 arguments");
+    }
+    int nV = 0, nF = 0;
+    auto verts = mxToVertexBuffer(prhs[1], nV);
+    auto faces = mxToFaceBuffer(prhs[2], nF);
+
+    ContextHolder holder;
+    holder.ctx   = std::make_unique<nxr::manifold::Manifold>(
+        verts.data(), nV, faces.data(), nF);
+    holder.cache = std::make_unique<nxr::manifold::ops::CholeskyCache>();
+
+    uint64_t h = sNextHandle++;
+    sContexts.emplace(h, std::move(holder));
+
+    plhs[0] = mxCreateNumericMatrix(1, 1, mxUINT64_CLASS, mxREAL);
+    *static_cast<uint64_t*>(mxGetData(plhs[0])) = h;
+}
+
+void cmdDestroy(int /*nlhs*/, mxArray** /*plhs*/, int nrhs, const mxArray** prhs) {
+    if (nrhs != 2) {
+        throw std::invalid_argument(
+            "nxr_compute('destroy', handle) takes exactly 1 argument");
+    }
+    if (mxIsUint64(prhs[1]) && mxGetNumberOfElements(prhs[1]) == 1) {
+        sContexts.erase(*static_cast<const uint64_t*>(mxGetData(prhs[1])));
+    }
+}
+
 // ── assembleManifoldOperators(V, F) → struct ─────────────────────
 
 void cmdAssembleMeshOperators(int /*nlhs*/, mxArray** plhs,
                               int nrhs, const mxArray** prhs) {
+    if (isHandleArg(nrhs, prhs)) {
+        ContextHolder& h = getHolder(prhs[1]);
+        auto& ops = ensureOps(h);
+        plhs[0] = meshOperatorsToStruct(ops, h.ctx->nV(), h.ctx->nE(), h.ctx->nF());
+        return;
+    }
     if (nrhs != 3) {
         throw std::invalid_argument(
             "nxr_compute('assembleManifoldOperators', V, F) takes exactly 2 arguments");
@@ -99,6 +224,21 @@ void cmdAssembleMeshOperators(int /*nlhs*/, mxArray** plhs,
 
 void cmdSolveEigenmodes(int /*nlhs*/, mxArray** plhs,
                         int nrhs, const mxArray** prhs) {
+    if (isHandleArg(nrhs, prhs)) {
+        if (nrhs != 3) {
+            throw std::invalid_argument(
+                "nxr_compute('solve', handle, k) takes exactly 2 arguments");
+        }
+        ContextHolder& h = getHolder(prhs[1]);
+        auto& ops = ensureOps(h);
+        int k = getIntArg(prhs[2]);
+        auto result = nxr::manifold::solve::eigen(
+            ops.cotanLaplacian, ops.mass, k, -1e-8,
+            /*normalize=*/false, /*removeDC=*/false, makeCtrlCToken());
+        h.eigCache = std::make_unique<nxr::manifold::solve::EigenResult>(result);
+        plhs[0] = eigenResultToStruct(result);
+        return;
+    }
     if (nrhs != 4) {
         throw std::invalid_argument(
             "nxr_compute('solve', K, M, k) takes exactly 3 arguments");
@@ -415,6 +555,14 @@ void cmdVersion(int /*nlhs*/, mxArray** plhs,
 // ── mexFunction entry point ──────────────────────────────────
 
 void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    // Register the context-map cleanup once, so `clear mex` / MATLAB exit
+    // frees every live ContextHolder (geometry-central mesh + caches).
+    static bool sAtExitRegistered = false;
+    if (!sAtExitRegistered) {
+        mexAtExit([]() { sContexts.clear(); });
+        sAtExitRegistered = true;
+    }
+
     if (nrhs < 1 || !mxIsChar(prhs[0])) {
         mexErrMsgIdAndTxt("nxr:nrhs",
             "First argument must be a command string. Try nxr_compute('version').");
@@ -429,7 +577,9 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
     }
 
     try {
-        if      (cmd == "assembleManifoldOperators")   cmdAssembleMeshOperators(nlhs, plhs, nrhs, prhs);
+        if      (cmd == "create")        cmdCreate(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "destroy")       cmdDestroy(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "assembleManifoldOperators")   cmdAssembleMeshOperators(nlhs, plhs, nrhs, prhs);
         else if (cmd == "solve")         cmdSolveEigenmodes(nlhs, plhs, nrhs, prhs);
         else if (cmd == "normalize")     cmdNormalizeEigenmodes(nlhs, plhs, nrhs, prhs);
         else if (cmd == "removeDC")                cmdRemoveDC(nlhs, plhs, nrhs, prhs);
@@ -446,7 +596,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "version")                 cmdVersion(nlhs, plhs, nrhs, prhs);
         else {
             mexErrMsgIdAndTxt("nxr:unknownCommand",
-                "Unknown command: \"%s\". Available: assembleManifoldOperators, "
+                "Unknown command: \"%s\". Available: create, destroy, assembleManifoldOperators, "
                 "solve, normalize, removeDC, precompute, "
                 "parallel, extendScalar, logMap, "
                 "findCenter, signedHeat, smoothFace, "

@@ -24,6 +24,7 @@ namespace nxr::core {
 
 enum class ErrorCode {
     InvalidInput,
+    InvalidHandle,
     NonManifold,
     OpenMeshRequired,
     ClosedMeshRequired,
@@ -41,6 +42,7 @@ enum class ErrorCode {
 constexpr std::string_view errorCodeName(ErrorCode c) noexcept {
     switch (c) {
         case ErrorCode::InvalidInput:           return "INVALID_INPUT";
+        case ErrorCode::InvalidHandle:          return "INVALID_HANDLE";
         case ErrorCode::NonManifold:            return "NON_MANIFOLD";
         case ErrorCode::OpenMeshRequired:       return "OPEN_MESH_REQUIRED";
         case ErrorCode::ClosedMeshRequired:     return "CLOSED_MESH_REQUIRED";
