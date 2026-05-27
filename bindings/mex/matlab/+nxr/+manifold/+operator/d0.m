@@ -1,8 +1,6 @@
-function out = d0(mctx) %#ok<INUSD>
-%D0  DEC vertex→edge derivative (TODO — assembleDECOperators not exposed by MEX dispatcher).
-%
-%   To enable, add a `cmdAssembleDECOperators` handler in the MEX
-%   dispatcher and a corresponding lazy field on the
-%   nxr.manifold.context return struct.
-    nxr.manifold.impl.notWired('operator.d0');
+function out = d0(mctx)
+%D0  DEC vertex→edge derivative d0 [nE x nV sparse].
+%   out = nxr.manifold.operator.d0(mctx)
+    dec = nxr.manifold.impl.withHandle(mctx, @(h) nxr_compute('assembleDECOperators', h));
+    out = dec.d0;
 end
