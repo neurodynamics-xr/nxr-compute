@@ -14,6 +14,54 @@ addpath('build/bindings/mex/Release')          % compiled MEX binary
 Build the MEX with `bash scripts/build.sh Release` (requires MATLAB
 R2018a+ found by CMake).
 
+## Stateful context handle (MEX dispatcher level)
+
+The `nxr_compute` MEX dispatcher mirrors the WASM `ContextWrapper`: a
+mesh is bound **once** via `create`, and the returned `uint64` handle
+keeps the geometry-central mesh, assembled operators, Cholesky factors,
+and the heat / vector-heat solvers alive across calls. The integer
+handle is the MATLAB analogue of WASM's `new Module.Manifold(...)`
+Embind proxy.
+
+```matlab
+h = nxr_compute('create', V, F);            % build once (V: Nx3, F: Mx3, 1-based)
+
+ops = nxr_compute('assembleManifoldOperators', h);  % cached after first call
+eig = nxr_compute('solve', h, 6);                   % K,M pulled from cached ops
+nxr_compute('precompute', h, 6);                    % normalized + DC-removed; caches modes
+
+d   = nxr_compute('heat', h, 1);                    % geodesic distance (cached solver)
+hd  = nxr_compute('hodge', h, omega);               % shares the CholeskyCache
+cur = nxr_compute('curvatures', h);
+hf  = nxr_compute('heatDiffusion', h, 1, 1.0, 0:0.1:1, 1.0);  % needs a prior solve
+
+nxr_compute('destroy', h);                  % frees the C++ context
+```
+
+Repeated ops on one handle skip the halfedge rebuild + refactorization
+that the stateless `(V, F)` convention re-pays every call. Both
+conventions coexist (additive dispatch): a `uint64` scalar as the
+second argument selects the handle path; `V, F` arrays select the
+legacy stateless path. Handle-mode commands take **1-based** vertex /
+face indices (matching the rest of the MEX marshalling).
+
+Errors: a stale / destroyed handle raises `MException` identifier
+`nxr:invalidHandle`; `heatDiffusion` / `dampedWave` before a
+`solve` / `precompute` raises `nxr:notPrecomputed`.
+
+Handle commands (handle is always the second argument):
+`assembleManifoldOperators`, `assembleDECOperators`,
+`assembleConnectionLaplacian`, `frames`, `normals`, `solve`,
+`precompute`, `poisson`, `heat`, `tracePath`, `hodge`, `curvatures`,
+`bff`, `isoline`, `trivial`, `streamline`, `whitney`, `gradient`,
+`heatDiffusion`, `dampedWave`, `randomDecomposed1Form`, `parallel`,
+`extendScalar`, `logMap`, `findCenter`, `signedHeat`, `smoothFace`,
+`smoothVertex`, `compute`, `computeFreq`.
+
+A MATLAB `handle`-class wrapper over this is intentionally **not**
+provided here — like the JS wrappers over the WASM `Manifold`, it is an
+application-side concern.
+
 ## Usage
 
 ```matlab
@@ -43,6 +91,15 @@ center = nxr.manifold.query.center(mctx, [0 1 2]);
 ```
 
 ## Surface delta vs WASM / N-API
+
+> **Note:** this delta is about the **functional `.m` leaves** in
+> `+nxr/+manifold/`, not the dispatcher. The MEX dispatcher now
+> implements the full WASM `ContextWrapper` surface in **handle mode**
+> (see the section above) — `poisson`, `heat`, `hodge`, `curvatures`,
+> `bff`, `isoline`, `assembleConnectionLaplacian`, etc. are all callable
+> as `nxr_compute('<cmd>', h, ...)`. The leaves below remain stubbed
+> only because pointing them at the handle API is an application-side
+> decision (the functional package is deliberately left unchanged).
 
 Several leaves are wired in the WASM and N-API bindings but not yet in
 the MEX dispatcher. Calling them throws an `MException` with identifier

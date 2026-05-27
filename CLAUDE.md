@@ -143,6 +143,21 @@ holds an equivalent set. Both lazy-initialise solver PIMPLs on first
 use; both cache stateless free-function results (connection-Laplacian,
 smooth-direction-field) keyed by all input parameters.
 
+The MEX binding (`bindings/mex/src/nxr_compute_mex.cpp`) is also
+stateful: a file-scope `std::unordered_map<uint64_t, ContextHolder>`
+is the MEX analogue of `ContextWrapper`, and the `uint64` handle
+returned by `nxr_compute('create', V, F)` is the proxy-pointer
+analogue (MEX has no Embind, so it exposes the context through the
+single `nxr_compute('cmd', handle, …)` entry point). Dispatch is
+**additive**: a `uint64` scalar in `prhs[1]` selects the handle path,
+`V, F` arrays select the legacy stateless path (unchanged). The MEX
+holder mirrors the same fields + lazy `ensure*` + result caches and
+reaches full parity with the `ContextWrapper` surface. A bad/destroyed
+handle throws `Error(InvalidHandle)` → `nxr:invalidHandle`. A MATLAB
+`handle`-class wrapper is intentionally out of scope (application-side,
+like the JS wrappers over WASM's `Manifold`); see
+`docs/superpowers/specs/2026-05-27-stateful-mex-binding-design.md`.
+
 ---
 
 ## CholeskyCache — pre-factored Cholesky / LU
