@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -724,6 +725,136 @@ void cmdComputeStripePatternFreq(int /*nlhs*/, mxArray** plhs,
     plhs[0] = stripePatternResultToStruct(r);
 }
 
+// ── Parity ops (handle-only) ─────────────────────────────────
+//
+// Group B — operators
+
+void cmdAssembleDECOperators(int /*nlhs*/, mxArray** plhs,
+                             int nrhs, const mxArray** prhs) {
+    if (nrhs != 2) {
+        throw std::invalid_argument(
+            "nxr_compute('assembleDECOperators', handle) takes exactly 1 argument");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    plhs[0] = decOperatorsToStruct(ensureDec(h));
+}
+
+void cmdAssembleConnectionLaplacian(int /*nlhs*/, mxArray** plhs,
+                                    int nrhs, const mxArray** prhs) {
+    if (nrhs < 2 || nrhs > 3) {
+        throw std::invalid_argument(
+            "nxr_compute('assembleConnectionLaplacian', handle, [opts]) "
+            "takes 1 or 2 arguments");
+    }
+    namespace cl = nxr::manifold::ops::laplacian::connection;
+    ContextHolder& h = getHolder(prhs[1]);
+    cl::ConnectionLaplacianOptions o;   // value-init → vertex / nSym=1 / 1e-8 / Real2N
+    if (nrhs >= 3 && !mxIsEmpty(prhs[2])) {
+        if (!mxIsStruct(prhs[2])) {
+            throw std::invalid_argument("opts must be a struct");
+        }
+        const mxArray* f;
+        if ((f = mxGetField(prhs[2], 0, "domain")))         o.domain = cl::parseConnectionDomain(getStringArg(f));
+        if ((f = mxGetField(prhs[2], 0, "nSym")))           o.nSym = getIntArg(f);
+        if ((f = mxGetField(prhs[2], 0, "regularization"))) o.regularization = getDoubleArg(f);
+        if ((f = mxGetField(prhs[2], 0, "format")))         o.format = cl::parseConnectionLaplacianFormat(getStringArg(f));
+    }
+    ContextHolder::CLKey key{o.domain, o.nSym, o.regularization, o.format};
+    auto it = h.clCache.find(key);
+    if (it == h.clCache.end()) {
+        auto clp = std::make_shared<cl::ConnectionLaplacian>(
+            cl::assembleConnectionLaplacian(*h.ctx, o));
+        it = h.clCache.emplace(key, std::move(clp)).first;
+    }
+    plhs[0] = connectionLaplacianToStruct(*it->second);
+}
+
+void cmdFrames(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 2) {
+        throw std::invalid_argument("nxr_compute('frames', handle) takes exactly 1 argument");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    plhs[0] = faceFramesToStruct(nxr::manifold::geometry::frames(*h.ctx));
+}
+
+nxr::manifold::geometry::NormalType parseNormalType(const std::string& s) {
+    using NT = nxr::manifold::geometry::NormalType;
+    if (s == "angle")  return NT::AngleWeighted;
+    if (s == "area")   return NT::AreaWeighted;
+    if (s == "equal")  return NT::EqualWeighted;
+    if (s == "sphere") return NT::SphereInscribed;
+    if (s == "mean")   return NT::MeanCurvature;
+    if (s == "gauss")  return NT::GaussCurvature;
+    throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+        "unknown normal type \"" + s + "\" (use angle|area|equal|sphere|mean|gauss)");
+}
+
+void cmdNormals(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs < 2 || nrhs > 3) {
+        throw std::invalid_argument(
+            "nxr_compute('normals', handle, [type]) takes 1 or 2 arguments");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    auto type = nxr::manifold::geometry::NormalType::AngleWeighted;
+    if (nrhs >= 3) type = parseNormalType(getStringArg(prhs[2]));
+    plhs[0] = eigenMatrixToMx(nxr::manifold::geometry::normals(*h.ctx, type));
+}
+
+// Group C — solvers
+
+void cmdPoisson(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 4) {
+        throw std::invalid_argument(
+            "nxr_compute('poisson', handle, sourceVerts, sourceValues) takes exactly 3 arguments");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    auto idx = mxToVertexIndices(prhs[2]);   // 1-based → 0-based
+    auto val = mxToEigenVector(prhs[3]);
+    if (static_cast<std::size_t>(val.size()) != idx.size()) {
+        throw std::invalid_argument("sourceValues must match sourceVerts length");
+    }
+    std::map<int, double> density;
+    for (std::size_t i = 0; i < idx.size(); ++i) {
+        density[idx[i]] = val[static_cast<Eigen::Index>(i)];
+    }
+    Eigen::VectorXd phi = nxr::manifold::solve::poisson(ensureOps(h), *h.cache, density);
+    plhs[0] = eigenVectorToMx(phi);
+}
+
+void cmdHeat(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 3) {
+        throw std::invalid_argument(
+            "nxr_compute('heat', handle, sourceVerts) takes exactly 2 arguments");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    auto idx = mxToVertexIndices(prhs[2]);
+    Eigen::VectorXd d = nxr::manifold::solve::heat(ensureHeatGeo(h), idx);
+    plhs[0] = eigenVectorToMx(d);
+}
+
+void cmdTracePath(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 4) {
+        throw std::invalid_argument(
+            "nxr_compute('tracePath', handle, vStart, vEnd) takes exactly 3 arguments");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    int a = getIntArg(prhs[2]) - 1;   // 1-based → 0-based
+    int b = getIntArg(prhs[3]) - 1;
+    Eigen::MatrixXd pts = nxr::manifold::query::tracePath(*h.ctx, a, b);
+    plhs[0] = eigenMatrixToMx(pts);
+}
+
+void cmdHodge(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 3) {
+        throw std::invalid_argument(
+            "nxr_compute('hodge', handle, omega) takes exactly 2 arguments");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    Eigen::VectorXd omega = mxToEigenVector(prhs[2]);
+    auto r = nxr::manifold::solve::hodge(*h.ctx, ensureDec(h), *h.cache, omega);
+    plhs[0] = hodgeResultToStruct(r);
+}
+
 // ── version() → string ───────────────────────────────────────
 
 void cmdVersion(int /*nlhs*/, mxArray** plhs,
@@ -774,6 +905,14 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "smoothVertex") cmdComputeSmoothVertexField(nlhs, plhs, nrhs, prhs);
         else if (cmd == "compute")    cmdComputeStripePattern(nlhs, plhs, nrhs, prhs);
         else if (cmd == "computeFreq") cmdComputeStripePatternFreq(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "assembleDECOperators")        cmdAssembleDECOperators(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "assembleConnectionLaplacian") cmdAssembleConnectionLaplacian(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "frames")                      cmdFrames(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "normals")                     cmdNormals(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "poisson")                     cmdPoisson(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "heat")                        cmdHeat(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "tracePath")                   cmdTracePath(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "hodge")                       cmdHodge(nlhs, plhs, nrhs, prhs);
         else if (cmd == "version")                 cmdVersion(nlhs, plhs, nrhs, prhs);
         else {
             mexErrMsgIdAndTxt("nxr:unknownCommand",

@@ -23,6 +23,7 @@
 #include "nxr/compute.h"
 #include "mex.h"
 
+#include <complex>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -298,6 +299,90 @@ inline nxr::manifold::solve::EigenResult mxToEigenResult(const mxArray* s) {
     r.k = static_cast<int>(r.eigenvalues.size());
     r.nConverged = r.k;
     return r;
+}
+
+// ── Parity return-struct builders (handle-mode ops) ─────────
+//
+// MEX is exempt from the §11 row-major flatten rule: dense → column-major
+// mxArray, sparse → CSC, so these builders just forward to the existing
+// eigen*ToMx helpers. Parity with WASM is numerical, not byte-layout.
+
+inline mxArray* decOperatorsToStruct(const nxr::manifold::ops::DECOperators& dec) {
+    const char* fields[] = {"d0", "d1", "hodge0", "hodge1", "hodge2", "hodge1Inverse"};
+    mxArray* s = mxCreateStructMatrix(1, 1, 6, fields);
+    mxSetField(s, 0, "d0",            eigenSparseToMx(dec.d0));
+    mxSetField(s, 0, "d1",            eigenSparseToMx(dec.d1));
+    mxSetField(s, 0, "hodge0",        eigenSparseToMx(dec.hodge0));
+    mxSetField(s, 0, "hodge1",        eigenSparseToMx(dec.hodge1));
+    mxSetField(s, 0, "hodge2",        eigenSparseToMx(dec.hodge2));
+    mxSetField(s, 0, "hodge1Inverse", eigenSparseToMx(dec.hodge1Inverse));
+    return s;
+}
+
+inline mxArray* connectionLaplacianToStruct(
+    const nxr::manifold::ops::laplacian::connection::ConnectionLaplacian& cl) {
+    namespace ns = nxr::manifold::ops::laplacian::connection;
+    const char* fields[] = {"K_real", "K_imag", "baseDim", "outputDim",
+                            "nSym", "regularization", "domain", "format"};
+    mxArray* s = mxCreateStructMatrix(1, 1, 8, fields);
+
+    if (cl.format == ns::ConnectionLaplacianFormat::Real2N) {
+        mxSetField(s, 0, "K_real", eigenSparseToMx(cl.K_real));
+        Eigen::SparseMatrix<double> empty(cl.outputDim, cl.outputDim);
+        mxSetField(s, 0, "K_imag", eigenSparseToMx(empty));
+    } else {
+        // Complex Hermitian → parallel real/imag real-sparse (mirrors WASM).
+        Eigen::SparseMatrix<double> re(cl.K_complex.rows(), cl.K_complex.cols());
+        Eigen::SparseMatrix<double> im(cl.K_complex.rows(), cl.K_complex.cols());
+        std::vector<Eigen::Triplet<double>> tr, ti;
+        for (int k = 0; k < cl.K_complex.outerSize(); ++k) {
+            for (Eigen::SparseMatrix<std::complex<double>>::InnerIterator it(cl.K_complex, k); it; ++it) {
+                tr.emplace_back(static_cast<int>(it.row()), static_cast<int>(it.col()), it.value().real());
+                ti.emplace_back(static_cast<int>(it.row()), static_cast<int>(it.col()), it.value().imag());
+            }
+        }
+        re.setFromTriplets(tr.begin(), tr.end());
+        im.setFromTriplets(ti.begin(), ti.end());
+        mxSetField(s, 0, "K_real", eigenSparseToMx(re));
+        mxSetField(s, 0, "K_imag", eigenSparseToMx(im));
+    }
+    mxSetField(s, 0, "baseDim",        mxCreateDoubleScalar(cl.baseDim));
+    mxSetField(s, 0, "outputDim",      mxCreateDoubleScalar(cl.outputDim));
+    mxSetField(s, 0, "nSym",           mxCreateDoubleScalar(cl.nSym));
+    mxSetField(s, 0, "regularization", mxCreateDoubleScalar(cl.regularization));
+    mxSetField(s, 0, "domain",         mxCreateDoubleScalar(static_cast<double>(cl.domain)));
+    mxSetField(s, 0, "format",         mxCreateDoubleScalar(static_cast<double>(cl.format)));
+    return s;
+}
+
+inline mxArray* faceFramesToStruct(const nxr::manifold::geometry::FaceFrames& f) {
+    const char* fields[] = {"e1", "e2", "normals"};
+    mxArray* s = mxCreateStructMatrix(1, 1, 3, fields);
+    mxSetField(s, 0, "e1",      eigenMatrixToMx(f.e1));
+    mxSetField(s, 0, "e2",      eigenMatrixToMx(f.e2));
+    mxSetField(s, 0, "normals", eigenMatrixToMx(f.normals));
+    return s;
+}
+
+inline mxArray* hodgeResultToStruct(const nxr::manifold::solve::HodgeResult& r) {
+    const char* fields[] = {
+        "exactPotential", "coExactPotentialF", "coExactPotentialV",
+        "combinedPotential", "omega", "dAlpha", "deltaBeta", "gamma",
+        "omegaVectors", "dAlphaVectors", "deltaBetaVectors", "gammaVectors"};
+    mxArray* s = mxCreateStructMatrix(1, 1, 12, fields);
+    mxSetField(s, 0, "exactPotential",    eigenVectorToMx(r.exactPotential));
+    mxSetField(s, 0, "coExactPotentialF", eigenVectorToMx(r.coExactPotentialF));
+    mxSetField(s, 0, "coExactPotentialV", eigenVectorToMx(r.coExactPotentialV));
+    mxSetField(s, 0, "combinedPotential", eigenVectorToMx(r.combinedPotential));
+    mxSetField(s, 0, "omega",             eigenVectorToMx(r.omega));
+    mxSetField(s, 0, "dAlpha",            eigenVectorToMx(r.dAlpha));
+    mxSetField(s, 0, "deltaBeta",         eigenVectorToMx(r.deltaBeta));
+    mxSetField(s, 0, "gamma",             eigenVectorToMx(r.gamma));
+    mxSetField(s, 0, "omegaVectors",      eigenMatrixToMx(r.omegaVectors));
+    mxSetField(s, 0, "dAlphaVectors",     eigenMatrixToMx(r.dAlphaVectors));
+    mxSetField(s, 0, "deltaBetaVectors",  eigenMatrixToMx(r.deltaBetaVectors));
+    mxSetField(s, 0, "gammaVectors",      eigenMatrixToMx(r.gammaVectors));
+    return s;
 }
 
 } // namespace nxr::manifold::mex
