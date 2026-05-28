@@ -24,6 +24,11 @@
 %       M.uv.logMap / M.uv.stripe       structs
 %       M.reference.eigenvalues/normals/curvature   the surface's own fields
 %
+% It then validates the results both NUMERICALLY (Gauss-Bonnet, Hodge
+% recomposition, M-orthonormality, geodesic d(src)=0, normals vs reference)
+% and VISUALLY via nxr.viz (a dashboard of the key results, also saved to
+% build/viz/explore_dashboard.png). Set showViz = false to skip the figure.
+%
 % Run:  edit the two paths below if needed, then in MATLAB:
 %         run('bindings/mex/test/explore_cortex.m')
 
@@ -33,6 +38,7 @@ clear; clc;
 repo    = '/Users/diellorbasha/workspace/research/code/nxr-compute';
 dataset = '/Users/diellorbasha/workspace/library/datasets/bst_cortex5.mat';
 kModes  = 50;     % eigenmodes to solve
+showViz = true;   % render the nxr.viz dashboard to validate results visually
 
 addpath(fullfile(repo, 'bindings', 'mex', 'matlab'));
 hits = dir(fullfile(repo, 'build', '**', ['nxr_compute.' mexext]));
@@ -180,12 +186,63 @@ for i = 1:min(8, numel(ev))
 end
 fprintf('(nxr keeps 1 residual DC mode — 2 hemispheres; reference removed %g.)\n', c.Eigenmodes.nRemoved);
 
+% ── visual validation via nxr.viz (per hemisphere) ───────────
+% The cortex is two disconnected components (left/right hemispheres). For
+% globally-coupled results (eigenmodes, geodesic distance) we treat each
+% hemisphere as its own manifold, compute the result per hemisphere, and
+% combine into a full-surface field so BOTH hemispheres show their own
+% result. Local fields (curvature, normals) already cover both hemispheres
+% — normals are flipped to outward (Brainstorm winds faces inward for
+% geometry-central; see the numeric note above).
+if showViz
+    fprintf('\n=== visual validation (nxr.viz) ===\n');
+    comps = splitComponents(V, F);
+    fprintf('  %d hemispheres: %s vertices (computed separately, plotted together)\n', ...
+        numel(comps), num2str(cellfun(@numel, {comps.vidx})));
+
+    % Globally-coupled results (eigenmode, geodesic distance) are computed
+    % per hemisphere — each treated as its own manifold — then scattered back
+    % onto the full surface, so one plot shows both hemispheres' results.
+    % Local fields use the global result; normals are flipped to outward
+    % (Brainstorm winds faces inward for geometry-central).
+    eigField   = perHemiField(V, comps, @(Vh,Fh) hemiMode(Vh, Fh, 6));
+    distField  = perHemiField(V, comps, @(Vh,Fh) nxr.manifold.measure.distance(nxr.manifold.context(Vh,Fh), 1));
+    curvField  = M.measure.curvature.mean;
+    normalsOut = outwardSign(V, F) * M.measure.normal;
+
+    f = figure('Color', 'w', 'Position', [60 60 1100 900], 'NumberTitle', 'off', ...
+        'Name', sprintf('%s — nxr results (per-hemisphere, plotted together)', M.comment));
+    t = tiledlayout(f, 2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+    % Label each tile with an annotation anchored inside its top (axis-off 3-D
+    % titles clip off the figure in tight tiled layouts, so we don't use title()).
+    labels = {'eigenmode 6 (per hemisphere)', 'mean curvature', ...
+              'geodesic distance (per hemisphere)', 'normals (outward)'};
+    h = gobjects(1, 4);
+    h(1) = nxr.viz.scalar(V, F, eigField,        'Parent', nexttile(t));
+    h(2) = nxr.viz.scalar(V, F, curvField,       'Parent', nexttile(t));
+    h(3) = nxr.viz.scalar(V, F, distField,       'Parent', nexttile(t));
+    h(4) = nxr.viz.vectorField(V, F, normalsOut, 'Parent', nexttile(t), 'Color', [0.1 0.3 0.9]);
+    for i = 1:4
+        ax = ancestor(h(i), 'axes'); p = ax.Position;
+        annotation(f, 'textbox', [p(1), p(2)+p(4)-0.05, p(3), 0.05], 'String', labels{i}, ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'top', 'EdgeColor', 'none', ...
+            'FontWeight', 'bold', 'Interpreter', 'none', 'FitBoxToText', 'off');
+    end
+
+    vizdir = fullfile(repo, 'build', 'viz'); if ~exist(vizdir, 'dir'), mkdir(vizdir); end
+    pngfile = fullfile(vizdir, 'explore_dashboard.png');
+    exportgraphics(f, pngfile, 'Resolution', 130);
+    fprintf('  results figure opened + saved to %s\n', pngfile);
+    fprintf('  drill in with e.g.  nxr.viz.show(M, ''measure.curvature.mean'')\n');
+end
+
 % ── done — M is now in your workspace ─────────────────────────
 fprintf('\n[explore_cortex] done. Results are in the struct M:\n');
 fprintf('  groups: %s\n', strjoin(fieldnames(M)', ', '));
 fprintf('  e.g.  M.operator.stiffness   M.solve.eigen.eigenvectors\n');
 fprintf('        M.measure.curvature.gaussian   M.solve.hodge.dAlpha\n');
 fprintf('        M.reference.eigenvalues (compare to M.solve.precompute.eigenvalues)\n');
+fprintf('  visualize:  nxr.viz.dashboard(M)   nxr.viz.show(M, ''measure.distance'')\n');
 
 % ── local helpers ─────────────────────────────────────────────
 function M = store(M, path, fn)
@@ -221,4 +278,46 @@ end
 function [p, n] = tally(p, n, ok)
     p = p + ok;
     n = n + 1;
+end
+
+function comps = splitComponents(V, F)
+%SPLITCOMPONENTS  Connected components (hemispheres) of a triangle mesh.
+%   Returns a struct array with global vertex indices `vidx` and the
+%   per-component local mesh `V` / `F` (faces reindexed to 1..nh).
+    E   = [F(:,[1 2]); F(:,[2 3]); F(:,[3 1])];
+    lbl = conncomp(graph(E(:,1), E(:,2)))';
+    comps = struct('vidx', {}, 'V', {}, 'F', {});
+    for k = 1:max(lbl)
+        vidx  = find(lbl == k);
+        remap = zeros(size(V,1), 1); remap(vidx) = 1:numel(vidx);
+        fmask = all(ismember(F, vidx), 2);
+        comps(k).vidx = vidx;
+        comps(k).V    = V(vidx, :);
+        comps(k).F    = remap(F(fmask, :));
+    end
+end
+
+function field = perHemiField(V, comps, fn)
+%PERHEMIFIELD  Scatter a per-component field fn(Vh,Fh) into a full [nV x 1],
+%   placing each component's result at its global vertex indices.
+    field = nan(size(V,1), 1);
+    for k = 1:numel(comps)
+        field(comps(k).vidx) = fn(comps(k).V, comps(k).F);
+    end
+end
+
+function v = hemiMode(Vh, Fh, k)
+%HEMIMODE  Eigenvector k of a single hemisphere (treated as its own manifold).
+    cx = nxr.manifold.context(Vh, Fh);
+    e  = nxr.manifold.solve.precompute(cx, max(k + 2, 10));
+    v  = e.eigenvectors(:, min(k, size(e.eigenvectors, 2)));
+end
+
+function s = outwardSign(V, F)
+%OUTWARDSIGN  +1 if the mesh winding yields outward normals, -1 if inward.
+%   Uses the signed enclosed volume; Brainstorm winds faces such that
+%   geometry-central's normals point inward, so this returns -1 here.
+    v1 = V(F(:,1),:); v2 = V(F(:,2),:); v3 = V(F(:,3),:);
+    vol = sum(dot(v1, cross(v2 - v1, v3 - v1, 2), 2)) / 6;
+    s = sign(vol); if s == 0, s = 1; end
 end
