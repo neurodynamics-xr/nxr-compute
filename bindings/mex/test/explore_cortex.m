@@ -24,6 +24,11 @@
 %       M.uv.logMap / M.uv.stripe       structs
 %       M.reference.eigenvalues/normals/curvature   the surface's own fields
 %
+% It then validates the results both NUMERICALLY (Gauss-Bonnet, Hodge
+% recomposition, M-orthonormality, geodesic d(src)=0, normals vs reference)
+% and VISUALLY via nxr.viz (a dashboard of the key results, also saved to
+% build/viz/explore_dashboard.png). Set showViz = false to skip the figure.
+%
 % Run:  edit the two paths below if needed, then in MATLAB:
 %         run('bindings/mex/test/explore_cortex.m')
 
@@ -33,6 +38,7 @@ clear; clc;
 repo    = '/Users/diellorbasha/workspace/research/code/nxr-compute';
 dataset = '/Users/diellorbasha/workspace/library/datasets/bst_cortex5.mat';
 kModes  = 50;     % eigenmodes to solve
+showViz = true;   % render the nxr.viz dashboard to validate results visually
 
 addpath(fullfile(repo, 'bindings', 'mex', 'matlab'));
 hits = dir(fullfile(repo, 'build', '**', ['nxr_compute.' mexext]));
@@ -180,12 +186,28 @@ for i = 1:min(8, numel(ev))
 end
 fprintf('(nxr keeps 1 residual DC mode — 2 hemispheres; reference removed %g.)\n', c.Eigenmodes.nRemoved);
 
+% ── visual validation via nxr.viz ─────────────────────────────
+% One dashboard panel covering the key results (surface, an eigenmode,
+% curvature, geodesic distance, normals, spectrum vs reference), so the
+% stored M can be eyeballed alongside the numeric checks above.
+if showViz
+    fprintf('\n=== visual validation (nxr.viz dashboard) ===\n');
+    fd = nxr.viz.dashboard(M);
+    vizdir = fullfile(repo, 'build', 'viz');
+    if ~exist(vizdir, 'dir'), mkdir(vizdir); end
+    pngfile = fullfile(vizdir, 'explore_dashboard.png');
+    exportgraphics(fd, pngfile, 'Resolution', 130);
+    fprintf('  dashboard opened + saved to %s\n', pngfile);
+    fprintf('  drill into any result with e.g.  nxr.viz.show(M, ''solve.eigen'', 6)\n');
+end
+
 % ── done — M is now in your workspace ─────────────────────────
 fprintf('\n[explore_cortex] done. Results are in the struct M:\n');
 fprintf('  groups: %s\n', strjoin(fieldnames(M)', ', '));
 fprintf('  e.g.  M.operator.stiffness   M.solve.eigen.eigenvectors\n');
 fprintf('        M.measure.curvature.gaussian   M.solve.hodge.dAlpha\n');
 fprintf('        M.reference.eigenvalues (compare to M.solve.precompute.eigenvalues)\n');
+fprintf('  visualize:  nxr.viz.dashboard(M)   nxr.viz.show(M, ''measure.distance'')\n');
 
 % ── local helpers ─────────────────────────────────────────────
 function M = store(M, path, fn)
