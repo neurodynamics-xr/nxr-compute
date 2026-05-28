@@ -45,3 +45,6 @@ Thumbs.db
 
 # Local Claude Code workspace settings
 .claude/
+
+# MATLAB editor autosave
+*.asv

@@ -85,6 +85,15 @@ comps = splitComponents(V, F);
 singV_trivial = [comps(1).vidx(1); comps(1).vidx(end); ...
                  comps(2).vidx(1); comps(2).vidx(end)];
 
+% Globally-coupled solves (Poisson, spectral heat) are placed per hemisphere:
+% the cortex is two disconnected components, so a single global ± dipole leaves
+% the source-free hemisphere pinned to a meaningless regularization constant
+% (and a single heat seed never reaches the other hemisphere). A ± dipole and a
+% heat seed in EACH hemisphere keep both components well-posed.
+poiSrc  = [comps(1).vidx(1); comps(1).vidx(end); comps(2).vidx(1); comps(2).vidx(end)];
+poiVal  = [1; -1; 1; -1];
+heatSrc = [comps(1).vidx(1); comps(2).vidx(1)];
+
 fprintf('context: nV=%d nE=%d nF=%d  (totalArea=%.4f)\n', M.nV, M.nE, M.nF, M.totalArea);
 fprintf('hemispheres: %s vertices\n\n', num2str(cellfun(@numel, {comps.vidx})));
 
@@ -108,9 +117,9 @@ M = store(M, 'operator.connectionLaplacian',@() nxr.manifold.operator.connection
 % solve
 M = store(M, 'solve.eigen',      @() nxr.manifold.solve.eigen(ctx, kModes));
 M = store(M, 'solve.precompute', @() nxr.manifold.solve.precompute(ctx, kModes));
-M = store(M, 'solve.poisson',    @() nxr.manifold.solve.poisson(ctx, [1 10000], [1 -1]));
+M = store(M, 'solve.poisson',    @() nxr.manifold.solve.poisson(ctx, poiSrc, poiVal));
 M = store(M, 'solve.hodge',      @() nxr.manifold.solve.hodge(ctx, omega));
-M = store(M, 'solve.heat',       @() nxr.manifold.solve.heat(ctx, 1, 1.0, [0 0.005 0.01 0.02]));
+M = store(M, 'solve.heat',       @() nxr.manifold.solve.heat(ctx, heatSrc, [1 1], [0 0.005 0.01 0.02]));
 
 % measure
 M = store(M, 'measure.distance',       @() nxr.manifold.measure.distance(ctx, 1));
@@ -236,6 +245,11 @@ if showViz
     distField  = perHemiField(V, comps, @(Vh,Fh) nxr.manifold.measure.distance(nxr.manifold.context(Vh,Fh), 1));
     curvField  = M.measure.curvature.mean;
     normalsOut = outwardSign(V, F) * M.measure.normal;
+    % Poisson and spectral heat are globally-coupled solves too — run them per
+    % hemisphere so both components show real structure (a global solve pins the
+    % source-free hemisphere to a constant; see the source-placement note above).
+    poiField   = perHemiField(V, comps, @hemiPoisson);
+    heatField  = perHemiField(V, comps, @hemiHeat);
 
     f = figure('Color', 'w', 'Position', [60 60 1100 900], 'NumberTitle', 'off', ...
         'Name', sprintf('%s — nxr results (per-hemisphere, plotted together)', M.comment));
@@ -274,21 +288,24 @@ if showViz
         'trivial direction field (2 sing/hemi)'; ...
         'smooth field — NRoSy 4 (connection Laplacian)'; ...
         'smooth field — NRoSy 2 (vertex line field)'; ...
-        'Poisson phi (delta sources)'; ...
-        'spectral heat diffusion (last frame)'; ...
+        'Poisson phi (dipole per hemisphere)'; ...
+        'spectral heat diffusion (per hemisphere)'; ...
         'geodesic path — tracePath (hemi 1)' };
     hh = gobjects(1, 9);
-    % Larger, sparser arrows read better in the overview than the dense
-    % default (fine structure is best seen interactively / in the 3-D viewer).
-    vopt = {'Scale', 3, 'NMax', 1500};
+    % These face/vertex fields are intrinsic (tangent to the surface). In a
+    % static patch view a long straight arrow on a folded cortex still lifts
+    % off the surface, so we keep arrows short (Scale≈1.5) and drop near-zero
+    % arrows (MinMag) — the gradient's flat-patch faces carry only numerical
+    % noise. Fine structure is best inspected in the 3-D viewer.
+    vopt = {'Scale', 2.0, 'NMax', 1500, 'MinMag', 0.05};
     hh(1) = nxr.viz.vectorField(V, F, M.field.gradient_of_distance,             'Parent', nexttile(tA), 'Color', [0.85 0.10 0.10], vopt{:});
     hh(2) = nxr.viz.vectorField(V, F, M.solve.hodge.dAlphaVectors,              'Parent', nexttile(tA), 'Color', [0.90 0.45 0.10], vopt{:});
     hh(3) = nxr.viz.vectorField(V, F, M.solve.hodge.deltaBetaVectors,           'Parent', nexttile(tA), 'Color', [0.10 0.60 0.20], vopt{:});
     hh(4) = nxr.viz.vectorField(V, F, M.interpolate.trivial.directionVectors,   'Parent', nexttile(tA), 'Color', [0.60 0.10 0.70], vopt{:});
     hh(5) = nxr.viz.vectorField(V, F, M.interpolate.smoothFace,                 'Parent', nexttile(tA), 'Color', [0.10 0.30 0.90], vopt{:});
     hh(6) = nxr.viz.vectorField(V, F, M.interpolate.smoothVertex.vertexVectors, 'Parent', nexttile(tA), 'Color', [0.10 0.45 0.70], vopt{:});
-    hh(7) = nxr.viz.scalar(V, F, M.solve.poisson,       'Parent', nexttile(tA));
-    hh(8) = nxr.viz.scalar(V, F, M.solve.heat(end, :)', 'Parent', nexttile(tA));
+    hh(7) = nxr.viz.scalar(V, F, poiField,  'Parent', nexttile(tA));
+    hh(8) = nxr.viz.scalar(V, F, heatField, 'Parent', nexttile(tA));
     hh(9) = nxr.viz.segments(polylineToSegments(M.query.tracePath), 'Parent', nexttile(tA), ...
                               'Surface', {V, F}, 'Color', [0.85 0.10 0.10], 'LineWidth', 3);
     for i = 1:9
@@ -377,6 +394,22 @@ function v = hemiMode(Vh, Fh, k)
     cx = nxr.manifold.context(Vh, Fh);
     e  = nxr.manifold.solve.precompute(cx, max(k + 2, 10));
     v  = e.eigenvectors(:, min(k, size(e.eigenvectors, 2)));
+end
+
+function p = hemiPoisson(Vh, Fh)
+%HEMIPOISSON  Poisson φ of a ± dipole on a single hemisphere (its own manifold).
+%   The per-component additive constant is a gauge freedom on a closed surface
+%   (only ∇φ is physical), so we remove the mean for a comparable color scale.
+    cx = nxr.manifold.context(Vh, Fh);
+    p  = nxr.manifold.solve.poisson(cx, [1; size(Vh,1)], [1; -1]);
+    p  = p - mean(p);
+end
+
+function h = hemiHeat(Vh, Fh)
+%HEMIHEAT  Last-frame spectral heat diffusion from one seed on a hemisphere.
+    cx = nxr.manifold.context(Vh, Fh);
+    ts = nxr.manifold.solve.heat(cx, 1, 1.0, [0 0.005 0.01 0.02]);
+    h  = ts(end, :)';
 end
 
 function s = outwardSign(V, F)

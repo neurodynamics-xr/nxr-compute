@@ -19,6 +19,11 @@ function h = vectorField(V, F, vecs, opts)
 %     'Color'    arrow color (default red)
 %     'Surface'  draw the gray surface underneath (default true)
 %     'NMax'     subsample to at most this many arrows (default 4000)
+%     'MinMag'   drop arrows whose magnitude is below this fraction of the
+%                95th-percentile magnitude (default 0 = draw all). Useful for
+%                fields with near-zero regions (e.g. a gradient on flat
+%                patches) where the residual direction is numerical noise and
+%                a drawn arrow would point in an arbitrary, off-tangent way.
 %
 %   Returns the quiver3 handle.
 %
@@ -33,6 +38,7 @@ function h = vectorField(V, F, vecs, opts)
         opts.Color = [0.85 0.10 0.10]
         opts.Surface (1,1) logical = true
         opts.NMax (1,1) double = 4000
+        opts.MinMag (1,1) double = 0.0
     end
     nV = size(V,1); nF = size(F,1); n = size(vecs,1);
     if n == nV
@@ -73,6 +79,9 @@ function h = vectorField(V, F, vecs, opts)
     smag = vecnorm(sv, 2, 2);
     over = smag > cap;
     sv(over,:) = sv(over,:) .* (cap ./ smag(over));
+    if opts.MinMag > 0                           % suppress noise-direction arrows
+        sv(mags < opts.MinMag * ref, :) = NaN;   % quiver3 skips NaN rows
+    end
 
     h = quiver3(ax, P(idx,1), P(idx,2), P(idx,3), ...
                 sv(:,1), sv(:,2), sv(:,3), 0, ...
