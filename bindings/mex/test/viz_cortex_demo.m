@@ -15,10 +15,13 @@ addpath(mexhit(1).folder);
 outdir = fullfile(repo, 'build', 'viz');
 if ~exist(outdir, 'dir'), mkdir(outdir); end
 
-% Short arrows + a min-magnitude cut: these fields are intrinsic (tangent),
-% but a long straight arrow on a folded cortex visually lifts off the surface,
-% and a gradient's near-zero faces carry only noise-direction arrows.
-vopt = {'Scale', 2.0, 'NMax', 1500, 'MinMag', 0.05};
+% Unit-length glyphs + magnitude-as-color: these fields are intrinsic
+% (tangent), so we show direction everywhere at a fixed short length (no long
+% arrows lifting off the folded cortex, no heavy-tail giant/invisible arrows)
+% and carry magnitude in the colorbar. MinMag drops near-zero faces (e.g. a
+% gradient on flat patches, where the direction is only numerical noise).
+vopt = {'Scale', 1.2, 'NMax', 1500, 'MinMag', 0.05, ...
+        'Normalize', true, 'ColorByMag', true, 'Colorbar', true};
 
 % ── load + compute a minimal M (subset of explore_cortex) ─────
 S = load(dataset); c = S.bst_cortex;

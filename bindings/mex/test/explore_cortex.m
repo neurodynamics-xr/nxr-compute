@@ -292,12 +292,16 @@ if showViz
         'spectral heat diffusion (per hemisphere)'; ...
         'geodesic path — tracePath (hemi 1)' };
     hh = gobjects(1, 9);
-    % These face/vertex fields are intrinsic (tangent to the surface). In a
-    % static patch view a long straight arrow on a folded cortex still lifts
-    % off the surface, so we keep arrows short (Scale≈1.5) and drop near-zero
-    % arrows (MinMag) — the gradient's flat-patch faces carry only numerical
-    % noise. Fine structure is best inspected in the 3-D viewer.
-    vopt = {'Scale', 2.0, 'NMax', 1500, 'MinMag', 0.05};
+    % These face/vertex fields are intrinsic (tangent). To read direction
+    % everywhere without long arrows lifting off the folded cortex, we draw
+    % unit-length glyphs and let COLOR carry magnitude (a heavy-tailed field
+    % like the Hodge components otherwise gives a few giant + many invisible
+    % arrows). MinMag drops near-zero faces (e.g. the gradient on flat patches,
+    % where the direction is only numerical noise). Colorbars are omitted in
+    % the 3×3 overview — color shows relative magnitude per field; the
+    % standalone viz_cortex_demo PNGs add the quantitative colorbar.
+    vopt = {'Scale', 1.2, 'NMax', 1500, 'MinMag', 0.05, ...
+            'Normalize', true, 'ColorByMag', true, 'Colorbar', false};
     hh(1) = nxr.viz.vectorField(V, F, M.field.gradient_of_distance,             'Parent', nexttile(tA), 'Color', [0.85 0.10 0.10], vopt{:});
     hh(2) = nxr.viz.vectorField(V, F, M.solve.hodge.dAlphaVectors,              'Parent', nexttile(tA), 'Color', [0.90 0.45 0.10], vopt{:});
     hh(3) = nxr.viz.vectorField(V, F, M.solve.hodge.deltaBetaVectors,           'Parent', nexttile(tA), 'Color', [0.10 0.60 0.20], vopt{:});
