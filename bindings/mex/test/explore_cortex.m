@@ -282,42 +282,37 @@ if showViz
         'Name', sprintf('%s — nxr analyses', M.comment));
     tA = tiledlayout(fA, 3, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
     labelsA = { ...
-        'Hodge omega — input 1-form (face)'; ...
-        'Hodge da — exact part (face)'; ...
-        'Hodge db — co-exact part (face)'; ...
-        'gradient of geodesic distance (face)'; ...
-        'trivial direction field (2 sing/hemi, face)'; ...
-        'smooth NRoSy-4 — connection Laplacian (face)'; ...
+        'Hodge omega — input 1-form (glyphs)'; ...
+        'Hodge da — exact part (glyphs)'; ...
+        'Hodge db — co-exact part (glyphs)'; ...
+        'gradient of geodesic distance (glyphs)'; ...
+        'trivial direction field — streamlines'; ...
+        'smooth NRoSy-4 — streamlines'; ...
         'Poisson phi (dipole per hemisphere)'; ...
         'spectral heat diffusion (per hemisphere)'; ...
         'geodesic path — tracePath (hemi 1)' };
     hh = gobjects(1, 9);
-    % All six glyph tiles are FACE-based (anchored at face centroids, tangent
-    % to the face plane): omega/da/db are nxr's Whitney-sharped 1-forms, the
-    % gradient is (1/2A)Σuᵢ(N×eᵢ), and trivial/smoothFace are face direction
-    % fields — every glyph is exactly tangent to its face (verified: max |cos
-    % to face normal| = 0). A VERTEX field (smoothVertex) is also correct but
-    % is tangent to the *vertex* normal, which on a folded cortex tilts out of
-    % the incident triangle planes (~49% of vertices by >30°), so it reads as
-    % "lifting off" in a static patch view — inspect it in the 3-D viewer; it
-    % stays available as M.interpolate.smoothVertex.
-    %
-    % Glyphs are unit-length with COLOR carrying magnitude, so direction reads
-    % everywhere without long arrows leaving the surface and a heavy-tailed
-    % field (Hodge components, gradient) doesn't give a few giant + many
-    % invisible arrows. MinMag drops near-zero faces (the gradient's flat
-    % patches, where direction is only numerical noise — and the disconnected
-    % far hemisphere, where the global geodesic distance is constant).
-    % Colorbars are omitted in the 3×3 overview — color shows relative
-    % magnitude per field; the standalone viz_cortex_demo PNGs add the bar.
-    vopt = {'Scale', 1.2, 'NMax', 1500, 'MinMag', 0.05, ...
+    % Two visualizations, following geometry-processing-js:
+    %   • GLYPHS for the magnitude-bearing fields (Hodge omega/da/db, gradient):
+    %     a short arrow CENTERED on every sampled face centroid (≈0.6 edge),
+    %     spatially-uniform sampling, color = magnitude. Short+dense+centered
+    %     hugs the folded surface (no arrows shooting into 3-D) and shows the
+    %     field as a combed texture.
+    %   • STREAMLINES for the direction fields (trivial, smoothFace): flow
+    %     lines integrated ON the surface — the clearest pattern at any zoom,
+    %     and they avoid the n-RoSy 90-degree single-arrow flip (a 4-RoSy cross
+    %     has no single "the" arrow). Traced robustly (nearest-face snap), so a
+    %     curve cannot leave the mesh.
+    gopt = {'Scale', 0.6, 'NMax', 4000, 'MinMag', 0.05, ...
             'Normalize', true, 'ColorByMag', true, 'Colorbar', false};
-    hh(1) = nxr.viz.vectorField(V, F, M.solve.hodge.omegaVectors,               'Parent', nexttile(tA), 'Color', [0.40 0.40 0.40], vopt{:});
-    hh(2) = nxr.viz.vectorField(V, F, M.solve.hodge.dAlphaVectors,              'Parent', nexttile(tA), 'Color', [0.90 0.45 0.10], vopt{:});
-    hh(3) = nxr.viz.vectorField(V, F, M.solve.hodge.deltaBetaVectors,           'Parent', nexttile(tA), 'Color', [0.10 0.60 0.20], vopt{:});
-    hh(4) = nxr.viz.vectorField(V, F, M.field.gradient_of_distance,             'Parent', nexttile(tA), 'Color', [0.85 0.10 0.10], vopt{:});
-    hh(5) = nxr.viz.vectorField(V, F, M.interpolate.trivial.directionVectors,   'Parent', nexttile(tA), 'Color', [0.60 0.10 0.70], vopt{:});
-    hh(6) = nxr.viz.vectorField(V, F, M.interpolate.smoothFace,                 'Parent', nexttile(tA), 'Color', [0.10 0.30 0.90], vopt{:});
+    hh(1) = nxr.viz.vectorField(V, F, M.solve.hodge.omegaVectors,     'Parent', nexttile(tA), gopt{:});
+    hh(2) = nxr.viz.vectorField(V, F, M.solve.hodge.dAlphaVectors,    'Parent', nexttile(tA), gopt{:});
+    hh(3) = nxr.viz.vectorField(V, F, M.solve.hodge.deltaBetaVectors, 'Parent', nexttile(tA), gopt{:});
+    hh(4) = nxr.viz.vectorField(V, F, M.field.gradient_of_distance,   'Parent', nexttile(tA), gopt{:});
+    hh(5) = nxr.viz.streamlines(V, F, M.interpolate.trivial.directionVectors, 'Parent', nexttile(tA), ...
+                                'Color', [0.55 0.10 0.70], 'NSeeds', 280, 'MaxSteps', 220, 'LineWidth', 0.8);
+    hh(6) = nxr.viz.streamlines(V, F, M.interpolate.smoothFace, 'Parent', nexttile(tA), ...
+                                'Color', [0.10 0.35 0.85], 'NSeeds', 280, 'MaxSteps', 220, 'LineWidth', 0.8);
     hh(7) = nxr.viz.scalar(V, F, poiField,  'Parent', nexttile(tA));
     hh(8) = nxr.viz.scalar(V, F, heatField, 'Parent', nexttile(tA));
     hh(9) = nxr.viz.segments(polylineToSegments(M.query.tracePath), 'Parent', nexttile(tA), ...

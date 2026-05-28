@@ -74,7 +74,15 @@ function h = vectorField(V, F, vecs, opts)
 
     idx = 1:n;
     if n > opts.NMax
-        idx = round(linspace(1, n, opts.NMax));
+        % Spatially-uniform subsample: one anchor per coarse grid cell. Mesh
+        % index order is NOT spatial, so linear subsampling scatters arrows at
+        % random faces and destroys any visible field pattern. Cell sized from
+        % the surface area to yield ~NMax samples.
+        e21 = V(F(:,2),:)-V(F(:,1),:); e31 = V(F(:,3),:)-V(F(:,1),:);
+        area = sum(0.5*vecnorm(cross(e21,e31,2),2,2));
+        cell = sqrt(area / opts.NMax);
+        [~, ia] = unique(floor(P/max(cell,eps)), 'rows', 'stable');
+        idx = ia(:)';
     end
     L    = opts.Scale * 2.0 * meanEdgeLength(V, F);
     P0   = P(idx, :);
@@ -101,11 +109,12 @@ function h = vectorField(V, F, vecs, opts)
         g(over,:) = g(over,:) .* (2.0 * L ./ gm(over));
     end
     g(~keep, :) = NaN;                        % quiver3 skips NaN rows
+    B0 = P0 - 0.5*g;                          % center the glyph on its anchor
 
     if opts.ColorByMag
-        h = drawColored(ax, P0, g, mags, keep, opts);
+        h = drawColored(ax, B0, g, mags, keep, opts);
     else
-        h = quiver3(ax, P0(:,1), P0(:,2), P0(:,3), g(:,1), g(:,2), g(:,3), 0, ...
+        h = quiver3(ax, B0(:,1), B0(:,2), B0(:,3), g(:,1), g(:,2), g(:,3), 0, ...
                     'Color', opts.Color, 'LineWidth', 0.6, 'MaxHeadSize', 0.5);
     end
 

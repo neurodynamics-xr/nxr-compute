@@ -15,12 +15,12 @@ addpath(mexhit(1).folder);
 outdir = fullfile(repo, 'build', 'viz');
 if ~exist(outdir, 'dir'), mkdir(outdir); end
 
-% Unit-length glyphs + magnitude-as-color: these fields are intrinsic
-% (tangent), so we show direction everywhere at a fixed short length (no long
-% arrows lifting off the folded cortex, no heavy-tail giant/invisible arrows)
-% and carry magnitude in the colorbar. MinMag drops near-zero faces (e.g. a
-% gradient on flat patches, where the direction is only numerical noise).
-vopt = {'Scale', 1.2, 'NMax', 1500, 'MinMag', 0.05, ...
+% GPJS-style glyphs for the magnitude-bearing fields (gradient, Hodge parts):
+% a short arrow CENTERED on every sampled face centroid, spatially-uniform
+% sampling, color = magnitude. Short+dense+centered hugs the folded surface
+% (no arrows into 3-D). Direction fields (trivial, smoothFace) are shown as
+% STREAMLINES instead (clearest flow; no n-RoSy single-arrow flip).
+vopt = {'Scale', 0.6, 'NMax', 4000, 'MinMag', 0.05, ...
         'Normalize', true, 'ColorByMag', true, 'Colorbar', true};
 
 % ── load + compute a minimal M (subset of explore_cortex) ─────
@@ -71,7 +71,8 @@ snap3(nxr.viz.show(M, 'solve.precompute', 6),                    outdir, 'eigenm
 snap3(nxr.viz.show(M, 'measure.curvature.mean'),                 outdir, 'curvature.png');
 snap3(nxr.viz.show(M, 'measure.distance'),                       outdir, 'distance.png');
 snap3(nxr.viz.show(M, 'measure.normal'),                         outdir, 'normals.png');
-snap3(nxr.viz.show(M, 'interpolate.smoothFace'),                 outdir, 'smoothface.png');
+snap3(nxr.viz.streamlines(V, F, M.interpolate.smoothFace, 'Title', 'smoothFace NRoSy-4 (streamlines)', ...
+      'Color', [0.10 0.35 0.85], 'NSeeds', 300, 'MaxSteps', 250), outdir, 'smoothface.png');
 
 % ── analyses (DEC / Hodge / Poisson / direction fields / path) ─
 snap3(nxr.viz.scalar(V, F, poiField, 'Title', 'poisson \phi (dipole per hemisphere)'), ...
@@ -85,9 +86,9 @@ snap3(nxr.viz.vectorField(V, F, M.solve.hodge.dAlphaVectors, ...
 snap3(nxr.viz.vectorField(V, F, M.solve.hodge.deltaBetaVectors, ...
       'Title', 'Hodge \delta\beta (co-exact part)', 'Color', [0.10 0.60 0.20], vopt{:}), ...
       outdir, 'hodge_coexact.png');
-snap3(nxr.viz.vectorField(V, F, M.interpolate.trivial.directionVectors, ...
-      'Title', 'trivial connection field (2 sing/hemi)', 'Color', [0.60 0.10 0.70], vopt{:}), ...
-      outdir, 'trivial.png');
+snap3(nxr.viz.streamlines(V, F, M.interpolate.trivial.directionVectors, ...
+      'Title', 'trivial connection field (streamlines)', 'Color', [0.55 0.10 0.70], ...
+      'NSeeds', 300, 'MaxSteps', 250), outdir, 'trivial.png');
 % Hodge input 1-form omega, Whitney-sharped to face centroids (face-based,
 % exactly tangent). The vertex smooth field (M.interpolate.smoothVertex) is
 % correct but tangent to the vertex normal, which tilts out of the triangle
