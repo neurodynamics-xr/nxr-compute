@@ -53,13 +53,29 @@ function h = vectorField(V, F, vecs, opts)
     if n > opts.NMax
         idx = round(linspace(1, n, opts.NMax));
     end
-    L  = opts.Scale * 2.0 * meanEdgeLength(V, F);   % target longest-arrow length
-    mx = max(vecnorm(vecs(idx,:), 2, 2));
-    if mx == 0, mx = 1; end
-    s = L / mx;
+    % Scale so a 95th-percentile-magnitude arrow is ~2 mean edge lengths.
+    % Using a robust percentile (not the max) keeps heterogeneous fields
+    % (gradient, Hodge components) visible instead of letting a few outlier
+    % faces shrink every other arrow. Uniform fields (normals, n-RoSy) are
+    % unaffected (their percentile ≈ max). The few magnitudes above the
+    % percentile are then clamped to a ceiling so a heavy tail (e.g. a
+    % handful of high-gradient faces) shows as a long-but-bounded arrow
+    % instead of a giant streak shooting off across the view.
+    L    = opts.Scale * 2.0 * meanEdgeLength(V, F);
+    vv   = vecs(idx,:);
+    mags = vecnorm(vv, 2, 2);
+    sm   = sort(mags);
+    ref  = sm(max(1, round(0.95 * numel(sm))));
+    if ref == 0, ref = max(mags); end
+    if ref == 0, ref = 1; end
+    sv   = (L / ref) * vv;                       % percentile-normalised: 95th ≈ L
+    cap  = 2.0 * L;                              % ceiling on drawn arrow length
+    smag = vecnorm(sv, 2, 2);
+    over = smag > cap;
+    sv(over,:) = sv(over,:) .* (cap ./ smag(over));
 
     h = quiver3(ax, P(idx,1), P(idx,2), P(idx,3), ...
-                s*vecs(idx,1), s*vecs(idx,2), s*vecs(idx,3), 0, ...
+                sv(:,1), sv(:,2), sv(:,3), 0, ...
                 'Color', opts.Color, 'LineWidth', 0.6, 'MaxHeadSize', 0.5);
 
     axis(ax, 'equal', 'off', 'vis3d'); view(ax, 3);

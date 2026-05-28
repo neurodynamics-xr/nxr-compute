@@ -78,7 +78,15 @@ omega = randn(ctx.nE, 1);               % random 1-form for the Hodge decomposit
 M.input.omega  = omega;
 M.input.kModes = kModes;
 
-fprintf('context: nV=%d nE=%d nF=%d  (totalArea=%.4f)\n\n', M.nV, M.nE, M.nF, M.totalArea);
+% Connected components (hemispheres) — used by the trivial direction field
+% below (2 singularities per hemisphere, summing to χ_per_hemi = 2) and by
+% the per-hemisphere visual-validation block further down.
+comps = splitComponents(V, F);
+singV_trivial = [comps(1).vidx(1); comps(1).vidx(end); ...
+                 comps(2).vidx(1); comps(2).vidx(end)];
+
+fprintf('context: nV=%d nE=%d nF=%d  (totalArea=%.4f)\n', M.nV, M.nE, M.nF, M.totalArea);
+fprintf('hemispheres: %s vertices\n\n', num2str(cellfun(@numel, {comps.vidx})));
 
 % ── compute every leaf and store it in M ──────────────────────
 % store(M, 'group.name', @() <call>) runs the call, assigns M.group.name,
@@ -117,7 +125,7 @@ M = store(M, 'interpolate.transport',    @() nxr.manifold.interpolate.transport(
 M = store(M, 'interpolate.extend',       @() nxr.manifold.interpolate.extend(ctx, [1 10000], [1 0]));
 M = store(M, 'interpolate.smoothVertex', @() nxr.manifold.interpolate.smoothVertex(ctx, 2));
 M = store(M, 'interpolate.smoothFace',   @() nxr.manifold.interpolate.smoothFace(ctx, 4));
-M = store(M, 'interpolate.trivial',      @() nxr.manifold.interpolate.trivial(ctx, [1 5000 10000 15000], [1 1 1 1]));
+M = store(M, 'interpolate.trivial',      @() nxr.manifold.interpolate.trivial(ctx, singV_trivial, [1; 1; 1; 1]));
 
 % query / uv
 M = store(M, 'query.isoline', @() nxr.manifold.query.isoline(ctx, M.reference.curvature, 0.0));
@@ -186,6 +194,26 @@ for i = 1:min(8, numel(ev))
 end
 fprintf('(nxr keeps 1 residual DC mode — 2 hemispheres; reference removed %g.)\n', c.Eigenmodes.nRemoved);
 
+% ── additional analyses (DEC gradient, flip-out geodesic path) ─
+% A couple of nxr functions have no functional-API leaf yet (gradient,
+% tracePath); drive them via the raw MEX with a transient stateful handle.
+fprintf('\n=== additional analyses ===\n');
+hctx_a = nxr_compute('create', V, F);
+analGuard = onCleanup(@() nxr_compute('destroy', hctx_a)); %#ok<NASGU>
+
+% DEC: gradient of the geodesic-distance field → a face-centered vector field
+M.field.gradient_of_distance = nxr_compute('gradient', hctx_a, M.measure.distance);
+fprintf('  [OK]   %-26s %s\n', 'field.gradient_of_distance', describe(M.field.gradient_of_distance));
+
+% flip-out geodesic path between two vertices in the SAME hemisphere
+% (a cross-component path is undefined): hemi-1 first & middle vertex.
+vA = comps(1).vidx(1);  vB = comps(1).vidx(round(numel(comps(1).vidx)/2));
+M.query.tracePath = nxr_compute('tracePath', hctx_a, int32(vA), int32(vB));
+fprintf('  [OK]   %-26s %s  (verts %d→%d, length=%.4f)\n', 'query.tracePath', ...
+    describe(M.query.tracePath), vA, vB, sum(vecnorm(diff(M.query.tracePath,1,1),2,2)));
+
+clear analGuard hctx_a;
+
 % ── visual validation via nxr.viz (per hemisphere) ───────────
 % The cortex is two disconnected components (left/right hemispheres). For
 % globally-coupled results (eigenmodes, geodesic distance) we treat each
@@ -196,7 +224,6 @@ fprintf('(nxr keeps 1 residual DC mode — 2 hemispheres; reference removed %g.)
 % geometry-central; see the numeric note above).
 if showViz
     fprintf('\n=== visual validation (nxr.viz) ===\n');
-    comps = splitComponents(V, F);
     fprintf('  %d hemispheres: %s vertices (computed separately, plotted together)\n', ...
         numel(comps), num2str(cellfun(@numel, {comps.vidx})));
 
@@ -234,6 +261,45 @@ if showViz
     exportgraphics(f, pngfile, 'Resolution', 130);
     fprintf('  results figure opened + saved to %s\n', pngfile);
     fprintf('  drill in with e.g.  nxr.viz.show(M, ''measure.curvature.mean'')\n');
+
+    % ── analyses dashboard (3x3): DEC, Hodge, direction fields, solvers, path ──
+    fprintf('\n=== analysis viz (nxr.viz, 3x3) ===\n');
+    fA = figure('Color', 'w', 'Position', [80 40 1400 1080], 'NumberTitle', 'off', ...
+        'Name', sprintf('%s — nxr analyses', M.comment));
+    tA = tiledlayout(fA, 3, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
+    labelsA = { ...
+        'gradient of geodesic distance (face)'; ...
+        'Hodge da — exact part (face)'; ...
+        'Hodge db — co-exact part (face)'; ...
+        'trivial direction field (2 sing/hemi)'; ...
+        'smooth field — NRoSy 4 (connection Laplacian)'; ...
+        'smooth field — NRoSy 2 (vertex line field)'; ...
+        'Poisson phi (delta sources)'; ...
+        'spectral heat diffusion (last frame)'; ...
+        'geodesic path — tracePath (hemi 1)' };
+    hh = gobjects(1, 9);
+    % Larger, sparser arrows read better in the overview than the dense
+    % default (fine structure is best seen interactively / in the 3-D viewer).
+    vopt = {'Scale', 3, 'NMax', 1500};
+    hh(1) = nxr.viz.vectorField(V, F, M.field.gradient_of_distance,             'Parent', nexttile(tA), 'Color', [0.85 0.10 0.10], vopt{:});
+    hh(2) = nxr.viz.vectorField(V, F, M.solve.hodge.dAlphaVectors,              'Parent', nexttile(tA), 'Color', [0.90 0.45 0.10], vopt{:});
+    hh(3) = nxr.viz.vectorField(V, F, M.solve.hodge.deltaBetaVectors,           'Parent', nexttile(tA), 'Color', [0.10 0.60 0.20], vopt{:});
+    hh(4) = nxr.viz.vectorField(V, F, M.interpolate.trivial.directionVectors,   'Parent', nexttile(tA), 'Color', [0.60 0.10 0.70], vopt{:});
+    hh(5) = nxr.viz.vectorField(V, F, M.interpolate.smoothFace,                 'Parent', nexttile(tA), 'Color', [0.10 0.30 0.90], vopt{:});
+    hh(6) = nxr.viz.vectorField(V, F, M.interpolate.smoothVertex.vertexVectors, 'Parent', nexttile(tA), 'Color', [0.10 0.45 0.70], vopt{:});
+    hh(7) = nxr.viz.scalar(V, F, M.solve.poisson,       'Parent', nexttile(tA));
+    hh(8) = nxr.viz.scalar(V, F, M.solve.heat(end, :)', 'Parent', nexttile(tA));
+    hh(9) = nxr.viz.segments(polylineToSegments(M.query.tracePath), 'Parent', nexttile(tA), ...
+                              'Surface', {V, F}, 'Color', [0.85 0.10 0.10], 'LineWidth', 3);
+    for i = 1:9
+        ax = ancestor(hh(i), 'axes'); p = ax.Position;
+        annotation(fA, 'textbox', [p(1), p(2)+p(4)-0.04, p(3), 0.04], 'String', labelsA{i}, ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'top', 'EdgeColor', 'none', ...
+            'FontWeight', 'bold', 'Interpreter', 'none', 'FitBoxToText', 'off');
+    end
+    pngfileA = fullfile(vizdir, 'explore_analyses.png');
+    exportgraphics(fA, pngfileA, 'Resolution', 130);
+    fprintf('  analyses figure opened + saved to %s\n', pngfileA);
 end
 
 % ── done — M is now in your workspace ─────────────────────────
@@ -320,4 +386,14 @@ function s = outwardSign(V, F)
     v1 = V(F(:,1),:); v2 = V(F(:,2),:); v3 = V(F(:,3),:);
     vol = sum(dot(v1, cross(v2 - v1, v3 - v1, 2), 2)) / 6;
     s = sign(vol); if s == 0, s = 1; end
+end
+
+function s = polylineToSegments(pts)
+%POLYLINETOSEGMENTS  Convert an [N x 3] polyline into [2*(N-1) x 3] endpoint
+%   pairs for nxr.viz.segments (rows 2k-1, 2k are the ends of segment k).
+    N = size(pts, 1);
+    if N < 2, s = zeros(0, 3); return; end
+    s = zeros(2*(N-1), 3);
+    s(1:2:end, :) = pts(1:N-1, :);
+    s(2:2:end, :) = pts(2:N, :);
 end
