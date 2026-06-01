@@ -7,38 +7,61 @@ permissions:
   contents: read
 
 jobs:
-  build-macos-arm64:
-    name: Build MEX (macOS Apple Silicon)
-    runs-on: macos-14
+  build:
+    name: Build MEX (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            matlab: R2023a
+            label: Windows x64
+            artifact: mex-windows-x64
+            cmake_extra: -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          - os: ubuntu-22.04
+            matlab: R2023a
+            label: Linux x64
+            artifact: mex-linux-x64
+            cmake_extra: "-DCMAKE_CXX_FLAGS=-static-libstdc++ -static-libgcc"
+          - os: macos-13
+            matlab: R2023a
+            label: macOS Intel
+            artifact: mex-macos-intel
+            cmake_extra: -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15
+          - os: macos-14
+            matlab: R2023b
+            label: macOS Apple Silicon
+            artifact: mex-macos-arm64
+            cmake_extra: -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Free disk space
+      - name: Free disk space (macOS arm64 only)
+        if: matrix.os == 'macos-14'
         run: sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/*
 
-      - name: Install MATLAB R2023b
+      - name: Install MATLAB ${{ matrix.matlab }}
         uses: matlab-actions/setup-matlab@v2
         with:
-          release: R2023b
+          release: ${{ matrix.matlab }}
 
       - name: Configure CMake
-        run: >
-          cmake -B build -S .
-          -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_extra }}
 
       - name: Build MEX target
         run: cmake --build build --config Release --target nxr_compute_mex
 
       - name: List MEX output (sanity check)
+        shell: bash
         run: find build -name 'nxr_compute.mex*' -print
 
       - name: Upload MEX artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mex-macos-arm64
+          name: ${{ matrix.artifact }}
           path: build/**/nxr_compute.mex*
           if-no-files-found: error
