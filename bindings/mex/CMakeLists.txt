@@ -107,6 +107,41 @@ if(APPLE)
     endif()
 endif()
 
+# Strip libMatlabEngine and libMatlabDataArray from the link line.
+#
+# FindMatlab's `matlab_add_mex(R2018a ...)` macro unconditionally links
+# the C++ MEX API libraries (libMatlabEngine, libMatlabDataArray) when
+# the SDK supports R2018a+. Our source `nxr_compute_mex.cpp` is a
+# classic C-style mexFunction (uses `mex.h`, not `matlab::mex::Function`),
+# so we never call into the C++ MEX runtime — but the link still
+# records a runtime dependency.
+#
+# On macOS, the dependency carries the runner's build-time @rpath
+# (e.g., the GitHub Actions MATLAB install dir). On a user's machine,
+# that rpath is invalid and loading the .mexmaca64 fails with:
+#   "Library not loaded: @rpath/libMatlabEngine.dylib"
+# Linux and Windows have analogous failures (LD_LIBRARY_PATH / DLL
+# search). The fix is to remove these libs from LINK_LIBRARIES on all
+# platforms — they're entirely unneeded by a C-style mexFunction.
+get_target_property(_mex_link_libs nxr_compute_mex LINK_LIBRARIES)
+if(_mex_link_libs)
+    # Match full paths, bare names, and CMake imported-target forms
+    # (e.g. /…/libMatlabEngine.dylib, libMatlabEngine.so,
+    #  MatlabEngine.lib, Matlab::MatlabEngine).
+    list(FILTER _mex_link_libs EXCLUDE REGEX "MatlabEngine")
+    list(FILTER _mex_link_libs EXCLUDE REGEX "MatlabDataArray")
+    set_target_properties(nxr_compute_mex PROPERTIES LINK_LIBRARIES "${_mex_link_libs}")
+endif()
+
+# Also clear INTERFACE_LINK_LIBRARIES on the same target — some
+# FindMatlab versions populate INTERFACE deps that get propagated.
+get_target_property(_mex_iface_libs nxr_compute_mex INTERFACE_LINK_LIBRARIES)
+if(_mex_iface_libs)
+    list(FILTER _mex_iface_libs EXCLUDE REGEX "MatlabEngine")
+    list(FILTER _mex_iface_libs EXCLUDE REGEX "MatlabDataArray")
+    set_target_properties(nxr_compute_mex PROPERTIES INTERFACE_LINK_LIBRARIES "${_mex_iface_libs}")
+endif()
+
 # The MEX wrapper depends on nxr-compute's public headers but isn't itself a
 # consumer that needs Spectra paths exposed — those propagate through
 # nxr-compute's PUBLIC interface link.
