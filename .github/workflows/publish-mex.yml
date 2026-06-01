@@ -106,10 +106,19 @@ jobs:
           mkdir -p nxr-compute-mex-r2023a/+nxr
           cp -r bindings/mex/matlab/+nxr/. nxr-compute-mex-r2023a/+nxr/
           cp bindings/mex/matlab/README.md nxr-compute-mex-r2023a/
-          find artifacts-r2023a -name 'nxr_compute.mex*' -exec cp {} nxr-compute-mex-r2023a/ \;
+          # Explicit extension list — excludes nxr_compute.mexw64.recipe
+          # (MEX build-record sidecar) and any other future sidecars.
+          find artifacts-r2023a \
+            \( -name 'nxr_compute.mexw64' \
+            -o -name 'nxr_compute.mexa64' \
+            -o -name 'nxr_compute.mexmaca64' \) \
+            -exec cp {} nxr-compute-mex-r2023a/ \;
           echo "R2023a track contents:"
           ls -la nxr-compute-mex-r2023a/
-          COUNT=$(find nxr-compute-mex-r2023a -maxdepth 1 -name 'nxr_compute.mex*' | wc -l)
+          COUNT=$(find nxr-compute-mex-r2023a -maxdepth 1 \
+            \( -name 'nxr_compute.mexw64' \
+            -o -name 'nxr_compute.mexa64' \
+            -o -name 'nxr_compute.mexmaca64' \) | wc -l)
           if [ "$COUNT" -ne 2 ]; then
             echo "ERROR: R2023a track expected 2 .mex files (Win + Linux), got $COUNT"
             exit 1
@@ -120,10 +129,19 @@ jobs:
           mkdir -p nxr-compute-mex-r2023b/+nxr
           cp -r bindings/mex/matlab/+nxr/. nxr-compute-mex-r2023b/+nxr/
           cp bindings/mex/matlab/README.md nxr-compute-mex-r2023b/
-          find artifacts-r2023b -name 'nxr_compute.mex*' -exec cp {} nxr-compute-mex-r2023b/ \;
+          # Explicit extension list — excludes nxr_compute.mexw64.recipe
+          # (MEX build-record sidecar) and any other future sidecars.
+          find artifacts-r2023b \
+            \( -name 'nxr_compute.mexw64' \
+            -o -name 'nxr_compute.mexa64' \
+            -o -name 'nxr_compute.mexmaca64' \) \
+            -exec cp {} nxr-compute-mex-r2023b/ \;
           echo "R2023b track contents:"
           ls -la nxr-compute-mex-r2023b/
-          COUNT=$(find nxr-compute-mex-r2023b -maxdepth 1 -name 'nxr_compute.mex*' | wc -l)
+          COUNT=$(find nxr-compute-mex-r2023b -maxdepth 1 \
+            \( -name 'nxr_compute.mexw64' \
+            -o -name 'nxr_compute.mexa64' \
+            -o -name 'nxr_compute.mexmaca64' \) | wc -l)
           if [ "$COUNT" -ne 3 ]; then
             echo "ERROR: R2023b track expected 3 .mex files (Win + Linux + Apple Silicon), got $COUNT"
             exit 1
