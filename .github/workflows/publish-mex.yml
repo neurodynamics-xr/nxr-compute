@@ -23,7 +23,7 @@ jobs:
             matlab: R2023a
             label: Linux x64
             artifact: mex-linux-x64
-            cmake_extra: "-DCMAKE_CXX_FLAGS=-static-libstdc++ -static-libgcc"
+            cmake_extra: '"-DCMAKE_CXX_FLAGS=-static-libstdc++ -static-libgcc"'
           - os: macos-13
             matlab: R2023a
             label: macOS Intel
