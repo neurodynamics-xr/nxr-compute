@@ -166,7 +166,8 @@ function makeContextWrapper(raw) {
     nF: () => raw.nF(),
 
     // Operators / geometry
-    // `variant` ∈ "voronoi" (default) | "barycentric" | "full".
+    // `variant` ∈ "lumped" (default) | "galerkin", matching geometry-central's
+    // vertexLumpedMassMatrix and vertexGalerkinMassMatrix.
     assembleManifoldOperators: (variant = "") => raw.assembleManifoldOperators(variant),
     assembleDECOperators:  () => raw.assembleDECOperators(),
     frames:     () => raw.frames(),

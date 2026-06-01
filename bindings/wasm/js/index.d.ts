@@ -64,19 +64,21 @@ export type ConnectionLaplacianResult =
       format:         'complex'
     }
 
-/** FEM mass-matrix variant string passed to assembleManifoldOperators(). */
-export type MassMatrixVariant = "voronoi" | "barycentric" | "full"
+/** FEM mass-matrix variant string passed to assembleManifoldOperators().
+ *  Names match geometry-central's vertexLumpedMassMatrix and
+ *  vertexGalerkinMassMatrix exactly. */
+export type MassMatrixVariant = "lumped" | "galerkin"
 
 export interface ManifoldOperators {
   /** Cotangent Laplacian (PSD, symmetrized), V×V sparse */
   stiffness:   SparseMatrixCOO
-  /** Mass matrix, V×V sparse. SPD; diagonal for "voronoi"/"barycentric",
-   *  has off-diagonal couplings for "full". */
+  /** Mass matrix, V×V sparse. SPD; diagonal for "lumped",
+   *  has off-diagonal couplings for "galerkin". */
   mass:        SparseMatrixCOO
   /** Which variant produced `mass`. */
   massVariant: MassMatrixVariant
-  /** Per-vertex Voronoi dual area, V (always Voronoi-derived
-   *  regardless of `massVariant`). */
+  /** Per-vertex dual area (A/3-per-vertex from GC), V — always sourced
+   *  from `vertexDualAreas` regardless of `massVariant`. */
   vertexAreas: Float64Array
   /** Per-vertex normals, V*3 row-major */
   normals:     Float64Array
@@ -234,7 +236,7 @@ export interface Manifold {
 
   // Operators / geometry
   /** Assemble cotangent stiffness + mass matrix.
-   *  @param variant — mass-matrix variant ("voronoi" default, "barycentric", "full"). */
+   *  @param variant — mass-matrix variant ("lumped" default, "galerkin"). */
   assembleManifoldOperators(variant?: MassMatrixVariant | ""): ManifoldOperators
   assembleDECOperators():  DECOperators
   frames():     FaceFrames

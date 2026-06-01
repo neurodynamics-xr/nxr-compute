@@ -187,13 +187,14 @@ public:
 
     // ── Mesh operators ───────────────────────────────────────
 
-    // Optional `variantName` accepts "voronoi" (default), "barycentric",
-    // or "full". Empty string → default. Switching variants invalidates
-    // the cached ManifoldOperators (and any cached factor that depended on
-    // the previous mass).
+    // Optional `variantName` accepts "lumped" (default) or "galerkin",
+    // matching geometry-central's vertexLumpedMassMatrix and
+    // vertexGalerkinMassMatrix. Empty string → default. Switching
+    // variants invalidates the cached ManifoldOperators (and any cached
+    // factor that depended on the previous mass).
     val assembleManifoldOperators(const std::string& variantName) {
         nxr::manifold::ops::MassMatrixVariant variant = variantName.empty()
-            ? nxr::manifold::ops::MassMatrixVariant::Voronoi
+            ? nxr::manifold::ops::MassMatrixVariant::Lumped
             : nxr::manifold::ops::parseMassMatrixVariant(variantName);
         if (!ops_ || ops_->massVariant != variant) {
             ops_ = std::make_unique<nxr::manifold::ops::ManifoldOperators>(
@@ -729,9 +730,8 @@ private:
         o.set("cotanLaplacian",  sparseToVal(ops_->cotanLaplacian));
         o.set("mass",            sparseToVal(ops_->mass));
         o.set("massVariant",     std::string(
-            ops_->massVariant == nxr::manifold::ops::MassMatrixVariant::Voronoi      ? "voronoi" :
-            ops_->massVariant == nxr::manifold::ops::MassMatrixVariant::Barycentric  ? "barycentric" :
-                                                                                       "full"));
+            ops_->massVariant == nxr::manifold::ops::MassMatrixVariant::Lumped   ? "lumped"   :
+            ops_->massVariant == nxr::manifold::ops::MassMatrixVariant::Galerkin ? "galerkin" : "?"));
         o.set("vertexDualAreas", eigenVectorToVal(ops_->vertexDualAreas));
         o.set("vertexNormals",   eigenMatrixToVal(ops_->vertexNormals));
         o.set("totalArea",       ops_->totalArea);

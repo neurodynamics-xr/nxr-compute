@@ -174,9 +174,9 @@ function makeManifoldContext(rawCtx) {
     star1:        () => dec().hodge1,
     star2:        notWired('operator.star2'),
     star1Inverse: notWired('operator.star1Inverse'),
-    /** Per-vertex Voronoi dual area (diagonal as Float64Array — the
-     *  addon's compact mass form). To get a full sparse mass matrix,
-     *  add a sparse-COO export in addon.cpp. */
+    /** Per-vertex dual area (A/3-per-vertex from GC, diagonal as
+     *  Float64Array — the addon's compact mass form). To get a full
+     *  sparse mass matrix, add a sparse-COO export in addon.cpp. */
     mass:         () => mesh().mass,
     stiffness:    () => mesh().cotanLaplacian,
     /** Cotangent Laplacian — same matrix as `operator.stiffness()`. */

@@ -1,15 +1,19 @@
 /**
- * test_mass_variants.cpp — correctness checks for the three mass-matrix
- * variants on a fixed icosphere mesh.
+ * test_mass_variants.cpp — correctness checks for the two mass-matrix
+ * variants (Lumped, Galerkin) on a fixed icosphere mesh.
+ *
+ * Names match geometry-central's vocabulary exactly:
+ *   Lumped    ↔  GC vertexLumpedMassMatrix    (diagonal, A/3-per-vertex)
+ *   Galerkin  ↔  GC vertexGalerkinMassMatrix  (sparse, P1 hat L² products)
  *
  * Verifies (each variant):
  *   - matrix is symmetric to machine precision
  *   - structural pattern is correct (diagonal vs sparse off-diagonal)
  *   - total mass is conserved (Σᵢⱼ Mᵢⱼ == surface area, exact equality)
- *   - vertexAreas always carries Voronoi areas regardless of variant
+ *   - vertexDualAreas (always GC-sourced) matches the reference run
  *   - eigenvalues are non-negative (modulo floating-point noise near λ₀)
- *   - eigenvalues differ between variants (sanity: they ARE different
- *     numerical objects)
+ *   - eigenvalues differ between variants (both Lumped and Galerkin
+ *     must each produce a distinct λ₁ — catches accidental aliasing)
  *
  * Build: cmake --build build --target test_mass_variants
  * Run:   ./build/test_mass_variants
@@ -63,9 +67,8 @@ static void generateIcosphere(std::vector<double>& V, std::vector<int32_t>& F) {
 
 static const char* variantName(MassMatrixVariant v) {
     switch (v) {
-        case MassMatrixVariant::Voronoi:       return "voronoi";
-        case MassMatrixVariant::Barycentric:   return "barycentric";
-        case MassMatrixVariant::ConsistentFEM: return "full";
+        case MassMatrixVariant::Lumped:   return "lumped";
+        case MassMatrixVariant::Galerkin: return "galerkin";
     }
     return "?";
 }
@@ -96,23 +99,22 @@ int main() {
 
     // For an icosahedron with unit-radius vertices on the sphere, the
     // total surface area is fixed by the embedding — compute it from
-    // the Voronoi run as the reference and require all variants match
+    // the lumped run as the reference and require all variants match
     // it exactly (within float roundoff).
     nxr::manifold::Manifold m(V.data(), nV, F.data(), nF);
     auto refOps = nxr::manifold::ops::assembleManifoldOperators(
-        m, MassMatrixVariant::Voronoi);
+        m, MassMatrixVariant::Lumped);
     const double refArea = refOps.totalArea;
-    std::cout << "Reference surface area (voronoi) = "
+    std::cout << "Reference surface area (lumped) = "
               << std::setprecision(12) << refArea << "\n";
 
     // Non-trivial eigenvalues from each variant — to confirm they
     // produce numerically distinct spectra.
-    Eigen::VectorXd evalsByVariant[3];
+    Eigen::VectorXd evalsByVariant[2];
     int variantIdx = 0;
 
-    for (auto v : {MassMatrixVariant::Voronoi,
-                   MassMatrixVariant::Barycentric,
-                   MassMatrixVariant::ConsistentFEM}) {
+    for (auto v : {MassMatrixVariant::Lumped,
+                   MassMatrixVariant::Galerkin}) {
         std::cout << "\n── variant: " << variantName(v) << " ─────────\n";
 
         // Fresh context per variant — avoid any state leak between runs.
@@ -128,15 +130,15 @@ int main() {
         const double symErr = diff.norm();
         check(symErr < 1e-12,                             "M is symmetric (||M - Mᵀ||_F)");
 
-        // Structural pattern: diagonal vs full.
+        // Structural pattern: diagonal vs sparse off-diagonal.
         int nnz = static_cast<int>(ops.mass.nonZeros());
-        if (v == MassMatrixVariant::ConsistentFEM) {
+        if (v == MassMatrixVariant::Galerkin) {
             // Each face contributes 9 entries; deduplicated by setFromTriplets.
             // Lower bound: at least nV diagonal + 2 * nE off-diagonal.
             // Upper bound: 9 * nF (no dedup).
-            check(nnz > nV,                               "consistent: nnz > nV (has off-diagonal)");
+            check(nnz > nV,                               "galerkin: nnz > nV (has off-diagonal)");
         } else {
-            check(nnz == nV,                              "diagonal: nnz == nV");
+            check(nnz == nV,                              "lumped: nnz == nV (diagonal)");
         }
 
         // Total mass conservation: Σᵢⱼ Mᵢⱼ == totalArea, exactly.
@@ -151,12 +153,13 @@ int main() {
         check(areaErr < 1e-10 * std::max(1.0, ops.totalArea),
               "Σᵢⱼ Mᵢⱼ == totalArea");
 
-        // Total area equals the Voronoi reference.
+        // Total area equals the lumped reference.
         const double refErr = std::abs(ops.totalArea - refArea);
         check(refErr < 1e-10 * std::max(1.0, refArea),
-              "totalArea matches Voronoi reference");
+              "totalArea matches lumped reference");
 
-        // vertexDualAreas always Voronoi-derived → match reference run.
+        // vertexDualAreas is always sourced from GC's vertexDualAreas
+        // (A/3-per-vertex) regardless of mass variant → match ref run.
         const double vaErr = (ops.vertexDualAreas - refOps.vertexDualAreas).norm();
         check(vaErr < 1e-12,                              "vertexDualAreas == refOps.vertexDualAreas");
 
@@ -183,35 +186,43 @@ int main() {
         evalsByVariant[variantIdx++] = eig.eigenvalues;
     }
 
-    // Cross-variant sanity: the second eigenvalue (first non-DC) should
-    // differ noticeably between variants. They converge on refinement,
-    // but at icosahedron resolution they are not numerically identical.
+    // Cross-variant sanity: at icosahedron resolution Lumped and Galerkin
+    // produce numerically distinct λ₁. They converge on refinement, but
+    // not at coarse resolution. This check guards against accidental
+    // aliasing where both variants compute the same matrix — e.g., the
+    // historical bug where MassMatrixVariant::Voronoi and ::Barycentric
+    // were both sourced from the same GC code path and produced
+    // bit-identical output.
     std::cout << "\n── variant cross-comparison ─────────\n";
-    auto& ev0 = evalsByVariant[0];   // Voronoi
-    auto& ev1 = evalsByVariant[1];   // Barycentric
-    auto& ev2 = evalsByVariant[2];   // ConsistentFEM
-    if (ev0.size() >= 2 && ev1.size() >= 2 && ev2.size() >= 2) {
-        const double d01 = std::abs(ev0(1) - ev1(1));
-        const double d02 = std::abs(ev0(1) - ev2(1));
-        std::cout << "    |λ₁(voronoi)  - λ₁(barycentric)| = " << d01 << "\n";
-        std::cout << "    |λ₁(voronoi)  - λ₁(consistent)|  = " << d02 << "\n";
-        check(d01 > 0.0 || d02 > 0.0,
-              "at least one variant produces a different λ₁");
+    auto& ev0 = evalsByVariant[0];   // Lumped
+    auto& ev1 = evalsByVariant[1];   // Galerkin
+    if (ev0.size() >= 2 && ev1.size() >= 2) {
+        const double d = std::abs(ev0(1) - ev1(1));
+        const double tol = 1e-6 * std::max(std::abs(ev0(1)), std::abs(ev1(1)));
+        std::cout << "    |λ₁(lumped) - λ₁(galerkin)| = " << d
+                  << "  (tol = " << tol << ")\n";
+        check(d > tol,
+              "lumped and galerkin produce distinct λ₁ (catches aliasing)");
     }
 
     // Parser round-trip.
     std::cout << "\n── parseMassMatrixVariant() ─────────\n";
-    check(nxr::manifold::ops::parseMassMatrixVariant("voronoi")     == MassMatrixVariant::Voronoi,       "voronoi");
-    check(nxr::manifold::ops::parseMassMatrixVariant("barycentric") == MassMatrixVariant::Barycentric,   "barycentric");
-    check(nxr::manifold::ops::parseMassMatrixVariant("full")        == MassMatrixVariant::ConsistentFEM, "full");
+    check(nxr::manifold::ops::parseMassMatrixVariant("lumped")   == MassMatrixVariant::Lumped,   "lumped");
+    check(nxr::manifold::ops::parseMassMatrixVariant("galerkin") == MassMatrixVariant::Galerkin, "galerkin");
 
-    bool threw = false;
-    try {
-        (void) nxr::manifold::ops::parseMassMatrixVariant("nope");
-    } catch (const nxr::core::Error&) {
-        threw = true;
-    }
-    check(threw,                                         "unknown name throws Error");
+    // Hard break: old names must throw.
+    auto throwsOnName = [](const std::string& s) {
+        try {
+            (void) nxr::manifold::ops::parseMassMatrixVariant(s);
+        } catch (const nxr::core::Error&) {
+            return true;
+        }
+        return false;
+    };
+    check(throwsOnName("voronoi"),     "old name 'voronoi' throws (hard break)");
+    check(throwsOnName("barycentric"), "old name 'barycentric' throws (hard break)");
+    check(throwsOnName("full"),        "old name 'full' throws (hard break)");
+    check(throwsOnName("nope"),        "unknown name throws Error");
 
     std::cout << "\n==============================================\n";
     if (failures == 0) {

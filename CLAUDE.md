@@ -35,13 +35,24 @@ all `DECOperators` fields):
   `DECOperators`. `assembleMeshOperators` / `assembleDECOperators`
   pin the caches via `require*` and bind the references.
 - **Value-owned fields** — `MeshOperators::mass` is variant-aware
-  (Voronoi / Barycentric / ConsistentFEM). Non-Voronoi variants don't
-  have a single geometry-central matrix to view, so mass is
-  materialised by value regardless of variant for uniform semantics.
+  (`Lumped` / `Galerkin`, matching geometry-central's
+  `vertexLumpedMassMatrix` and `vertexGalerkinMassMatrix`). Held by
+  value so the struct shape is uniform across variants — the alternative
+  would require a view variant tied to two different GC fields.
   `vertexDualAreas` and `vertexNormals` are also value-owned (geometry-
   central stores normals as a `VertexData<Vector3>`, not a matrix;
   `vertexNormals` uses the row-major `VertexNormalsMatrix` alias so
   the §11 row-major binding output is a direct memcpy).
+
+  Note: nxr-compute's `Lumped` variant is the lumped barycentric mass
+  (M_ii = sum of A_T/3 over incident triangles, sourced from
+  `vertexLumpedMassMatrix`). It is **not** Meyer's mixed-Voronoi mass
+  or any circumcentric construction — geometry-central does not
+  expose one. Anything labelled "Voronoi mass" in older nxr-compute
+  call sites or external tooling that wraps this library is the same
+  barycentric quantity under a misleading name; the hard break to
+  `lumped` / `galerkin` strings in `parseMassMatrixVariant()` is
+  intentional and version-bumps any caller using the old names.
 
 Lifetime contract: the binding holders (`ContextHolder` /
 `ContextWrapper`) keep the operator structs and the owning
@@ -344,7 +355,7 @@ bash scripts/build.sh Release
 #   build/Release/nxr_compute.mexw64              (MATLAB MEX)
 #   build/Release/test_eigen.exe                  (end-to-end smoke, 14 tests)
 #   build/Release/test_cholesky_cache.exe         (cache contract canary)
-#   build/Release/test_mass_variants.exe          (Voronoi/Barycentric/ConsistentFEM)
+#   build/Release/test_mass_variants.exe          (Lumped / Galerkin)
 #   build/Release/test_connection_laplacian.exe   (vertex/face/edge CL)
 #   build/Release/test_field_generators.exe       (eigenmode / heat / wave)
 #   build/Release/test_graph_agnostic.exe         (K/M-agnostic solvers on graphs)
@@ -374,9 +385,10 @@ Run the standalone native tests directly:
 contract. Any change to `CholeskyCache` or the solvers that consume
 it must keep this test passing. `test_cancellation.cpp` and
 `test_progress.cpp` guard the §12 cancel/progress contract.
-`test_mass_variants.cpp` validates that all three mass variants
-return the same Voronoi reference `vertexDualAreas` and that
-ConsistentFEM produces a different λ₁ from Voronoi/Barycentric.
+`test_mass_variants.cpp` validates that both mass variants return the
+same GC-sourced `vertexDualAreas` and produce distinct λ₁ spectra
+(a guard against accidental aliasing — the historical Voronoi/
+Barycentric pair were bit-identical for the same reason).
 
 `deps/` carries `geometry-central` (operator assembly) and
 `polyscope` (debug-only viewer used during native development; not

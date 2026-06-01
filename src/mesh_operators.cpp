@@ -54,94 +54,19 @@ using namespace geometrycentral::surface;
 
 // ── Mass-matrix variant dispatch ─────────────────────────────
 //
-// Three options, all symmetric and area-conserving (Σᵢⱼ Mᵢⱼ ≡ totalArea):
-//   Voronoi      — diagonal, mixed Voronoi-barycentric (Meyer 2003).
-//                  Default; what geometry-central's vertexDualAreas
-//                  returns. Robust on obtuse triangles.
-//   Barycentric  — diagonal, M_ii = Σ_{T ∋ i} (A_T / 3). Pure lumped.
-//   ConsistentFEM — sparse non-diagonal, full FEM mass: per-triangle
-//                   element matrix is (A_T/12)·[[2 1 1][1 2 1][1 1 2]],
-//                   from the L² integrals of P1 hat functions.
-//                   Eigenvalues converge faster to the continuous LB
-//                   spectrum on coarse meshes; matches lapy's default
-//                   and gptoolbox's `'full'` variant.
-
-namespace {
-
-// Reusable helper: emit triplets onto `out` and accumulate area into
-// `totalArea`. Caller is responsible for resizing M and calling
-// setFromTriplets. Iterates each face once, accumulating either a
-// diagonal entry per vertex or a 3×3 element per face.
-void assembleMassTriplets(
-    ManifoldSurfaceMesh& mesh,
-    VertexPositionGeometry& geometry,
-    MassMatrixVariant variant,
-    std::vector<Eigen::Triplet<double>>& out,
-    double& totalArea
-) {
-    totalArea = 0.0;
-    out.clear();
-
-    if (variant == MassMatrixVariant::Voronoi) {
-        // Mixed Voronoi-barycentric per Meyer 2003. geometry-central's
-        // vertexDualAreas implements the obtuse-aware mixed scheme.
-        geometry.requireVertexDualAreas();
-        out.reserve(mesh.nVertices());
-        for (Vertex v : mesh.vertices()) {
-            const int idx = static_cast<int>(v.getIndex());
-            const double a = geometry.vertexDualAreas[v];
-            out.emplace_back(idx, idx, a);
-            totalArea += a;
-        }
-        return;
-    }
-
-    geometry.requireFaceAreas();
-
-    if (variant == MassMatrixVariant::Barycentric) {
-        // Σ_{T ∋ i} (A_T / 3). Each triangle distributes A/3 to each of
-        // its three vertices on the diagonal; total mass per face = A,
-        // so ΣM = totalArea exactly.
-        out.reserve(3 * mesh.nFaces());  // setFromTriplets dedupes per (i,j)
-        for (Face f : mesh.faces()) {
-            const double third = geometry.faceAreas[f] / 3.0;
-            totalArea += geometry.faceAreas[f];
-            for (Vertex v : f.adjacentVertices()) {
-                const int idx = static_cast<int>(v.getIndex());
-                out.emplace_back(idx, idx, third);
-            }
-        }
-        return;
-    }
-
-    if (variant == MassMatrixVariant::ConsistentFEM) {
-        // Per-triangle element matrix M_e = (A/12) · [[2 1 1][1 2 1][1 1 2]].
-        // Off-diagonal entries auto-sum across shared edges via
-        // setFromTriplets. Total per triangle = A·12/12 = A → ΣM = totalArea.
-        out.reserve(9 * mesh.nFaces());
-        for (Face f : mesh.faces()) {
-            const double a12 = geometry.faceAreas[f] / 12.0;
-            totalArea += geometry.faceAreas[f];
-            int idx[3];
-            int k = 0;
-            for (Vertex v : f.adjacentVertices()) {
-                idx[k++] = static_cast<int>(v.getIndex());
-            }
-            for (int i = 0; i < 3; ++i) {
-                for (int j = 0; j < 3; ++j) {
-                    out.emplace_back(idx[i], idx[j],
-                                     (i == j ? 2.0 : 1.0) * a12);
-                }
-            }
-        }
-        return;
-    }
-
-    throw Error(ErrorCode::InvalidInput,
-        "assembleMassTriplets: unknown MassMatrixVariant");
-}
-
-} // namespace
+// Two options, names matching geometry-central's vocabulary exactly:
+//   Lumped   — diagonal, sourced from GC's vertexLumpedMassMatrix
+//              (== diag(vertexDualAreas), where each vertexDualAreas[v]
+//              is the sum of A_T/3 over incident triangles). NOT a
+//              circumcentric or mixed-Voronoi construction.
+//   Galerkin — sparse, sourced from GC's vertexGalerkinMassMatrix.
+//              Per-triangle element matrix is (A_T/12)·[[2 1 1][1 2 1][1 1 2]],
+//              the L² integrals of P1 hat functions. Eigenvalues converge
+//              to the continuous LB spectrum faster than lumped on coarse
+//              meshes; matches lapy's default and gptoolbox's `'full'`.
+//
+// Both variants conserve total area (Σᵢⱼ Mᵢⱼ ≡ totalArea) and are symmetric.
+// Both are sourced directly from geometry-central rather than rebuilt here.
 
 // ── Operator Assembly ────────────────────────────────────────
 
@@ -160,34 +85,32 @@ ManifoldOperators assembleManifoldOperators(Manifold& m,
     // dropped (verified bit-identical across all numerical test suites).
     geometry.requireCotanLaplacian();
 
-    // Mass matrix per requested variant.
-    //   * Voronoi: source from geometry.vertexLumpedMassMatrix (avoids the
-    //     redundant triplet rebuild — geometry-central already maintains
-    //     this matrix and pinning is cheap).
-    //   * Barycentric / ConsistentFEM: build via assembleMassTriplets
-    //     since geometry-central doesn't cache them.
-    //
-    // Mass is stored by VALUE in MeshOperators (not a view) because the
-    // non-Voronoi variants don't have a single backing geometry-central
-    // matrix to view; uniform value-storage keeps the struct shape
-    // variant-independent.
+    // Mass matrix per requested variant — both source directly from
+    // geometry-central. Mass is stored by VALUE (not a view) so the
+    // struct shape stays uniform across variants; for Lumped this
+    // implies one extra sparse-matrix copy on assembly, which is
+    // negligible vs. the eigensolve / Poisson costs.
     Eigen::SparseMatrix<double> mass;
     double totalArea = 0.0;
-    if (variant == MassMatrixVariant::Voronoi) {
+    if (variant == MassMatrixVariant::Lumped) {
         geometry.requireVertexLumpedMassMatrix();
         mass = geometry.vertexLumpedMassMatrix;
         totalArea = mass.diagonal().sum();
+    } else if (variant == MassMatrixVariant::Galerkin) {
+        geometry.requireVertexGalerkinMassMatrix();
+        mass = geometry.vertexGalerkinMassMatrix;
+        // Σᵢⱼ Mᵢⱼ ≡ totalArea for the Galerkin matrix by construction
+        // (each face contributes A_T · sum_of_element_matrix/12 = A_T).
+        totalArea = mass.sum();
     } else {
-        std::vector<Eigen::Triplet<double>> massTriplets;
-        assembleMassTriplets(mesh, geometry, variant, massTriplets, totalArea);
-        mass.resize(nV, nV);
-        mass.setFromTriplets(massTriplets.begin(), massTriplets.end());
+        throw Error(ErrorCode::InvalidInput,
+            "assembleManifoldOperators: unknown MassMatrixVariant");
     }
 
-    // vertexDualAreas always carries mixed-Voronoi areas regardless of
-    // mass variant — downstream consumers (curvature, gradients,
-    // diffusion) expect per-vertex weights even when the L² inner
-    // product uses a non-diagonal M.
+    // vertexDualAreas reports GC's per-vertex A/3 dual area regardless
+    // of the chosen mass variant — downstream consumers (curvature,
+    // gradients, diffusion) want a per-vertex weight even when the L²
+    // inner product uses a non-diagonal M.
     geometry.requireVertexDualAreas();
     Eigen::VectorXd vertexDualAreas(nV);
     for (Vertex v : mesh.vertices()) {
@@ -212,9 +135,8 @@ ManifoldOperators assembleManifoldOperators(Manifold& m,
     }
 
     const char* variantName =
-        variant == MassMatrixVariant::Voronoi      ? "voronoi"      :
-        variant == MassMatrixVariant::Barycentric  ? "barycentric"  :
-        variant == MassMatrixVariant::ConsistentFEM? "full"         : "?";
+        variant == MassMatrixVariant::Lumped   ? "lumped"   :
+        variant == MassMatrixVariant::Galerkin ? "galerkin" : "?";
     std::cout << "[mesh_operators] Assembled: "
               << nV << " V, " << nE << " E, " << nF << " F "
               << "(total area = " << totalArea
@@ -241,12 +163,12 @@ ManifoldOperators assembleManifoldOperators(
 }
 
 MassMatrixVariant parseMassMatrixVariant(const std::string& name) {
-    if (name == "voronoi")     return MassMatrixVariant::Voronoi;
-    if (name == "barycentric") return MassMatrixVariant::Barycentric;
-    if (name == "full")        return MassMatrixVariant::ConsistentFEM;
+    if (name == "lumped")   return MassMatrixVariant::Lumped;
+    if (name == "galerkin") return MassMatrixVariant::Galerkin;
     throw Error(ErrorCode::InvalidInput,
         "Unknown mass-matrix variant '" + name +
-        "' — expected 'voronoi', 'barycentric', or 'full'");
+        "' — expected 'lumped' or 'galerkin' (matching geometry-central's "
+        "vertexLumpedMassMatrix and vertexGalerkinMassMatrix).");
 }
 
 // ── DEC Operators ────────────────────────────────────────────

@@ -5,7 +5,7 @@
 %
 %   After running, your workspace holds `M` with, e.g.:
 %       M.operator.stiffness            cotan Laplacian (sparse nV x nV)
-%       M.operator.mass                 Voronoi mass    (sparse nV x nV)
+%       M.operator.mass                 lumped mass     (sparse nV x nV)
 %       M.operator.d0 / d1              DEC exterior derivatives
 %       M.operator.star0 / star1 / star2 / star1Inverse   Hodge stars
 %       M.operator.connectionLaplacian  struct

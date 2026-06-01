@@ -7,7 +7,9 @@ function mctx = context(V, F)
 %   F    nF-by-3 integer (zero-based), triangle indices
 %
 %   Returns a struct holding the mesh, the assembled cotangent stiffness
-%   `K`, the Voronoi mass `M`, and the per-axis sizes `nV / nE / nF`.
+%   `K`, the lumped mass `M` (diagonal, A/3-per-vertex from
+%   geometry-central's vertexLumpedMassMatrix), and the per-axis sizes
+%   `nV / nE / nF`.
 %   Each nxr.manifold.* leaf takes mctx as its first argument, mirroring
 %   the JS / WASM / N-API binding's six-group surface:
 %
@@ -24,7 +26,7 @@ function mctx = context(V, F)
 %   Lifetime: MATLAB is value-typed, so the struct is copied at every
 %   call boundary. The MEX dispatcher itself is stateless — each call
 %   rebuilds the C++ Manifold internally. Eager assembly here
-%   pays the cotangent / Voronoi cost once per `nxr.manifold.context`
+%   pays the cotangent / mass-assembly cost once per `nxr.manifold.context`
 %   call; downstream leaves operate on the resulting K and M directly,
 %   matching the WASM shim's lazy-cache semantics on first access.
 %

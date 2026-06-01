@@ -108,29 +108,29 @@ namespace nxr::manifold::ops {
 /**
  * Mass-matrix variant for the FEM L² inner product ⟨u, v⟩ = uᵀ M v.
  *
- * All three variants conserve total surface area (Σᵢⱼ Mᵢⱼ == totalArea)
- * and are symmetric. They differ in M's structure and consequently in
- * the eigenvalues / eigenvectors of the generalized problem K φ = λ M φ.
+ * Names match geometry-central's vocabulary exactly:
+ * `vertexLumpedMassMatrix` and `vertexGalerkinMassMatrix`
+ * (see `intrinsic_geometry_interface.h`). Both variants conserve total
+ * surface area (Σᵢⱼ Mᵢⱼ == totalArea) and are symmetric. They differ
+ * in M's structure and in the eigenvalues / eigenvectors of the
+ * generalized problem K φ = λ M φ.
  *
- * - Voronoi (default): diagonal, M_ii = vertex's mixed Voronoi-barycentric
- *   dual area (Meyer et al. 2003). Robust on obtuse triangles. Matches
- *   geometry-central's vertexDualAreas. The default for backward-compat.
+ * - Lumped (default): diagonal, M_ii = (Σ adjacent triangle areas) / 3.
+ *   Sources from geometry-central's `vertexLumpedMassMatrix`, which is
+ *   `diag(vertexDualAreas)` where each `vertexDualAreas[v]` is the sum
+ *   of A_T/3 over incident triangles. This is the lumped barycentric
+ *   mass — NOT a circumcentric or mixed-Voronoi construction.
  *
- * - Barycentric: diagonal, M_ii = (Σ adjacent triangle areas) / 3. Pure
- *   lumped mass, no Voronoi correction. Cheaper to assemble; less
- *   geometrically accurate than Voronoi on irregular triangulations.
- *
- * - ConsistentFEM: full sparse, off-diagonal couplings between adjacent
+ * - Galerkin: full sparse, off-diagonal couplings between adjacent
  *   vertices. Per-triangle element matrix is (A_T / 12) · [[2 1 1][1 2 1][1 1 2]],
- *   from L² integrals of piecewise-linear hat functions. This is the
- *   canonical FEM mass — used by lapy and gptoolbox's `'full'` variant.
- *   Eigenvalues converge to the continuous Laplace–Beltrami spectrum
- *   faster than diagonal lumped variants on coarse meshes.
+ *   from L² integrals of piecewise-linear hat functions. Sources from
+ *   geometry-central's `vertexGalerkinMassMatrix`. Eigenvalues converge
+ *   to the continuous Laplace–Beltrami spectrum faster than the lumped
+ *   variant on coarse meshes.
  */
 enum class MassMatrixVariant {
-    Voronoi,        // diagonal, mixed Voronoi-barycentric (Meyer)
-    Barycentric,    // diagonal, area/3 per vertex
-    ConsistentFEM   // sparse, off-diagonal couplings (full FEM mass)
+    Lumped,    // diagonal; matches GC vertexLumpedMassMatrix
+    Galerkin   // sparse FEM; matches GC vertexGalerkinMassMatrix
 };
 
 // ManifoldOperators / DECOperators mix view and value semantics. Field
@@ -146,10 +146,10 @@ enum class MassMatrixVariant {
 //       require* call pins them on the geometry.
 //
 //   * Owned field:
-//       ManifoldOperators::mass — variant-dependent (Voronoi / Barycentric /
-//       ConsistentFEM); non-Voronoi variants don't have a single
-//       geometry-central matrix to view, so mass is materialised by
-//       value regardless of variant for uniform semantics.
+//       ManifoldOperators::mass — variant-dependent (Lumped / Galerkin);
+//       held by value because GC exposes two distinct matrices and we
+//       want a single uniform field shape regardless of which variant
+//       the caller requested.
 //
 // Lifetime contract: bindings must keep the owning Manifold alive
 // for the entire lifetime of any ManifoldOperators / DECOperators they hold,
@@ -188,7 +188,7 @@ struct ManifoldOperators {
     const Eigen::SparseMatrix<double>& cotanLaplacian;  // view: GC's cotangent Laplacian
     Eigen::SparseMatrix<double> mass;                   // owned: depends on massVariant
     MassMatrixVariant massVariant;                      // which variant produced `mass`
-    Eigen::VectorXd vertexDualAreas;                    // [nV] mixed Voronoi (variant-independent)
+    Eigen::VectorXd vertexDualAreas;                    // [nV] A/3-per-vertex, from GC vertexDualAreas (variant-independent)
     VertexNormalsMatrix vertexNormals;                  // [nV, 3] row-major; see alias comment above
     double totalArea;
     // nV / nE / nF intentionally omitted — read from the owning
@@ -196,23 +196,24 @@ struct ManifoldOperators {
     // mesh metadata that's already canonical on the context.
 };
 
-/** Assemble operators from a context. Default mass variant is Voronoi
- *  (matches the previous behavior and the cortical-flow / mesh-tests
- *  consumers). */
+/** Assemble operators from a context. Default mass variant is Lumped
+ *  (diagonal, A/3-per-vertex). Same numerical behavior as the prior
+ *  default that was misnamed `Voronoi`. */
 ManifoldOperators assembleManifoldOperators(
     Manifold& m,
-    MassMatrixVariant variant = MassMatrixVariant::Voronoi);
+    MassMatrixVariant variant = MassMatrixVariant::Lumped);
 
 /** Convenience overload: creates context and assembles operators in one call. */
 ManifoldOperators assembleManifoldOperators(
     const double* vertices, int nV,
     const int32_t* faces, int nF,
-    MassMatrixVariant variant = MassMatrixVariant::Voronoi
+    MassMatrixVariant variant = MassMatrixVariant::Lumped
 );
 
-/** String → enum helper for binding shells (WASM, addon).
- *  Accepts "voronoi", "barycentric", "full". Throws Error(InvalidInput)
- *  on unknown. Case-sensitive (matches the MATLAB +bct convention). */
+/** String → enum helper for binding shells (WASM, addon, MEX).
+ *  Accepts "lumped" and "galerkin", matching geometry-central's
+ *  `vertexLumpedMassMatrix` and `vertexGalerkinMassMatrix`. Throws
+ *  Error(InvalidInput) on unknown. Case-sensitive. */
 MassMatrixVariant parseMassMatrixVariant(const std::string& name);
 
 // ── DEC Operators ────────────────────────────────────────────
@@ -229,8 +230,8 @@ struct DECOperators {
 
     // All fields are views into geometry-central's cached matrices —
     // see the comment block above ManifoldOperators for the lifetime
-    // contract. dec.hodge0 is the same matrix as ops.mass (both
-    // are the lumped Voronoi mass).
+    // contract. dec.hodge0 is the same matrix as ops.mass when
+    // ops.massVariant == Lumped (both source from GC vertexDualAreas).
     const Eigen::SparseMatrix<double>& d0;      // vertex → edge
     const Eigen::SparseMatrix<double>& d1;      // edge → face
     const Eigen::SparseMatrix<double>& hodge0;  // vertex → vertex (diagonal)
@@ -516,7 +517,7 @@ EigenResult removeDC(const EigenResult& result);
  * Uses cache.laplacian(K) for the LLT factor of (K + ε·I), so
  * repeated calls with the same cache skip the factorization step.
  *
- * Agnostic in K and M: works on cotangent Laplacians + Voronoi mass
+ * Agnostic in K and M: works on cotangent Laplacians + lumped mass
  * (mesh case), graph Laplacians + node-weight diagonals (graph case),
  * or any SPD pair. The total mass `Σᵢⱼ Mᵢⱼ` plays the role of the
  * "totalArea" normalization for the weighted mean.
@@ -1180,7 +1181,7 @@ Eigen::VectorXd randomDecomposed1Form(
  *  The DC mode (if present in `eig`) is harmless — its λ ≈ 0 means
  *  exp(-αtλ) ≈ 1 and it just reproduces the mean offset.
  *
- *  Agnostic in M: works on Voronoi mass (mesh) or node-weight
+ *  Agnostic in M: works on lumped mass (mesh) or node-weight
  *  diagonals (graph). M-orthonormality of `eig.eigenvectors`
  *  is the caller's responsibility regardless.
  *

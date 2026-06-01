@@ -574,12 +574,12 @@ no nested wrapper types.
 
 ```cpp
 namespace nxr::compute::operators {
-  enum class MassVariant       { Voronoi, Barycentric, Full };
+  enum class MassVariant       { Lumped, Galerkin };
   enum class StiffnessVariant  { Cotan };
   enum class StiffnessSign     { Positive, Negative };
 
   struct LaplaceBeltramiOptions {
-    MassVariant      mass       = MassVariant::Voronoi;
+    MassVariant      mass       = MassVariant::Lumped;
     StiffnessVariant stiffness  = StiffnessVariant::Cotan;
     StiffnessSign    sign       = StiffnessSign::Positive;
     bool             symmetrize = true;
@@ -593,7 +593,7 @@ namespace nxr::compute::operators {
   LaplaceBeltramiResult laplaceBeltrami(const ComputeContext& ctx,
                                         const LaplaceBeltramiOptions& opts = {});
 
-  Eigen::SparseMatrix<double> mass     (const ComputeContext& ctx, MassVariant      = MassVariant::Voronoi);
+  Eigen::SparseMatrix<double> mass     (const ComputeContext& ctx, MassVariant      = MassVariant::Lumped);
   Eigen::SparseMatrix<double> stiffness(const ComputeContext& ctx, StiffnessVariant = StiffnessVariant::Cotan,
                                                                    StiffnessSign    = StiffnessSign::Positive);
 
