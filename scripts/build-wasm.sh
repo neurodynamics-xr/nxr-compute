@@ -19,26 +19,34 @@ PROJECT_ROOT="$SCRIPT_DIR/.."
 BUILD_DIR="$PROJECT_ROOT/build_wasm"
 CONFIG="${1:-Release}"
 
-# Resolve emsdk binaries. On Windows the wrappers are .bat files, which
-# bash's `command -v` doesn't find via PATH lookup; we call them by
-# absolute path to side-step the issue.
-if [ -z "$EMSDK" ]; then
-    if [ -f /c/emsdk/emsdk_env.sh ]; then
-        EMSDK="/c/emsdk"
-    else
-        echo "ERROR: EMSDK env var unset and /c/emsdk not found."
-        echo "       Install: https://emscripten.org/docs/getting_started/downloads.html"
+# Resolve emcc/emcmake/emmake across platforms.
+#   - Linux / macOS / CI: activating emsdk (`source emsdk_env.sh`, or the
+#     mymindstorm/setup-emsdk GitHub Action) puts emcc/emcmake/emmake on
+#     PATH and exports EMSDK, so PATH lookup finds them directly.
+#   - Windows (Git Bash): the wrappers are .bat files that bash's PATH
+#     lookup misses, so we call them by absolute path under $EMSDK.
+if command -v emcmake >/dev/null 2>&1; then
+    EMCC_BIN="emcc"
+    EMCMAKE_BIN="emcmake"
+    EMMAKE_BIN="emmake"
+else
+    if [ -z "$EMSDK" ]; then
+        if [ -f /c/emsdk/emsdk_env.sh ]; then
+            EMSDK="/c/emsdk"
+        else
+            echo "ERROR: emcc not on PATH and EMSDK unset (/c/emsdk not found)."
+            echo "       Install: https://emscripten.org/docs/getting_started/downloads.html"
+            echo "       Then activate it:  source \"\$EMSDK/emsdk_env.sh\""
+            exit 1
+        fi
+    fi
+    EMCC_BIN="$EMSDK/upstream/emscripten/emcc.bat"
+    EMCMAKE_BIN="$EMSDK/upstream/emscripten/emcmake.bat"
+    EMMAKE_BIN="$EMSDK/upstream/emscripten/emmake.bat"
+    if [ ! -f "$EMCC_BIN" ]; then
+        echo "ERROR: $EMCC_BIN not found. Did you run \`./emsdk install latest\`?"
         exit 1
     fi
-fi
-
-EMCC_BIN="$EMSDK/upstream/emscripten/emcc.bat"
-EMCMAKE_BIN="$EMSDK/upstream/emscripten/emcmake.bat"
-EMMAKE_BIN="$EMSDK/upstream/emscripten/emmake.bat"
-
-if [ ! -f "$EMCC_BIN" ]; then
-    echo "ERROR: $EMCC_BIN not found. Did you run \`./emsdk install latest\`?"
-    exit 1
 fi
 
 # emcmake invokes cmake + needs a Unix-style generator (ninja or
