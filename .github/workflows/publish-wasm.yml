@@ -1,0 +1,118 @@
+name: Publish WASM binary
+
+# Separate from publish-mex.yml on purpose: WASM is platform-independent
+# (one build serves every consumer), so there is no OS/MATLAB matrix, and
+# it ships under its own `wasm-v*` tag so its release cadence is decoupled
+# from the MEX `v*` releases.
+
+on:
+  push:
+    tags:
+      - 'wasm-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build + release WASM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed by the release step
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          # 'latest' tracks the current emsdk. Pin to a specific version
+          # (e.g. 3.1.x) here if a release ever needs to be reproducible
+          # against an exact toolchain.
+          version: latest
+          actions-cache-folder: emsdk-cache
+
+      - name: Set up Node (for smoke test)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build WASM (Release)
+        # build-wasm.sh builds build_wasm/{nxr_compute.js,.wasm} and
+        # refreshes dist/wasm/ from it — the smoke test's shim path
+        # (bindings/wasm/js/index.mjs) loads from dist/wasm/, so this
+        # copy must happen before the smoke step.
+        run: bash scripts/build-wasm.sh Release
+
+      - name: Sanity check outputs
+        run: |
+          test -f build_wasm/nxr_compute.js
+          test -f build_wasm/nxr_compute.wasm
+          ls -la build_wasm/nxr_compute.js build_wasm/nxr_compute.wasm
+
+      - name: Smoke test (Embind round-trip)
+        run: node scripts/_smoke-wasm.mjs
+
+      - name: Create release zip (bare .js + .wasm)
+        id: zip
+        run: |
+          REF_NAME="${GITHUB_REF_NAME:-manual}"
+          ZIP_NAME="nxr-compute-wasm-${REF_NAME}.zip"
+          # Stage the two raw Emscripten outputs at the zip root.
+          STAGE="nxr-compute-wasm"
+          mkdir -p "$STAGE"
+          cp build_wasm/nxr_compute.js   "$STAGE/"
+          cp build_wasm/nxr_compute.wasm "$STAGE/"
+          zip -rj "$ZIP_NAME" "$STAGE"
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          unzip -l "$ZIP_NAME"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.zip.outputs.zip_name }}
+          path: ${{ steps.zip.outputs.zip_name }}
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/wasm-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          # Ship both the zip and the loose files: web consumers (e.g.
+          # nxr-design-system) fetch nxr_compute.js + nxr_compute.wasm
+          # directly, while the zip is the convenient single download.
+          files: |
+            ${{ steps.zip.outputs.zip_name }}
+            build_wasm/nxr_compute.js
+            build_wasm/nxr_compute.wasm
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          body: |
+            ## WebAssembly binary — ${{ github.ref_name }}
+
+            Platform-independent Emscripten build of the `nxr_compute`
+            Embind binding. One build runs in browser, Node, and Web
+            Worker environments.
+
+            ### Assets
+
+            - `nxr-compute-wasm-${{ github.ref_name }}.zip` — both files zipped.
+            - `nxr_compute.js` — ES-module factory (`createNxrComputeModule`).
+            - `nxr_compute.wasm` — the WebAssembly binary (loaded alongside the `.js`).
+
+            ### Use
+
+            ```js
+            import createNxrComputeModule from './nxr_compute.js'
+            const nxr = await createNxrComputeModule()   // resolves nxr_compute.wasm beside the .js
+            const ctx = new nxr.Manifold(verts, faces)
+            ```
+
+            Keep `nxr_compute.js` and `nxr_compute.wasm` in the same
+            directory, or pass a `locateFile` resolver to the factory.
+
+            ---
