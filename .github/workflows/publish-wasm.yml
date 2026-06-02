@@ -60,7 +60,10 @@ jobs:
         id: zip
         run: |
           REF_NAME="${GITHUB_REF_NAME:-manual}"
-          ZIP_NAME="nxr-compute-wasm-${REF_NAME}.zip"
+          # Strip the wasm- tag prefix so the name isn't doubled:
+          # tag wasm-v0.1.0 -> nxr-compute-wasm-v0.1.0.zip (not -wasm-wasm-).
+          VERSION="${REF_NAME#wasm-}"
+          ZIP_NAME="nxr-compute-wasm-${VERSION}.zip"
           # Stage the two raw Emscripten outputs at the zip root.
           STAGE="nxr-compute-wasm"
           mkdir -p "$STAGE"
