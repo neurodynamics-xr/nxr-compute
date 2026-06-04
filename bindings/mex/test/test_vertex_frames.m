@@ -2,6 +2,9 @@ function test_vertex_frames
 % test_vertex_frames — the per-vertex tangent-frame export ('vertexFrames').
 % Raw-mex test on the icosahedron fixture (no Brainstorm, no +nxr): asserts the
 % frame is [nV x 3], unit-length, orthonormal, and right-handed (e1 x e2 = n).
+% NOTE: this checks geometric validity only. The gauge ROTATION (that e1 aligns
+% with the connection Laplacian's angle-0 axis) is verified in the M3 phase-engine
+% plan via a decoded-Fiedler vs smoothVertex cross-check.
 fprintf('[test_vertex_frames] starting\n');
 
 thisDir  = fileparts(mfilename('fullpath'));
