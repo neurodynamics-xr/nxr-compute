@@ -1085,6 +1085,21 @@ struct FaceFrames {
 
 FaceFrames frames(Manifold& m);
 
+/* Per-vertex orthonormal tangent frame = geometry-central's vertexTangentBasis,
+ * the 3D realization of the per-vertex tangent space (halfedgeVectorsInVertex) in
+ * which the vertex connection-Laplacian's complex eigenvector coordinates live:
+ *   e1 = basisX (the angle-0 / first-outgoing-halfedge axis)
+ *   e2 = basisY = n x e1
+ *   n  = vertex normal
+ * A connection-mode coordinate z=(a,b) at vertex i decodes to a*e1_i + b*e2_i. */
+struct VertexFrames {
+    Eigen::MatrixXd e1;       // [nV, 3] — first tangent (basisX)
+    Eigen::MatrixXd e2;       // [nV, 3] — second tangent (n × e1)
+    Eigen::MatrixXd normals;  // [nV, 3] — vertex normals
+};
+
+VertexFrames vertexFrames(Manifold& m);
+
 } // namespace nxr::manifold::geometry
 
 namespace nxr::field::generate {
@@ -1363,4 +1378,5 @@ namespace nxr::manifold {
     using geometry::CurvatureResult;
     using geometry::NormalType;
     using geometry::FaceFrames;
+    using geometry::VertexFrames;
 } // namespace nxr::manifold

@@ -778,6 +778,14 @@ void cmdFrames(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
     plhs[0] = faceFramesToStruct(nxr::manifold::geometry::frames(*h.ctx));
 }
 
+void cmdVertexFrames(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 2) {
+        throw std::invalid_argument("nxr_compute('vertexFrames', handle) takes exactly 1 argument");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    plhs[0] = vertexFramesToStruct(nxr::manifold::geometry::vertexFrames(*h.ctx));
+}
+
 nxr::manifold::geometry::NormalType parseNormalType(const std::string& s) {
     using NT = nxr::manifold::geometry::NormalType;
     if (s == "angle")  return NT::AngleWeighted;
@@ -1071,6 +1079,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "assembleDECOperators")        cmdAssembleDECOperators(nlhs, plhs, nrhs, prhs);
         else if (cmd == "assembleConnectionLaplacian") cmdAssembleConnectionLaplacian(nlhs, plhs, nrhs, prhs);
         else if (cmd == "frames")                      cmdFrames(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "vertexFrames")                cmdVertexFrames(nlhs, plhs, nrhs, prhs);
         else if (cmd == "normals")                     cmdNormals(nlhs, plhs, nrhs, prhs);
         else if (cmd == "poisson")                     cmdPoisson(nlhs, plhs, nrhs, prhs);
         else if (cmd == "heat")                        cmdHeat(nlhs, plhs, nrhs, prhs);

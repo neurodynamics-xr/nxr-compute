@@ -369,6 +369,15 @@ inline mxArray* faceFramesToStruct(const nxr::manifold::geometry::FaceFrames& f)
     return s;
 }
 
+inline mxArray* vertexFramesToStruct(const nxr::manifold::geometry::VertexFrames& f) {
+    const char* fields[] = {"e1", "e2", "normals"};
+    mxArray* s = mxCreateStructMatrix(1, 1, 3, fields);
+    mxSetField(s, 0, "e1",      eigenMatrixToMx(f.e1));
+    mxSetField(s, 0, "e2",      eigenMatrixToMx(f.e2));
+    mxSetField(s, 0, "normals", eigenMatrixToMx(f.normals));
+    return s;
+}
+
 inline mxArray* hodgeResultToStruct(const nxr::manifold::solve::HodgeResult& r) {
     const char* fields[] = {
         "exactPotential", "coExactPotentialF", "coExactPotentialV",

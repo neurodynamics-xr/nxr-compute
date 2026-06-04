@@ -53,6 +53,7 @@ add_library(nxr_compute STATIC
   src/isolines.cpp
   src/direction_field.cpp
   src/face_frames.cpp
+  src/vertex_frames.cpp
   src/geodesic_path.cpp
   src/parametrization.cpp
   src/vector_heat.cpp
