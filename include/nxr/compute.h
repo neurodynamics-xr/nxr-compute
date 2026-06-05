@@ -887,6 +887,32 @@ struct SmoothVertexFieldResult {
 };
 
 /**
+ * Compute the trivial connection 1-form φ = δβ (per-edge rotation angles).
+ *
+ * Solves the Poisson system A β = -K + 2π σ where:
+ *   A   = d0ᵀ ★₁ d0 (cotangent Laplacian, via CholeskyCache::hodgeExact)
+ *   K   = per-vertex Gaussian curvature (angle defect)
+ *   σ   = singularity index at each vertex (0 for non-singular)
+ *
+ * Returns φ = ★₁ d₀ β as an Eigen::VectorXd of length nEdges.
+ * Sign convention: φ(e) is positive in the direction of e.halfedge().
+ *
+ * Gauss-Bonnet requirement: Σ singularityMap values must equal χ(mesh).
+ * This is NOT checked here — the caller is responsible (directionField
+ * checks it; assembleTrivialConnectionLaplacian documents it).
+ *
+ * For sphere topology (genus 0, χ=2): two vertices with σ=1.0 each.
+ * For n-RoSy fields: use σ = (desired holonomy) / (2π).
+ *   e.g. nSym=4 cross field on sphere: two vertices with σ=0.5.
+ */
+Eigen::VectorXd computeTrivialConnection(
+    Manifold& m,
+    const ops::DECOperators& dec,
+    ops::CholeskyCache& cache,
+    const std::map<int, double>& singularityMap
+);
+
+/**
  * Compute a smooth direction field with prescribed singularities.
  * Uses the trivial connections algorithm (Crane, de Goes, Desbrun).
  *
