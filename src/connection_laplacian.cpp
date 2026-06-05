@@ -256,4 +256,83 @@ ConnectionLaplacianFormat parseConnectionLaplacianFormat(const std::string& name
                 "' — expected 'real2N' or 'complex'.");
 }
 
+ConnectionLaplacian assembleTrivialConnectionLaplacian(
+    Manifold& m,
+    const std::map<int, double>& singularityMap,
+    const ops::DECOperators& dec,
+    ops::CholeskyCache& cache,
+    const ConnectionLaplacianOptions& opts
+) {
+    if (opts.domain != ConnectionDomain::Vertex) {
+        throw Error(ErrorCode::InvalidInput,
+            "assembleTrivialConnectionLaplacian: only ConnectionDomain::Vertex "
+            "is currently supported.",
+            "Face and EdgeCrouzeixRaviart trivial-connection Laplacians are "
+            "not yet implemented. Use domain='vertex'.");
+    }
+    if (opts.nSym <= 0) {
+        throw Error(ErrorCode::InvalidInput,
+            "assembleTrivialConnectionLaplacian: nSym must be positive (got " +
+            std::to_string(opts.nSym) + ")",
+            "Common values: 1 (vector field), 2 (line field), 4 (cross field).");
+    }
+
+    Eigen::VectorXd phi =
+        nxr::manifold::connection::computeTrivialConnection(m, dec, cache, singularityMap);
+
+    auto& geometry = m.geometry();
+    SurfaceMesh& mesh = m.mesh();
+    int N = m.nV();
+
+    geometry.requireVertexIndices();
+    geometry.requireEdgeCotanWeights();
+    geometry.requireTransportVectorsAlongHalfedge();
+    geometry.requireEdgeIndices();
+
+    std::vector<Eigen::Triplet<std::complex<double>>> triplets;
+    triplets.reserve(2 * mesh.nHalfedges());
+
+    for (Halfedge he : mesh.halfedges()) {
+        const size_t iTail  = geometry.vertexIndices[he.vertex()];
+        const size_t iTip   = geometry.vertexIndices[he.next().vertex()];
+        const double weight = geometry.edgeCotanWeights[he.edge()];
+        const int    eIdx   = static_cast<int>(geometry.edgeIndices[he.edge()]);
+
+        const double signTwin = (he.twin() == he.edge().halfedge()) ? 1.0 : -1.0;
+        const Vector2 lcRotBase = geometry.transportVectorsAlongHalfedge[he.twin()];
+        const std::complex<double> lcRotC(lcRotBase.x, lcRotBase.y);
+        const std::complex<double> correction = std::polar(1.0, signTwin * phi(eIdx));
+        const std::complex<double> tcRotC =
+            std::pow(lcRotC * correction, static_cast<double>(opts.nSym));
+
+        triplets.emplace_back(iTail, iTail, std::complex<double>(weight, 0.0));
+        triplets.emplace_back(iTail, iTip,
+            std::complex<double>(-weight * tcRotC.real(), -weight * tcRotC.imag()));
+    }
+
+    if (opts.regularization != 0.0) {
+        for (int i = 0; i < N; ++i)
+            triplets.emplace_back(i, i, std::complex<double>(opts.regularization, 0.0));
+    }
+
+    Eigen::SparseMatrix<std::complex<double>> K_complex(N, N);
+    K_complex.setFromTriplets(triplets.begin(), triplets.end());
+
+    ConnectionLaplacian result;
+    result.baseDim        = N;
+    result.domain         = opts.domain;
+    result.nSym           = opts.nSym;
+    result.regularization = opts.regularization;
+    result.format         = opts.format;
+
+    if (opts.format == ConnectionLaplacianFormat::Real2N) {
+        result.K_real    = lowerToReal2N(K_complex, N);
+        result.outputDim = 2 * N;
+    } else {
+        result.K_complex = std::move(K_complex);
+        result.outputDim = N;
+    }
+    return result;
+}
+
 } // namespace nxr::manifold::ops::laplacian::connection
