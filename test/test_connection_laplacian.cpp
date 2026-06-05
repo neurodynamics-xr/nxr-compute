@@ -104,6 +104,105 @@ static double complexFrobeniusAntiHermitian(
     return diff.norm();
 }
 
+// ── Trivial Connection Laplacian tests ───────────────────────────────────
+//
+// Verifies:
+//   1. computeTrivialConnection returns a vector of length nEdges
+//   2. Complex format: K_complex is Hermitian (||K - Kᴴ||_F < 1e-10)
+//   3. Real2N format: K_real is symmetric (||K - Kᵀ||_F < 1e-10)
+//   4. TC Laplacian differs from LC Laplacian (||K_TC - K_LC||_F > 1e-6)
+//   5. Face domain throws Error(InvalidInput)
+//   6. nSym=0 throws Error(InvalidInput)
+static void testTrivialConnectionLaplacian(nxr::manifold::Manifold& m) {
+    std::cout << "\n── trivial connection Laplacian ─────────────────────\n";
+
+    // Gauss-Bonnet: two index-1 singularities → Σσ = 2 = χ(sphere)
+    std::map<int, double> singMap = {{0, 1.0}, {1, 1.0}};
+
+    auto dec = nxr::manifold::ops::assembleDECOperators(m);
+    nxr::manifold::ops::CholeskyCache cache;
+
+    // ── Test 1: phi.size() == nEdges ─────────────────────────────────────
+    {
+        Eigen::VectorXd phi = nxr::manifold::connection::computeTrivialConnection(
+            m, dec, cache, singMap);
+        check(phi.size() == m.nE(),
+              "phi.size() == nEdges");
+        std::cout << "    phi.norm() = " << phi.norm() << " (non-zero Poisson solve)\n";
+    }
+
+    // ── Test 2: Complex Hermitian ─────────────────────────────────────────
+    {
+        ConnectionLaplacianOptions opts;
+        opts.format = ConnectionLaplacianFormat::Complex;
+        opts.nSym   = 1;
+        auto cl = nxr::manifold::ops::laplacian::connection::assembleTrivialConnectionLaplacian(
+            m, singMap, dec, cache, opts);
+        check(cl.baseDim  == m.nV(), "TC complex: baseDim == nV");
+        check(cl.outputDim == m.nV(), "TC complex: outputDim == nV");
+        const double hermErr = complexFrobeniusAntiHermitian(cl.K_complex);
+        check(hermErr < 1e-10,
+              "TC K_complex Hermitian (||K - Kᴴ||_F < 1e-10)");
+    }
+
+    // ── Test 3: Real2N symmetric ──────────────────────────────────────────
+    {
+        ConnectionLaplacianOptions opts;
+        opts.format = ConnectionLaplacianFormat::Real2N;
+        opts.nSym   = 1;
+        auto cl = nxr::manifold::ops::laplacian::connection::assembleTrivialConnectionLaplacian(
+            m, singMap, dec, cache, opts);
+        check(cl.outputDim == 2 * m.nV(), "TC real2N: outputDim == 2*nV");
+        const double symErr = realFrobeniusAsymmetry(cl.K_real);
+        check(symErr < 1e-10,
+              "TC K_real symmetric (||K - Kᵀ||_F < 1e-10)");
+    }
+
+    // ── Test 4: TC Laplacian differs from LC Laplacian ───────────────────
+    {
+        ConnectionLaplacianOptions opts;
+        opts.format = ConnectionLaplacianFormat::Complex;
+        opts.nSym   = 1;
+        auto tcl = nxr::manifold::ops::laplacian::connection::assembleTrivialConnectionLaplacian(
+            m, singMap, dec, cache, opts);
+        auto lcl = nxr::manifold::ops::laplacian::connection::assembleConnectionLaplacian(m, opts);
+        Eigen::SparseMatrix<std::complex<double>> diff = tcl.K_complex - lcl.K_complex;
+        const double diffNorm = diff.norm();
+        std::cout << "    ||K_TC - K_LC||_F = " << diffNorm << " (expect > 1e-6)\n";
+        check(diffNorm > 1e-6,
+              "TC Laplacian differs from LC Laplacian (||K_TC - K_LC||_F > 1e-6)");
+    }
+
+    // ── Test 5: Face domain throws Error(InvalidInput) ───────────────────
+    {
+        ConnectionLaplacianOptions opts;
+        opts.domain = ConnectionDomain::Face;
+        opts.nSym   = 1;
+        bool threw = false;
+        try {
+            nxr::manifold::ops::laplacian::connection::assembleTrivialConnectionLaplacian(
+                m, singMap, dec, cache, opts);
+        } catch (const nxr::core::Error& e) {
+            threw = (e.code() == nxr::core::ErrorCode::InvalidInput);
+        }
+        check(threw, "Face domain throws Error(InvalidInput)");
+    }
+
+    // ── Test 6: nSym=0 throws Error(InvalidInput) ────────────────────────
+    {
+        ConnectionLaplacianOptions opts;
+        opts.nSym = 0;
+        bool threw = false;
+        try {
+            nxr::manifold::ops::laplacian::connection::assembleTrivialConnectionLaplacian(
+                m, singMap, dec, cache, opts);
+        } catch (const nxr::core::Error& e) {
+            threw = (e.code() == nxr::core::ErrorCode::InvalidInput);
+        }
+        check(threw, "nSym=0 throws Error(InvalidInput)");
+    }
+}
+
 int main() {
     std::cout << "==============================================\n"
               << "  Connection-Laplacian correctness suite\n"
@@ -278,6 +377,9 @@ int main() {
         } catch (const nxr::core::Error&) { threw = true; }
         check(threw, "nSym <= 0 throws Error");
     }
+
+    // ── Trivial Connection Laplacian ─────────────────────────────────────
+    testTrivialConnectionLaplacian(m);
 
     std::cout << "\n==============================================\n";
     if (failures == 0) {
