@@ -158,14 +158,20 @@ static void testTrivialConnectionLaplacian(nxr::manifold::Manifold& m) {
               "TC K_real symmetric (||K - Kᵀ||_F < 1e-10)");
     }
 
-    // ── Test 4: TC Laplacian differs from LC Laplacian ───────────────────
+    // ── Test 4: Differs from Levi-Civita Laplacian ────────────────────────
     {
-        ConnectionLaplacianOptions opts;
-        opts.format = ConnectionLaplacianFormat::Complex;
-        opts.nSym   = 1;
-        auto tcl = nxr::manifold::ops::laplacian::connection::assembleTrivialConnectionLaplacian(
-            m, singMap, dec, cache, opts);
-        auto lcl = nxr::manifold::ops::laplacian::connection::assembleConnectionLaplacian(m, opts);
+        // First verify phi is non-trivial (Poisson solve produced real corrections)
+        Eigen::VectorXd phi = computeTrivialConnection(m, dec, cache, singMap);
+        check(phi.norm() > 1e-6,
+              "phi.norm() > 1e-6 (Poisson solve produced non-trivial connection)");
+        std::cout << "    phi.norm() = " << phi.norm() << " (non-trivial)\n";
+
+        // Then verify the TC Laplacian differs from the LC Laplacian
+        ConnectionLaplacianOptions opts4;
+        opts4.format = ConnectionLaplacianFormat::Complex;
+        opts4.nSym   = 1;
+        auto tcl = assembleTrivialConnectionLaplacian(m, singMap, dec, cache, opts4);
+        auto lcl = assembleConnectionLaplacian(m, opts4);
         Eigen::SparseMatrix<std::complex<double>> diff = tcl.K_complex - lcl.K_complex;
         const double diffNorm = diff.norm();
         std::cout << "    ||K_TC - K_LC||_F = " << diffNorm << " (expect > 1e-6)\n";
