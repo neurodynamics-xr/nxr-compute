@@ -916,6 +916,50 @@ void cmdTrivial(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
     plhs[0] = directionFieldResultToStruct(r);
 }
 
+void cmdTrivialConnectionLaplacian(int /*nlhs*/, mxArray** plhs,
+                                    int nrhs, const mxArray** prhs) {
+    if (nrhs < 4 || nrhs > 5) {
+        throw std::invalid_argument(
+            "nxr_compute('trivialConnectionLaplacian', handle, singVerts, singValues, [opts]) "
+            "takes 3 or 4 arguments.\n"
+            "  singVerts : 1-based vertex indices of singularities\n"
+            "  singValues: corresponding singularity indices (sum must equal Euler characteristic)\n"
+            "  opts      : optional struct with fields nSym (default 1),\n"
+            "              regularization (default 1e-8), format ('complex'|'real2N')");
+    }
+
+    namespace cl = nxr::manifold::ops::laplacian::connection;
+    ContextHolder& h = getHolder(prhs[1]);
+
+    // Parse singularity map (1-based MATLAB indices → 0-based C++ indices)
+    auto idx = mxToVertexIndices(prhs[2]);
+    auto val = mxToEigenVector(prhs[3]);
+    if (static_cast<std::size_t>(val.size()) != idx.size()) {
+        throw std::invalid_argument(
+            "trivialConnectionLaplacian: singValues must match singVerts length");
+    }
+    std::map<int, double> sing;
+    for (std::size_t i = 0; i < idx.size(); ++i)
+        sing[idx[i]] = val[static_cast<Eigen::Index>(i)];
+
+    // Parse options — default to Complex format (primary MATLAB consumer calls eigs on K_complex)
+    cl::ConnectionLaplacianOptions o;
+    o.domain = cl::ConnectionDomain::Vertex;
+    o.format = cl::ConnectionLaplacianFormat::Complex;
+    if (nrhs >= 5 && !mxIsEmpty(prhs[4])) {
+        if (!mxIsStruct(prhs[4]))
+            throw std::invalid_argument("opts must be a struct");
+        const mxArray* f;
+        if ((f = mxGetField(prhs[4], 0, "nSym")))           o.nSym = getIntArg(f);
+        if ((f = mxGetField(prhs[4], 0, "regularization"))) o.regularization = getDoubleArg(f);
+        if ((f = mxGetField(prhs[4], 0, "format")))         o.format = cl::parseConnectionLaplacianFormat(getStringArg(f));
+    }
+
+    auto result = cl::assembleTrivialConnectionLaplacian(
+        *h.ctx, sing, ensureDec(h), *h.cache, o);
+    plhs[0] = connectionLaplacianToStruct(result);
+}
+
 void cmdStreamline(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
     if (nrhs < 3 || nrhs > 6) {
         throw std::invalid_argument(
@@ -1089,6 +1133,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "bff")                         cmdBff(nlhs, plhs, nrhs, prhs);
         else if (cmd == "isoline")                     cmdIsoline(nlhs, plhs, nrhs, prhs);
         else if (cmd == "trivial")                     cmdTrivial(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "trivialConnectionLaplacian")  cmdTrivialConnectionLaplacian(nlhs, plhs, nrhs, prhs);
         else if (cmd == "streamline")                  cmdStreamline(nlhs, plhs, nrhs, prhs);
         else if (cmd == "whitney")                     cmdWhitney(nlhs, plhs, nrhs, prhs);
         else if (cmd == "gradient")                    cmdGradient(nlhs, plhs, nrhs, prhs);
