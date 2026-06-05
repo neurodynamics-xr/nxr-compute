@@ -885,9 +885,11 @@ namespace nxr::manifold::connection {
 // ── Direction Field Design (Trivial Connections) ─────────────
 
 struct DirectionFieldResult {
-    Eigen::VectorXd connections;         // φ per edge (1-form angles)
-    Eigen::MatrixXd directionVectors;    // [nF, 3] smooth direction field on faces
-    Eigen::MatrixXd orthogonalVectors;   // [nF, 3] 90° rotated direction field
+    Eigen::VectorXd connections;            // φ per edge (1-form angles)
+    Eigen::MatrixXd directionVectors;       // [nF, 3] smooth direction field on faces
+    Eigen::MatrixXd orthogonalVectors;      // [nF, 3] 90° rotated direction field on faces
+    Eigen::MatrixXd vertexVectors;          // [nV, 3] smooth direction field on vertices
+    Eigen::MatrixXd vertexOrthogonalVectors;// [nV, 3] 90° rotated direction field on vertices
     double eulerCharacteristic;
     bool gaussBonnetSatisfied;
 };

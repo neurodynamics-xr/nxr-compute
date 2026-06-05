@@ -422,13 +422,16 @@ inline mxArray* positionsSegmentsToStruct(const Eigen::MatrixXd& positions, int 
 inline mxArray* directionFieldResultToStruct(
     const nxr::manifold::connection::DirectionFieldResult& r) {
     const char* fields[] = {"connections", "directionVectors", "orthogonalVectors",
+                            "vertexVectors", "vertexOrthogonalVectors",
                             "eulerCharacteristic", "gaussBonnetSatisfied"};
-    mxArray* s = mxCreateStructMatrix(1, 1, 5, fields);
-    mxSetField(s, 0, "connections",          eigenVectorToMx(r.connections));
-    mxSetField(s, 0, "directionVectors",     eigenMatrixToMx(r.directionVectors));
-    mxSetField(s, 0, "orthogonalVectors",    eigenMatrixToMx(r.orthogonalVectors));
-    mxSetField(s, 0, "eulerCharacteristic",  mxCreateDoubleScalar(r.eulerCharacteristic));
-    mxSetField(s, 0, "gaussBonnetSatisfied", mxCreateLogicalScalar(r.gaussBonnetSatisfied));
+    mxArray* s = mxCreateStructMatrix(1, 1, 7, fields);
+    mxSetField(s, 0, "connections",              eigenVectorToMx(r.connections));
+    mxSetField(s, 0, "directionVectors",         eigenMatrixToMx(r.directionVectors));
+    mxSetField(s, 0, "orthogonalVectors",        eigenMatrixToMx(r.orthogonalVectors));
+    mxSetField(s, 0, "vertexVectors",            eigenMatrixToMx(r.vertexVectors));
+    mxSetField(s, 0, "vertexOrthogonalVectors",  eigenMatrixToMx(r.vertexOrthogonalVectors));
+    mxSetField(s, 0, "eulerCharacteristic",      mxCreateDoubleScalar(r.eulerCharacteristic));
+    mxSetField(s, 0, "gaussBonnetSatisfied",     mxCreateLogicalScalar(r.gaussBonnetSatisfied));
     return s;
 }
 

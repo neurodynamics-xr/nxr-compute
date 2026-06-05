@@ -174,6 +174,63 @@ static Eigen::VectorXd propagateAngles(
 }
 
 // ─────────────────────────────────────────────────────────────
+// Propagate angles across vertices via primal-spanning-tree BFS,
+// following the connection φ on edges and the Levi-Civita transport
+// from geometry-central's transportVectorsAlongHalfedge.
+// Returns per-vertex angle α(v) that defines the vertex direction field.
+// ─────────────────────────────────────────────────────────────
+
+static Eigen::VectorXd propagateAnglesVertex(
+    Manifold& m,
+    const Eigen::VectorXd& phi
+) {
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
+    int nV = m.nV();
+
+    geom.requireVertexIndices();
+    geom.requireEdgeIndices();
+    geom.requireTransportVectorsAlongHalfedge();
+
+    Eigen::VectorXd alpha = Eigen::VectorXd::Zero(nV);
+    std::vector<bool> visited(nV, false);
+
+    std::queue<Vertex> queue;
+    Vertex root = mesh.vertex(0);
+    visited[0] = true;
+    alpha(0) = 0.0;
+    queue.push(root);
+
+    while (!queue.empty()) {
+        Vertex vi = queue.front();
+        queue.pop();
+        int ii = static_cast<int>(vi.getIndex());
+
+        for (Halfedge he : vi.outgoingHalfedges()) {
+            if (!he.isInterior()) continue;
+            Vertex vj = he.tipVertex();
+            int jj = static_cast<int>(vj.getIndex());
+            if (visited[jj]) continue;
+
+            // LC transport angle from vi to vj along this halfedge
+            const Vector2 rot = geom.transportVectorsAlongHalfedge[he];
+            double transport = std::atan2(rot.y, rot.x);
+
+            // φ sign for this halfedge
+            Edge e = he.edge();
+            double sign = (he == e.halfedge()) ? 1.0 : -1.0;
+            double phiEdge = phi(static_cast<int>(geom.edgeIndices[e]));
+
+            alpha(jj) = alpha(ii) + transport + sign * phiEdge;
+            visited[jj] = true;
+            queue.push(vj);
+        }
+    }
+
+    return alpha;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Build per-face direction vectors from per-face angles.
 // For each face f, the direction vector is:
 //   u = cos(α(f)) e₁(f) + sin(α(f)) e₂(f)
@@ -196,6 +253,35 @@ static Eigen::MatrixXd buildFaceVectorsFromAngles(
         out(fi, 0) = u.x;
         out(fi, 1) = u.y;
         out(fi, 2) = u.z;
+    }
+    return out;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Build per-vertex direction vectors from per-vertex angles.
+// For each vertex v, the direction vector is:
+//   u = cos(α(v)) e₁(v) + sin(α(v)) e₂(v)
+// where {e₁, e₂} is the vertex tangent basis.
+// ─────────────────────────────────────────────────────────────
+
+static Eigen::MatrixXd buildVertexVectorsFromAngles(
+    Manifold& m,
+    const Eigen::VectorXd& alpha
+) {
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
+    int nV = m.nV();
+
+    geom.requireVertexTangentBasis();
+
+    Eigen::MatrixXd out(nV, 3);
+    for (Vertex v : mesh.vertices()) {
+        int vi = static_cast<int>(v.getIndex());
+        auto basis = geom.vertexTangentBasis[v];
+        Vector3 u = basis[0] * std::cos(alpha(vi)) + basis[1] * std::sin(alpha(vi));
+        out(vi, 0) = u.x;
+        out(vi, 1) = u.y;
+        out(vi, 2) = u.z;
     }
     return out;
 }
@@ -239,6 +325,14 @@ DirectionFieldResult trivial(
     // 6. Orthogonal field: rotate by 90° on each face (α + π/2)
     Eigen::VectorXd alphaOrth = alpha.array() + M_PI / 2.0;
     result.orthogonalVectors = buildFaceVectorsFromAngles(m, alphaOrth);
+
+    // 7. Propagate angles on primal graph → per-vertex angles
+    Eigen::VectorXd alphaV = propagateAnglesVertex(m, result.connections);
+
+    // 8. Build vertex direction field vectors
+    result.vertexVectors = buildVertexVectorsFromAngles(m, alphaV);
+    Eigen::VectorXd alphaVOrth = alphaV.array() + M_PI / 2.0;
+    result.vertexOrthogonalVectors = buildVertexVectorsFromAngles(m, alphaVOrth);
 
     std::cout << "[direction_field] χ=" << result.eulerCharacteristic
               << ", Σσ=" << sumSing
