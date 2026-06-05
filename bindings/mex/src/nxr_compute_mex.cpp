@@ -897,10 +897,11 @@ void cmdIsoline(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
     plhs[0] = positionsSegmentsToStruct(r.positions, r.segmentCount);
 }
 
-void cmdTrivial(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+void cmdDirectionField(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
     if (nrhs != 4) {
         throw std::invalid_argument(
-            "nxr_compute('trivial', handle, singVerts, singValues) takes exactly 3 arguments");
+            "nxr_compute('directionField', handle, singVerts, singValues) takes exactly 3 arguments.\n"
+            "Note: 'trivial' is a deprecated alias for 'directionField'.");
     }
     ContextHolder& h = getHolder(prhs[1]);
     auto idx = mxToVertexIndices(prhs[2]);   // 1-based → 0-based
@@ -1132,7 +1133,8 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "curvatures")                  cmdCurvatures(nlhs, plhs, nrhs, prhs);
         else if (cmd == "bff")                         cmdBff(nlhs, plhs, nrhs, prhs);
         else if (cmd == "isoline")                     cmdIsoline(nlhs, plhs, nrhs, prhs);
-        else if (cmd == "trivial")                     cmdTrivial(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "directionField")              cmdDirectionField(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "trivial")                     cmdDirectionField(nlhs, plhs, nrhs, prhs); // deprecated alias
         else if (cmd == "trivialConnectionLaplacian")  cmdTrivialConnectionLaplacian(nlhs, plhs, nrhs, prhs);
         else if (cmd == "streamline")                  cmdStreamline(nlhs, plhs, nrhs, prhs);
         else if (cmd == "whitney")                     cmdWhitney(nlhs, plhs, nrhs, prhs);
