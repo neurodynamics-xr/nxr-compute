@@ -327,9 +327,10 @@ inline mxArray* decOperatorsToStruct(const nxr::manifold::ops::DECOperators& dec
 inline mxArray* connectionLaplacianToStruct(
     const nxr::manifold::ops::laplacian::connection::ConnectionLaplacian& cl) {
     namespace ns = nxr::manifold::ops::laplacian::connection;
-    const char* fields[] = {"K_real", "K_imag", "baseDim", "outputDim",
+    const char* fields[] = {"K_real", "K_imag", "frameE1", "frameE2",
+                            "baseDim", "outputDim",
                             "nSym", "regularization", "domain", "format"};
-    mxArray* s = mxCreateStructMatrix(1, 1, 8, fields);
+    mxArray* s = mxCreateStructMatrix(1, 1, 10, fields);
 
     if (cl.format == ns::ConnectionLaplacianFormat::Real2N) {
         mxSetField(s, 0, "K_real", eigenSparseToMx(cl.K_real));
@@ -351,6 +352,8 @@ inline mxArray* connectionLaplacianToStruct(
         mxSetField(s, 0, "K_real", eigenSparseToMx(re));
         mxSetField(s, 0, "K_imag", eigenSparseToMx(im));
     }
+    mxSetField(s, 0, "frameE1",        eigenMatrixToMx(cl.frameE1));
+    mxSetField(s, 0, "frameE2",        eigenMatrixToMx(cl.frameE2));
     mxSetField(s, 0, "baseDim",        mxCreateDoubleScalar(cl.baseDim));
     mxSetField(s, 0, "outputDim",      mxCreateDoubleScalar(cl.outputDim));
     mxSetField(s, 0, "nSym",           mxCreateDoubleScalar(cl.nSym));

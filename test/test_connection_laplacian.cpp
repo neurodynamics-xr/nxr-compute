@@ -111,8 +111,9 @@ static double complexFrobeniusAntiHermitian(
 //   2. Complex format: K_complex is Hermitian (||K - Kᴴ||_F < 1e-10)
 //   3. Real2N format: K_real is symmetric (||K - Kᵀ||_F < 1e-10)
 //   4. TC Laplacian differs from LC Laplacian (||K_TC - K_LC||_F > 1e-6)
-//   5. Face domain throws Error(InvalidInput)
-//   6. nSym=0 throws Error(InvalidInput)
+//   5. frameE1/E2 are orthonormal [nV,3] matrices (gauge for eigenvectors)
+//   6. Face domain throws Error(InvalidInput)
+//   7. nSym=0 throws Error(InvalidInput)
 static void testTrivialConnectionLaplacian(nxr::manifold::Manifold& m) {
     std::cout << "\n── trivial connection Laplacian ─────────────────────\n";
 
@@ -179,7 +180,30 @@ static void testTrivialConnectionLaplacian(nxr::manifold::Manifold& m) {
               "TC Laplacian differs from LC Laplacian (||K_TC - K_LC||_F > 1e-6)");
     }
 
-    // ── Test 5: Face domain throws Error(InvalidInput) ───────────────────
+    // ── Test 5: Frame orthonormality (trivial connection, vertex) ────────────
+    {
+        ConnectionLaplacianOptions opts;
+        opts.format = ConnectionLaplacianFormat::Complex;
+        opts.nSym   = 1;
+        auto cl = nxr::manifold::ops::laplacian::connection::assembleTrivialConnectionLaplacian(
+            m, singMap, dec, cache, opts);
+        int N = cl.baseDim;
+        check(cl.frameE1.rows() == N && cl.frameE1.cols() == 3,
+              "TC frameE1 shape == [nV, 3]");
+        check(cl.frameE2.rows() == N && cl.frameE2.cols() == 3,
+              "TC frameE2 shape == [nV, 3]");
+        double maxE1err = 0.0, maxE2err = 0.0, maxDot = 0.0;
+        for (int r = 0; r < N; ++r) {
+            maxE1err = std::max(maxE1err, std::abs(cl.frameE1.row(r).norm() - 1.0));
+            maxE2err = std::max(maxE2err, std::abs(cl.frameE2.row(r).norm() - 1.0));
+            maxDot   = std::max(maxDot, std::abs(cl.frameE1.row(r).dot(cl.frameE2.row(r))));
+        }
+        check(maxE1err < 1e-10, "TC frameE1 rows are unit vectors");
+        check(maxE2err < 1e-10, "TC frameE2 rows are unit vectors");
+        check(maxDot   < 1e-10, "TC frameE1 ⊥ frameE2");
+    }
+
+    // ── Test 6: Face domain throws Error(InvalidInput) ───────────────────
     {
         ConnectionLaplacianOptions opts;
         opts.domain = ConnectionDomain::Face;
@@ -272,6 +296,44 @@ int main() {
             const double hermErr = complexFrobeniusAntiHermitian(clC.K_complex);
             check(hermErr < 1e-10,
                   "K_complex Hermitian (||K - Kᴴ||_F < 1e-10)");
+        }
+
+        // ── Frame checks (vertex and face only; edge has empty frames) ───────
+        if (d != ConnectionDomain::EdgeCrouzeixRaviart) {
+            ConnectionLaplacianOptions fo;
+            fo.domain = d;
+            fo.nSym   = 1;
+            fo.format = ConnectionLaplacianFormat::Complex;
+            auto clF = nxr::manifold::ops::laplacian::connection::assembleConnectionLaplacian(m, fo);
+
+            check(clF.frameE1.rows() == baseDim && clF.frameE1.cols() == 3,
+                  "frameE1 shape == [baseDim, 3]");
+            check(clF.frameE2.rows() == baseDim && clF.frameE2.cols() == 3,
+                  "frameE2 shape == [baseDim, 3]");
+
+            // Unit-length rows
+            double maxE1err = 0.0, maxE2err = 0.0;
+            for (int r = 0; r < baseDim; ++r) {
+                maxE1err = std::max(maxE1err, std::abs(clF.frameE1.row(r).norm() - 1.0));
+                maxE2err = std::max(maxE2err, std::abs(clF.frameE2.row(r).norm() - 1.0));
+            }
+            check(maxE1err < 1e-10, "frameE1 rows are unit vectors");
+            check(maxE2err < 1e-10, "frameE2 rows are unit vectors");
+
+            // Orthogonality
+            double maxDot = 0.0;
+            for (int r = 0; r < baseDim; ++r)
+                maxDot = std::max(maxDot, std::abs(clF.frameE1.row(r).dot(clF.frameE2.row(r))));
+            check(maxDot < 1e-10, "frameE1 ⊥ frameE2 (max |e1·e2| < 1e-10)");
+        } else {
+            // EdgeCrouzeixRaviart — frames must be empty.
+            ConnectionLaplacianOptions fo;
+            fo.domain = d;
+            fo.nSym   = 1;
+            fo.format = ConnectionLaplacianFormat::Complex;
+            auto clF = nxr::manifold::ops::laplacian::connection::assembleConnectionLaplacian(m, fo);
+            check(clF.frameE1.rows() == 0, "frameE1 empty for EdgeCrouzeixRaviart");
+            check(clF.frameE2.rows() == 0, "frameE2 empty for EdgeCrouzeixRaviart");
         }
     }
 

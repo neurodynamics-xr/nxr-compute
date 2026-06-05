@@ -226,6 +226,36 @@ ConnectionLaplacian assembleConnectionLaplacian(
     result.regularization  = opts.regularization;
     result.format          = opts.format;
 
+    // Populate tangent frame (gauge) used to build this Laplacian.
+    // Eigenvectors U[:,k] satisfy: field at v = real(U[v,k])*e1(v) + imag(U[v,k])*e2(v).
+    if (opts.domain == ConnectionDomain::Vertex) {
+        geometry.requireVertexTangentBasis();
+        SurfaceMesh& mesh = geometry.mesh;
+        result.frameE1.resize(N, 3);
+        result.frameE2.resize(N, 3);
+        for (Vertex v : mesh.vertices()) {
+            int vi = static_cast<int>(geometry.vertexIndices[v]);
+            auto b0 = geometry.vertexTangentBasis[v][0];
+            auto b1 = geometry.vertexTangentBasis[v][1];
+            result.frameE1(vi, 0) = b0.x; result.frameE1(vi, 1) = b0.y; result.frameE1(vi, 2) = b0.z;
+            result.frameE2(vi, 0) = b1.x; result.frameE2(vi, 1) = b1.y; result.frameE2(vi, 2) = b1.z;
+        }
+    } else if (opts.domain == ConnectionDomain::Face) {
+        geometry.requireFaceTangentBasis();
+        geometry.requireFaceIndices();
+        SurfaceMesh& mesh = geometry.mesh;
+        result.frameE1.resize(N, 3);
+        result.frameE2.resize(N, 3);
+        for (Face f : mesh.faces()) {
+            int fi = static_cast<int>(geometry.faceIndices[f]);
+            auto b0 = geometry.faceTangentBasis[f][0];
+            auto b1 = geometry.faceTangentBasis[f][1];
+            result.frameE1(fi, 0) = b0.x; result.frameE1(fi, 1) = b0.y; result.frameE1(fi, 2) = b0.z;
+            result.frameE2(fi, 0) = b1.x; result.frameE2(fi, 1) = b1.y; result.frameE2(fi, 2) = b1.z;
+        }
+    }
+    // EdgeCrouzeixRaviart: no standard tangent basis — frameE1/E2 remain empty (0 rows).
+
     if (opts.format == ConnectionLaplacianFormat::Real2N) {
         result.K_real    = lowerToReal2N(K_complex, N);
         result.outputDim = 2 * N;
@@ -324,6 +354,18 @@ ConnectionLaplacian assembleTrivialConnectionLaplacian(
     result.nSym           = opts.nSym;
     result.regularization = opts.regularization;
     result.format         = opts.format;
+
+    // Populate tangent frame (gauge). Trivial connection Laplacian is vertex-only.
+    geometry.requireVertexTangentBasis();
+    result.frameE1.resize(N, 3);
+    result.frameE2.resize(N, 3);
+    for (Vertex v : mesh.vertices()) {
+        int vi = static_cast<int>(geometry.vertexIndices[v]);
+        auto b0 = geometry.vertexTangentBasis[v][0];
+        auto b1 = geometry.vertexTangentBasis[v][1];
+        result.frameE1(vi, 0) = b0.x; result.frameE1(vi, 1) = b0.y; result.frameE1(vi, 2) = b0.z;
+        result.frameE2(vi, 0) = b1.x; result.frameE2(vi, 1) = b1.y; result.frameE2(vi, 2) = b1.z;
+    }
 
     if (opts.format == ConnectionLaplacianFormat::Real2N) {
         result.K_real    = lowerToReal2N(K_complex, N);

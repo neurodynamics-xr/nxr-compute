@@ -396,6 +396,9 @@ struct ConnectionLaplacianOptions {
 struct ConnectionLaplacian {
     Eigen::SparseMatrix<double>                K_real;     // populated iff format == Real2N
     Eigen::SparseMatrix<std::complex<double>>  K_complex;  // populated iff format == Complex
+    Eigen::MatrixXd  frameE1;   // [baseDim, 3] tangent frame e1 per vertex/face (gauge)
+    Eigen::MatrixXd  frameE2;   // [baseDim, 3] tangent frame e2 per vertex/face (gauge)
+                                // Empty (0 rows) for EdgeCrouzeixRaviart domain.
     int  baseDim   = 0;                                    // V / F / E
     int  outputDim = 0;                                    // 2 * baseDim (Real2N) or baseDim (Complex)
     ConnectionDomain domain          = ConnectionDomain::Vertex;
