@@ -89,14 +89,14 @@ static double transportNoRotation(
 // ─────────────────────────────────────────────────────────────
 // Solve Aβ = -K + 2π σ for the co-exact scalar potential β,
 // then return δβ = ⋆₁ d₀ β (as an edge 1-form).
+// Public primitive — see include/nxr/compute.h for contract.
 // ─────────────────────────────────────────────────────────────
 
-static Eigen::VectorXd computeCoExactComponent(
+Eigen::VectorXd computeTrivialConnection(
     Manifold& m,
     const DECOperators& dec,
     CholeskyCache& cache,
-    const std::map<int, double>& singularityMap,
-    double& eulerChiOut
+    const std::map<int, double>& singularityMap
 ) {
     auto& mesh = m.mesh();
     auto& geom = m.geometry();
@@ -104,28 +104,18 @@ static Eigen::VectorXd computeCoExactComponent(
 
     geom.requireVertexGaussianCurvatures();
 
-    // Build RHS: -K + 2π σ per vertex
     Eigen::VectorXd rhs(nV);
-    double totalK = 0.0;
     for (Vertex v : mesh.vertices()) {
         int i = static_cast<int>(v.getIndex());
         double K = geom.vertexGaussianCurvatures[v];
-        totalK += K;
         double sigma = 0.0;
         auto it = singularityMap.find(i);
         if (it != singularityMap.end()) sigma = it->second;
         rhs(i) = -K + 2.0 * M_PI * sigma;
     }
 
-    // Euler characteristic (from Gauss-Bonnet: 2πχ = ΣK)
-    eulerChiOut = totalK / (2.0 * M_PI);
-
-    // Solve A β = rhs, where A = d0ᵀ ★₁ d0 + ε·I.
-    // Same matrix as the Hodge α-solve, so the cached factor is shared.
     const auto& llt = cache.hodgeExact(dec);
     Eigen::VectorXd betaTilde = llt.solve(rhs);
-
-    // δβ = ⋆₁ d₀ β (per-edge 1-form)
     return dec.hodge1 * (dec.d0 * betaTilde);
 }
 
@@ -224,23 +214,29 @@ DirectionFieldResult trivial(
     result.eulerCharacteristic = 0.0;
     result.gaussBonnetSatisfied = false;
 
-    // 1. Co-exact component δβ (vertex singularities → connection)
-    result.connections = computeCoExactComponent(m, dec, cache, singularityMap,
-                                                 result.eulerCharacteristic);
+    // 1. Trivial connection φ = δβ
+    result.connections = computeTrivialConnection(m, dec, cache, singularityMap);
 
-    // 2. Gauss-Bonnet check
+    // 2. Euler characteristic from Gauss-Bonnet (curvatures already cached)
+    auto& geom = m.geometry();
+    double totalK = 0.0;
+    for (Vertex v : m.mesh().vertices())
+        totalK += geom.vertexGaussianCurvatures[v];
+    result.eulerCharacteristic = totalK / (2.0 * M_PI);
+
+    // 3. Gauss-Bonnet check
     double sumSing = 0.0;
     for (const auto& [_, s] : singularityMap) sumSing += s;
     result.gaussBonnetSatisfied =
         std::abs(sumSing - result.eulerCharacteristic) < 1e-3;
 
-    // 3. Propagate angles via dual spanning tree
+    // 4. Propagate angles via dual spanning tree
     Eigen::VectorXd alpha = propagateAngles(m, result.connections, dec);
 
-    // 4. Build direction field vectors
+    // 5. Build direction field vectors
     result.directionVectors = buildFaceVectorsFromAngles(m, alpha);
 
-    // 5. Orthogonal field: rotate by 90° on each face (α + π/2)
+    // 6. Orthogonal field: rotate by 90° on each face (α + π/2)
     Eigen::VectorXd alphaOrth = alpha.array() + M_PI / 2.0;
     result.orthogonalVectors = buildFaceVectorsFromAngles(m, alphaOrth);
 
