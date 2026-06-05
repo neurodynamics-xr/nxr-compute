@@ -431,6 +431,39 @@ ConnectionLaplacian assembleConnectionLaplacian(
 ConnectionDomain          parseConnectionDomain(const std::string& name);
 ConnectionLaplacianFormat parseConnectionLaplacianFormat(const std::string& name);
 
+/**
+ * Assemble the connection Laplacian using the trivial connection transport.
+ *
+ * The trivial connection for the given singularity map is computed first
+ * (via computeTrivialConnection), then used to modulate the Levi-Civita
+ * transport on each halfedge:
+ *
+ *   ρ^TC[he] = ρ^LC[he] · exp(i · sign(he) · φ[edge(he)])
+ *
+ * where sign(he) = +1 if he == edge.halfedge(), -1 otherwise, and
+ * φ is the per-edge trivial connection 1-form (Eigen::VectorXd, nEdges).
+ *
+ * The off-diagonal entry K[i,j] for halfedge he (tail=i, tip=j) is then:
+ *
+ *   K[i,j] += -w_ij · (ρ^TC[he.twin()])^nSym
+ *
+ * Gauss-Bonnet: Σ singularityMap values must equal χ(mesh). Not checked
+ * internally — throws nothing if violated, but φ will be incorrect.
+ *
+ * Only ConnectionDomain::Vertex is currently supported. Passing Face or
+ * EdgeCrouzeixRaviart throws Error(InvalidInput).
+ *
+ * Output format follows opts.format (Real2N or Complex), same as
+ * assembleConnectionLaplacian.
+ */
+ConnectionLaplacian assembleTrivialConnectionLaplacian(
+    Manifold& m,
+    const std::map<int, double>& singularityMap,
+    const ops::DECOperators& dec,
+    ops::CholeskyCache& cache,
+    const ConnectionLaplacianOptions& opts = {}
+);
+
 } // namespace nxr::manifold::ops::laplacian::connection
 
 namespace nxr::manifold::solve {
