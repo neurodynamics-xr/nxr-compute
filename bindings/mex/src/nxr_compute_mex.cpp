@@ -1071,6 +1071,12 @@ void cmdRandomDecomposed1Form(int /*nlhs*/, mxArray** plhs, int nrhs, const mxAr
     plhs[0] = eigenVectorToMx(omega);
 }
 
+// ── buildGaugeStruct / buildGeometryStruct / buildTopologyStruct ──
+//
+// Reusable builders shared by the standalone cmdXxx commands and
+// cmdBundle. Each takes a ContextHolder reference (already resolved)
+// plus the command-specific parameters and returns a new mxArray*.
+
 // ── gauge(handle, type[, opts]) → struct ─────────────────────
 //
 // Returns the Gauge struct for the requested connection type.
@@ -1086,13 +1092,9 @@ void cmdRandomDecomposed1Form(int /*nlhs*/, mxArray** plhs, int nrhs, const mxAr
 //   G.singularity.indices   [k x 1]   double
 //   G.singularity.source    string
 
-void cmdGauge(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+mxArray* buildGaugeStruct(ContextHolder& h, const std::string& type, const mxArray* opts) {
     namespace conn = nxr::manifold::connection;
-    if (nrhs < 3) throw std::invalid_argument(
-        "nxr_compute('gauge', handle, type[, opts]) — type in {euclidean,levi-civita,trivial}");
-    ContextHolder& h = getHolder(prhs[1]);
     nxr::manifold::Manifold& m = *h.ctx;
-    std::string type = getStringArg(prhs[2]);
 
     const int nV = m.nV();
     Eigen::VectorXcd rot = Eigen::VectorXcd::Ones(nV);   // identity by default
@@ -1103,11 +1105,11 @@ void cmdGauge(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
     if (type == "euclidean" || type == "levi-civita") {
         // rotation stays identity; nothing else to compute.
     } else if (type == "trivial") {
-        if (nrhs < 4 || !mxIsStruct(prhs[3]))
+        if (opts == nullptr || !mxIsStruct(opts))
             throw std::invalid_argument(
                 "gauge('trivial') requires opts struct with singVerts, singValues");
-        const mxArray* fv = mxGetField(prhs[3], 0, "singVerts");
-        const mxArray* fi = mxGetField(prhs[3], 0, "singValues");
+        const mxArray* fv = mxGetField(opts, 0, "singVerts");
+        const mxArray* fi = mxGetField(opts, 0, "singValues");
         if (!fv || !fi) throw std::invalid_argument("opts needs singVerts and singValues");
         std::vector<int> verts = mxToVertexIndices(fv);     // 1-based -> 0-based
         Eigen::VectorXd  vals  = mxToEigenVector(fi);
@@ -1122,7 +1124,7 @@ void cmdGauge(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
 
         singVerts.assign(verts.begin(), verts.end());       // 0-based; marshal converts to 1-based
         singIdx = vals;
-        if (const mxArray* fs = mxGetField(prhs[3], 0, "source"))
+        if (const mxArray* fs = mxGetField(opts, 0, "source"))
             singSource = getStringArg(fs);
         else
             singSource = "manual";
@@ -1148,7 +1150,16 @@ void cmdGauge(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
       mxSetField(g,0,"source",mxCreateString(singSource.c_str()));
       mxSetField(s,0,"singularity",g); }
 
-    plhs[0] = s;
+    return s;
+}
+
+void cmdGauge(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs < 3) throw std::invalid_argument(
+        "nxr_compute('gauge', handle, type[, opts]) — type in {euclidean,levi-civita,trivial}");
+    ContextHolder& h = getHolder(prhs[1]);
+    std::string type = getStringArg(prhs[2]);
+    const mxArray* opts = (nrhs >= 4) ? prhs[3] : nullptr;
+    plhs[0] = buildGaugeStruct(h, type, opts);
 }
 
 // ── geometry(handle) → struct ─────────────────────────────────
@@ -1179,12 +1190,7 @@ void cmdGauge(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
 //   G.corner.angles               [nH x 1]  double (nH == nC on closed mesh)
 //   G.corner.scaledAngles         [nH x 1]  double
 
-void cmdGeometry(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
-    if (nrhs != 2) {
-        throw std::invalid_argument(
-            "nxr_compute('geometry', handle) takes exactly 1 argument");
-    }
-    ContextHolder& h = getHolder(prhs[1]);
+mxArray* buildGeometryStruct(ContextHolder& h) {
     nxr::manifold::geometry::MeshGeometry g =
         nxr::manifold::geometry::meshGeometry(*h.ctx);
 
@@ -1231,7 +1237,16 @@ void cmdGeometry(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
       mxSetField(gg, 0, "scaledAngles", eigenVectorToMx(g.cornerScaledAngles));
       mxSetField(s,  0, "corner", gg); }
 
-    plhs[0] = s;
+    return s;
+}
+
+void cmdGeometry(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 2) {
+        throw std::invalid_argument(
+            "nxr_compute('geometry', handle) takes exactly 1 argument");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    plhs[0] = buildGeometryStruct(h);
 }
 
 // ── topology(handle) → struct ─────────────────────────────────
@@ -1256,13 +1271,7 @@ void cmdGeometry(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
 //   T.halfedge.orientation  [nH × 1] logical — true iff he == he.edge().halfedge()
 //   T.halfedge.isInterior   [nH × 1] logical
 
-void cmdTopology(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
-    if (nrhs != 2) {
-        throw std::invalid_argument(
-            "nxr_compute('topology', handle) takes exactly 1 argument");
-    }
-    ContextHolder& h = getHolder(prhs[1]);
-
+mxArray* buildTopologyStruct(ContextHolder& h) {
     auto t = nxr::manifold::geometry::meshTopology(*h.ctx);
 
     const char* topFields[] = {"schemaVersion","vertex","edge","face","corner","halfedge"};
@@ -1294,6 +1303,43 @@ void cmdTopology(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
       mxSetField(g,0,"isInterior", logicalVectorToMx(t.heIsInterior));
       mxSetField(s,0,"halfedge",g); }
 
+    return s;
+}
+
+void cmdTopology(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 2) {
+        throw std::invalid_argument(
+            "nxr_compute('topology', handle) takes exactly 1 argument");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    plhs[0] = buildTopologyStruct(h);
+}
+
+// ── bundle(handle, gaugeType[, opts]) → struct ───────────────
+//
+// Returns a single struct with three sub-structs: Topology, Geometry, Gauge.
+// Topology and Geometry are identical to the standalone 'topology' and
+// 'geometry' commands; Gauge is identical to the standalone 'gauge' command
+// with the given type + opts. All three are built from the same
+// ContextHolder (one mesh, consistent indices).
+//
+//   B = nxr_compute('bundle', h, 'levi-civita')
+//   B.Topology   % halfedge combinatorics
+//   B.Geometry   % vertex/edge/face geometry quantities
+//   B.Gauge      % connection gauge (rotation per vertex)
+
+void cmdBundle(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs < 3) throw std::invalid_argument(
+        "nxr_compute('bundle', handle, gaugeType[, opts]) — gaugeType in {euclidean,levi-civita,trivial}");
+    ContextHolder& h = getHolder(prhs[1]);
+    std::string type = getStringArg(prhs[2]);
+    const mxArray* opts = (nrhs >= 4) ? prhs[3] : nullptr;
+
+    const char* f[] = {"Topology","Geometry","Gauge"};
+    mxArray* s = mxCreateStructMatrix(1,1,3,f);
+    mxSetField(s,0,"Topology", buildTopologyStruct(h));
+    mxSetField(s,0,"Geometry", buildGeometryStruct(h));
+    mxSetField(s,0,"Gauge",    buildGaugeStruct(h, type, opts));
     plhs[0] = s;
 }
 
@@ -1371,6 +1417,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "topology")                    cmdTopology(nlhs, plhs, nrhs, prhs);
         else if (cmd == "geometry")                    cmdGeometry(nlhs, plhs, nrhs, prhs);
         else if (cmd == "gauge")                       cmdGauge(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "bundle")                      cmdBundle(nlhs, plhs, nrhs, prhs);
         else if (cmd == "version")                 cmdVersion(nlhs, plhs, nrhs, prhs);
         else {
             mexErrMsgIdAndTxt("nxr:unknownCommand",
@@ -1378,8 +1425,8 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
                 "solve, normalize, removeDC, precompute, "
                 "parallel, extendScalar, logMap, "
                 "findCenter, signedHeat, smoothFace, "
-                "smoothVertex, compute, "
-                "computeFreq, version.",
+                "smoothVertex, compute, computeFreq, "
+                "topology, geometry, gauge, bundle, version.",
                 cmd.c_str());
         }
     } catch (const nxr::core::Error& e) {
