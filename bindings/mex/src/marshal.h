@@ -103,6 +103,48 @@ inline mxArray* eigenVectorToMx(const Eigen::VectorXd& v) {
     return arr;
 }
 
+// ── Complex dense conversion (interleaved-complex API, R2018a+) ──
+inline mxArray* eigenComplexMatrixToMx(const Eigen::MatrixXcd& m) {
+    mxArray* arr = mxCreateDoubleMatrix(m.rows(), m.cols(), mxCOMPLEX);
+    mxComplexDouble* p = mxGetComplexDoubles(arr);
+    mwSize idx = 0;
+    for (Eigen::Index j = 0; j < m.cols(); ++j)        // column-major (MATLAB native)
+        for (Eigen::Index i = 0; i < m.rows(); ++i, ++idx) {
+            p[idx].real = m(i, j).real();
+            p[idx].imag = m(i, j).imag();
+        }
+    return arr;
+}
+
+inline mxArray* eigenComplexVectorToMx(const Eigen::VectorXcd& v) {
+    return eigenComplexMatrixToMx(v);  // N×1
+}
+
+// ── 1-based index column from 0-based values ─────────────────
+// The single MEX-boundary conversion point: 0-based C++/geometry-central
+// indices become 1-based MATLAB uint32; a negative value (geometry-central
+// INVALID / "none") becomes the 0 sentinel.
+inline mxArray* indexVectorToMx1Based(const std::vector<long>& idx0) {
+    mxArray* arr = mxCreateNumericMatrix(idx0.size(), 1, mxUINT32_CLASS, mxREAL);
+    uint32_t* p = static_cast<uint32_t*>(mxGetData(arr));
+    for (size_t i = 0; i < idx0.size(); ++i)
+        p[i] = (idx0[i] < 0) ? 0u : static_cast<uint32_t>(idx0[i] + 1);
+    return arr;
+}
+
+inline mxArray* logicalVectorToMx(const std::vector<char>& b) {
+    mxArray* arr = mxCreateLogicalMatrix(b.size(), 1);
+    mxLogical* p = mxGetLogicals(arr);
+    for (size_t i = 0; i < b.size(); ++i) p[i] = b[i] ? 1 : 0;
+    return arr;
+}
+
+inline mxArray* scalarToMx(double x) {
+    mxArray* arr = mxCreateDoubleMatrix(1, 1, mxREAL);
+    *mxGetPr(arr) = x;
+    return arr;
+}
+
 // ── Sparse double matrix conversion (CSC ↔ CSC) ─────────────
 
 inline Eigen::SparseMatrix<double> mxToEigenSparse(const mxArray* arr) {
