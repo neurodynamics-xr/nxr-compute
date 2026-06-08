@@ -12,7 +12,7 @@ static long idxOrNone(size_t i) {
     return (i == INVALID_IND) ? -1L : static_cast<long>(i);
 }
 
-MeshTopology getMeshTopology(Manifold& m) {
+MeshTopology meshTopology(Manifold& m) {
     auto& mesh = m.mesh();
 
     const int nV = m.nV(), nE = m.nE(), nF = m.nF();
@@ -25,7 +25,9 @@ MeshTopology getMeshTopology(Manifold& m) {
     t.vertexHalfedge.resize(nV);
     t.edgeHalfedge.resize(nE);
     t.faceHalfedge.resize(nF);
-    t.cornerHalfedge.resize(nC);
+    // sized nH (== nCorners on a closed mesh); corner ids are halfedge-based
+    // in geometry-central, so on a boundary mesh indices are sparse.
+    t.cornerHalfedge.assign(nH, -1L);
 
     for (Vertex v : mesh.vertices())  t.vertexHalfedge[v.getIndex()] = idxOrNone(v.halfedge().getIndex());
     for (Edge e : mesh.edges())       t.edgeHalfedge  [e.getIndex()] = idxOrNone(e.halfedge().getIndex());

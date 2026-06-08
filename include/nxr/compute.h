@@ -1256,7 +1256,7 @@ struct MeshTopology {
 /** Extract the halfedge mesh topology into a plain struct-of-arrays.
  *  All indices are 0-based (geometry-central convention). -1 encodes
  *  geometry-central's INVALID_IND for "none / boundary" slots. */
-MeshTopology getMeshTopology(Manifold& m);
+MeshTopology meshTopology(Manifold& m);
 
 } // namespace nxr::manifold::geometry
 

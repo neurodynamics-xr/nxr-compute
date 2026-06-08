@@ -1094,10 +1094,13 @@ void cmdRandomDecomposed1Form(int /*nlhs*/, mxArray** plhs, int nrhs, const mxAr
 //   T.halfedge.isInterior   [nH × 1] logical
 
 void cmdTopology(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
-    if (nrhs < 2) throw std::invalid_argument("nxr_compute('topology', handle)");
+    if (nrhs != 2) {
+        throw std::invalid_argument(
+            "nxr_compute('topology', handle) takes exactly 1 argument");
+    }
     ContextHolder& h = getHolder(prhs[1]);
 
-    auto t = nxr::manifold::geometry::getMeshTopology(*h.ctx);
+    auto t = nxr::manifold::geometry::meshTopology(*h.ctx);
 
     const char* topFields[] = {"schemaVersion","vertex","edge","face","corner","halfedge"};
     mxArray* s = mxCreateStructMatrix(1, 1, 6, topFields);

@@ -24,6 +24,10 @@ assert(all(T.halfedge.next >= 1 & T.halfedge.next <= H), 'next in 1..H');
 assert(all(T.halfedge.vertex >= 1 & T.halfedge.vertex <= nV), 'vertex in 1..nV');
 assert(all(T.halfedge.edge >= 1 & T.halfedge.edge <= nE), 'edge in 1..nE');
 assert(all(T.halfedge.face >= 1 & T.halfedge.face <= nF), 'face in 1..nF (closed)');
+assert(all(T.halfedge.corner >= 1 & T.halfedge.corner <= 3*nF), 'corner in 1..3F (closed)');
+assert(~any([T.halfedge.twin(:); T.halfedge.next(:); T.halfedge.vertex(:); ...
+             T.halfedge.edge(:); T.halfedge.face(:); T.halfedge.corner(:)] == 0), ...
+       'no 0 sentinels on a closed mesh');
 assert(isa(T.halfedge.twin, 'uint32'), 'indices are uint32');
 assert(islogical(T.halfedge.orientation), 'orientation logical');
 
