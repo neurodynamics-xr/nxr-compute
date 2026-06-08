@@ -1174,6 +1174,21 @@ VertexFrames vertexFrames(Manifold& m);
 Eigen::MatrixXcd vertexGrid(Manifold& m);   // [nV, 3] complex
 Eigen::MatrixXcd faceGrid(Manifold& m);     // [nF, 3] complex
 
+// ── Curvature as a 2-RoSy complex + mean ─────────────────────
+//
+// The shape operator (3 real DOF) split into its trace and deviatoric
+// parts. `deviatoric` is the traceless symmetric part encoded as a
+// 2-RoSy complex number q: arg(q)/2 is the max principal direction
+// angle in the vertex tangent basis, |q| = (κmax − κmin)/2. `mean`
+// is (κmax + κmin)/2. See bundle design spec §5.2. Everything else
+// (principal curvatures/directions, extrinsic Gaussian) derives from
+// these; intrinsic Gaussian comes from the angle-defect (2π − angleSum).
+struct VertexCurvature2RoSy {
+    Eigen::VectorXcd deviatoric;  // [nV] q
+    Eigen::VectorXd  mean;        // [nV] H
+};
+VertexCurvature2RoSy vertexCurvature(Manifold& m);
+
 } // namespace nxr::manifold::geometry
 
 namespace nxr::field::generate {

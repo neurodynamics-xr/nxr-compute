@@ -81,9 +81,42 @@ static void testFaceGrid() {
     EXPECT(maxCrossErr < 1e-9, "real(c) × imag(c) matches GC face normal");
 }
 
+static void testVertexCurvature() {
+    std::cout << "\n=== vertexCurvature ===\n";
+    std::vector<double> V; std::vector<int32_t> F; makeIcosahedron(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+
+    auto cv = nxr::manifold::geometry::vertexCurvature(m);
+    EXPECT(cv.deviatoric.size() == 12, "deviatoric length == nV");
+    EXPECT(cv.mean.size() == 12, "mean length == nV");
+
+    // Unit icosahedron approximates a unit sphere: nearly umbilic, so the
+    // deviatoric magnitude is small relative to the mean, and the mean
+    // (≈ principal curvature ≈ 1/R = 1) is positive (convex).
+    double maxDev = cv.deviatoric.cwiseAbs().maxCoeff();
+    double minMean = cv.mean.minCoeff();
+    EXPECT(minMean > 0.5, "mean curvature positive (convex), ~1 on unit sphere");
+    EXPECT(maxDev < 0.5 * minMean, "deviatoric small vs mean (near-umbilic)");
+
+    // Extrinsic Gaussian K = H² − |q|² must be positive on a convex surface.
+    bool allKpos = true;
+    for (int v = 0; v < 12; ++v) {
+        double K = cv.mean(v) * cv.mean(v) - std::norm(cv.deviatoric(v));
+        if (K <= 0) allKpos = false;
+    }
+    EXPECT(allKpos, "extrinsic Gaussian H² − |q|² > 0 (convex)");
+
+    // Determinism.
+    auto cv2 = nxr::manifold::geometry::vertexCurvature(m);
+    EXPECT((cv.deviatoric - cv2.deviatoric).cwiseAbs().maxCoeff() < 1e-15 &&
+           (cv.mean - cv2.mean).cwiseAbs().maxCoeff() < 1e-15,
+           "vertexCurvature deterministic");
+}
+
 int main() {
     testVertexGrid();
     testFaceGrid();
+    testVertexCurvature();
     if (g_failures) { std::cerr << "\n" << g_failures << " failure(s)\n"; return 1; }
     std::cout << "\nALL PASSED\n"; return 0;
 }
