@@ -1164,6 +1164,16 @@ struct VertexFrames {
 
 VertexFrames vertexFrames(Manifold& m);
 
+// ── Complex frame ("grid") ───────────────────────────────────
+//
+// The per-element tangent frame packed as a complex 3-vector
+// c = e1 + i·e2 ∈ ℂ³ (real part = e1, imag part = e2). The unit
+// normal is recovered as real(c) × imag(c) and is not stored
+// separately. This is the representation Brainstorm's Geometry.*.grid
+// fields use; see the bundle design spec §5.1.
+Eigen::MatrixXcd vertexGrid(Manifold& m);   // [nV, 3] complex
+Eigen::MatrixXcd faceGrid(Manifold& m);     // [nF, 3] complex
+
 } // namespace nxr::manifold::geometry
 
 namespace nxr::field::generate {

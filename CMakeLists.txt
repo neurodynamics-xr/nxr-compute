@@ -62,6 +62,7 @@ add_library(nxr_compute STATIC
   src/stripe_patterns.cpp
   src/connection_laplacian.cpp
   src/query_measure.cpp
+  src/geometry_grid.cpp
 )
 
 target_include_directories(nxr_compute PUBLIC
@@ -161,6 +162,10 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_connection_laplacian test/test_connection_laplacian.cpp)
     target_link_libraries(test_connection_laplacian PRIVATE nxr_compute)
     add_test(NAME test_connection_laplacian COMMAND test_connection_laplacian)
+
+    add_executable(test_geometry_bundle test/test_geometry_bundle.cpp)
+    target_link_libraries(test_geometry_bundle PRIVATE nxr_compute)
+    add_test(NAME test_geometry_bundle COMMAND test_geometry_bundle)
 
     add_executable(test_passthrough_accessors test/test_passthrough_accessors.cpp)
     target_link_libraries(test_passthrough_accessors PRIVATE nxr_compute)
