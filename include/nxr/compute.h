@@ -1258,6 +1258,47 @@ struct MeshTopology {
  *  geometry-central's INVALID_IND for "none / boundary" slots. */
 MeshTopology meshTopology(Manifold& m);
 
+// ── Light per-element geometry bundle ────────────────────────
+//
+// All light O(V/E/F/H/C) per-element quantities, element-grouped.
+// Heavy sparse operators are intentionally excluded (on-demand
+// surface, separate). Frames are the complex `grid` (c = e1+i·e2);
+// normals derive as real×imag. Curvature is the 2-RoSy deviatoric
+// + mean (see vertexCurvature). See the bundle design spec §4.2.
+//
+// Corner-array sizing note: cornerAngles / cornerScaledAngles are
+// sized to nH (not nC) for safety on boundary meshes, where
+// geometry-central corner ids are halfedge-based and may be sparse.
+// On a closed mesh nH == nC so the size is identical.
+struct MeshGeometry {
+    double totalArea = 0.0;
+    // vertex
+    Eigen::VectorXd  vertexDualAreas;           // [nV]
+    Eigen::VectorXd  vertexAngleSums;           // [nV]
+    Eigen::VectorXcd vertexCurvatureDeviatoric; // [nV] q (2-RoSy)
+    Eigen::VectorXd  vertexMeanCurvature;       // [nV] H
+    Eigen::MatrixXcd vertexGrid;                // [nV,3] c = e1+i·e2
+    // edge
+    Eigen::VectorXd  edgeLengths;              // [nE]
+    Eigen::VectorXd  edgeCotanWeights;         // [nE]
+    Eigen::VectorXd  edgeDihedralAngles;       // [nE]
+    // face
+    Eigen::VectorXd  faceAreas;                // [nF]
+    Eigen::MatrixXd  faceCentroids;            // [nF,3]
+    Eigen::MatrixXcd faceGrid;                 // [nF,3]
+    // halfedge
+    Eigen::VectorXd  halfedgeCotanWeights;     // [nH]
+    Eigen::VectorXcd halfedgeVectorsInVertex;  // [nH]
+    Eigen::VectorXcd halfedgeVectorsInFace;    // [nH]
+    Eigen::VectorXcd halfedgeTransportAlong;   // [nH]
+    Eigen::VectorXcd halfedgeTransportAcross;  // [nH]
+    // corner (sized nH; on closed mesh nH==nC)
+    Eigen::VectorXd  cornerAngles;             // [nH]
+    Eigen::VectorXd  cornerScaledAngles;       // [nH]
+};
+
+MeshGeometry meshGeometry(Manifold& m);
+
 } // namespace nxr::manifold::geometry
 
 namespace nxr::field::generate {

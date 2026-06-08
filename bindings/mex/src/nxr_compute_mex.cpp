@@ -1071,6 +1071,89 @@ void cmdRandomDecomposed1Form(int /*nlhs*/, mxArray** plhs, int nrhs, const mxAr
     plhs[0] = eigenVectorToMx(omega);
 }
 
+// ── geometry(handle) → struct ─────────────────────────────────
+//
+// Returns a nested element-grouped struct of all light per-element
+// geometry quantities (dual areas, angle sums, curvature, frames,
+// edge lengths, face centroids, halfedge transport, corner angles).
+// Heavy sparse operators are intentionally excluded.
+//
+// Schema (schemaVersion == 1):
+//   G.totalArea                   double scalar
+//   G.vertex.dualAreas            [nV x 1]  double
+//   G.vertex.angleSums            [nV x 1]  double
+//   G.vertex.curvature            [nV x 1]  complex double (2-RoSy deviatoric q)
+//   G.vertex.meanCurvature        [nV x 1]  double
+//   G.vertex.grid                 [nV x 3]  complex double (c = e1+i*e2)
+//   G.edge.lengths                [nE x 1]  double
+//   G.edge.cotanWeights           [nE x 1]  double
+//   G.edge.dihedralAngles         [nE x 1]  double
+//   G.face.areas                  [nF x 1]  double
+//   G.face.centroids              [nF x 3]  double
+//   G.face.grid                   [nF x 3]  complex double
+//   G.halfedge.cotanWeights       [nH x 1]  double
+//   G.halfedge.vectorsInVertex    [nH x 1]  complex double
+//   G.halfedge.vectorsInFace      [nH x 1]  complex double
+//   G.halfedge.transportAlong     [nH x 1]  complex double
+//   G.halfedge.transportAcross    [nH x 1]  complex double
+//   G.corner.angles               [nH x 1]  double (nH == nC on closed mesh)
+//   G.corner.scaledAngles         [nH x 1]  double
+
+void cmdGeometry(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 2) {
+        throw std::invalid_argument(
+            "nxr_compute('geometry', handle) takes exactly 1 argument");
+    }
+    ContextHolder& h = getHolder(prhs[1]);
+    nxr::manifold::geometry::MeshGeometry g =
+        nxr::manifold::geometry::meshGeometry(*h.ctx);
+
+    const char* topF[] = {"schemaVersion","totalArea","vertex","edge","face","halfedge","corner"};
+    mxArray* s = mxCreateStructMatrix(1, 1, 7, topF);
+    mxSetField(s, 0, "schemaVersion", scalarToMx(1));
+    mxSetField(s, 0, "totalArea",     scalarToMx(g.totalArea));
+
+    { const char* f[] = {"dualAreas","angleSums","curvature","meanCurvature","grid"};
+      mxArray* gg = mxCreateStructMatrix(1, 1, 5, f);
+      mxSetField(gg, 0, "dualAreas",      eigenVectorToMx(g.vertexDualAreas));
+      mxSetField(gg, 0, "angleSums",      eigenVectorToMx(g.vertexAngleSums));
+      mxSetField(gg, 0, "curvature",      eigenComplexVectorToMx(g.vertexCurvatureDeviatoric));
+      mxSetField(gg, 0, "meanCurvature",  eigenVectorToMx(g.vertexMeanCurvature));
+      mxSetField(gg, 0, "grid",           eigenComplexMatrixToMx(g.vertexGrid));
+      mxSetField(s,  0, "vertex", gg); }
+
+    { const char* f[] = {"lengths","cotanWeights","dihedralAngles"};
+      mxArray* gg = mxCreateStructMatrix(1, 1, 3, f);
+      mxSetField(gg, 0, "lengths",        eigenVectorToMx(g.edgeLengths));
+      mxSetField(gg, 0, "cotanWeights",   eigenVectorToMx(g.edgeCotanWeights));
+      mxSetField(gg, 0, "dihedralAngles", eigenVectorToMx(g.edgeDihedralAngles));
+      mxSetField(s,  0, "edge", gg); }
+
+    { const char* f[] = {"areas","centroids","grid"};
+      mxArray* gg = mxCreateStructMatrix(1, 1, 3, f);
+      mxSetField(gg, 0, "areas",     eigenVectorToMx(g.faceAreas));
+      mxSetField(gg, 0, "centroids", eigenMatrixToMx(g.faceCentroids));
+      mxSetField(gg, 0, "grid",      eigenComplexMatrixToMx(g.faceGrid));
+      mxSetField(s,  0, "face", gg); }
+
+    { const char* f[] = {"cotanWeights","vectorsInVertex","vectorsInFace","transportAlong","transportAcross"};
+      mxArray* gg = mxCreateStructMatrix(1, 1, 5, f);
+      mxSetField(gg, 0, "cotanWeights",    eigenVectorToMx(g.halfedgeCotanWeights));
+      mxSetField(gg, 0, "vectorsInVertex", eigenComplexVectorToMx(g.halfedgeVectorsInVertex));
+      mxSetField(gg, 0, "vectorsInFace",   eigenComplexVectorToMx(g.halfedgeVectorsInFace));
+      mxSetField(gg, 0, "transportAlong",  eigenComplexVectorToMx(g.halfedgeTransportAlong));
+      mxSetField(gg, 0, "transportAcross", eigenComplexVectorToMx(g.halfedgeTransportAcross));
+      mxSetField(s,  0, "halfedge", gg); }
+
+    { const char* f[] = {"angles","scaledAngles"};
+      mxArray* gg = mxCreateStructMatrix(1, 1, 2, f);
+      mxSetField(gg, 0, "angles",       eigenVectorToMx(g.cornerAngles));
+      mxSetField(gg, 0, "scaledAngles", eigenVectorToMx(g.cornerScaledAngles));
+      mxSetField(s,  0, "corner", gg); }
+
+    plhs[0] = s;
+}
+
 // ── topology(handle) → struct ─────────────────────────────────
 //
 // Returns a nested element-grouped struct of the halfedge mesh combinatorics.
@@ -1206,6 +1289,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "dampedWave")                  cmdDampedWave(nlhs, plhs, nrhs, prhs);
         else if (cmd == "randomDecomposed1Form")       cmdRandomDecomposed1Form(nlhs, plhs, nrhs, prhs);
         else if (cmd == "topology")                    cmdTopology(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "geometry")                    cmdGeometry(nlhs, plhs, nrhs, prhs);
         else if (cmd == "version")                 cmdVersion(nlhs, plhs, nrhs, prhs);
         else {
             mexErrMsgIdAndTxt("nxr:unknownCommand",
