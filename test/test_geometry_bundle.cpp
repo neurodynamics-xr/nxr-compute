@@ -132,6 +132,9 @@ static void testTrivialGaugeRotations() {
     double spread = (g.vertex.array() - g.vertex(0)).abs().maxCoeff();
     EXPECT(spread > 1e-6, "trivial gauge differs from Levi-Civita");
 
+    EXPECT(std::abs(g.vertex(0) - std::complex<double>(1.0, 0.0)) < 1e-15,
+           "root rotation is identity");
+
     auto g2 = nxr::manifold::connection::integrateTrivialGaugeRotations(m, dec, cache, sing);
     EXPECT((g.vertex - g2.vertex).cwiseAbs().maxCoeff() < 1e-15,
            "rotation field deterministic");

@@ -47,6 +47,7 @@ GaugeRotations integrateTrivialGaugeRotations(
     int nV = m.nV();
     GaugeRotations out;
     out.vertex.resize(nV);
+    out.vertex.setZero();   // unvisited components (disconnected mesh) → 0+0i, not garbage
     std::vector<char> visited(nV, 0);
 
     // 2. BFS from vertex 0; root rotation r[0] = 1 (identity in LC frame).
@@ -63,7 +64,7 @@ GaugeRotations integrateTrivialGaugeRotations(
         int ui = static_cast<int>(geom.vertexIndices[u]);
 
         for (Halfedge he : u.outgoingHalfedges()) {
-            if (!he.isInterior()) continue;
+            if (!he.isInterior()) continue; // skip exterior halfedges — matches propagateAnglesVertex in direction_field.cpp
 
             Vertex w = he.tipVertex();
             int wi = static_cast<int>(geom.vertexIndices[w]);

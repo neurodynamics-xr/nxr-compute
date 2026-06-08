@@ -961,6 +961,11 @@ Eigen::VectorXd computeTrivialConnection(
 //
 // Gauss-Bonnet: Σ singularityMap values must equal χ(mesh) (the caller's
 // responsibility — not checked here).
+//
+// Connectivity contract: BFS starts at vertex 0 and visits only its
+// connected component; on a disconnected mesh other components receive
+// 0+0i. Intended usage is one connected component (e.g. a single
+// cortical hemisphere) at a time.
 struct GaugeRotations {
     Eigen::VectorXcd vertex;   // [nV] r_v = exp(iθ_v), |r_v| = 1
 };
