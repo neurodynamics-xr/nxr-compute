@@ -1217,6 +1217,47 @@ struct VertexCurvature2RoSy {
 };
 VertexCurvature2RoSy vertexCurvature(Manifold& m);
 
+// ── Halfedge mesh topology ────────────────────────────────────
+//
+// Flat struct-of-arrays representation of the halfedge combinatorics,
+// using 0-based indices matching geometry-central's internal storage.
+// Bindings that want 1-based MATLAB indices convert at the binding edge
+// (see indexVectorToMx1Based in marshal.h).
+// A value of -1 (INVALID) means "none / boundary" for .face and .corner
+// on exterior halfedges; all other entries are non-negative for a valid
+// closed manifold mesh.
+//
+//   nH == 2 * nE   (every edge has exactly 2 halfedges)
+//   nC == 3 * nF   (every interior face has 3 corners)
+
+struct MeshTopology {
+    // Element counts.
+    int nV, nE, nF, nH, nC;
+
+    // Reverse lookups: one representative halfedge per element (0-based).
+    std::vector<long> vertexHalfedge;   // [nV]  he that "belongs to" vertex
+    std::vector<long> edgeHalfedge;     // [nE]
+    std::vector<long> faceHalfedge;     // [nF]
+    std::vector<long> cornerHalfedge;   // [nC]
+
+    // Halfedge adjacency table (0-based; -1 = none / exterior).
+    std::vector<long> heTwin;      // [nH]
+    std::vector<long> heNext;      // [nH]
+    std::vector<long> heVertex;    // [nH]  tail vertex
+    std::vector<long> heEdge;      // [nH]
+    std::vector<long> heFace;      // [nH]  -1 for exterior halfedges
+    std::vector<long> heCorner;    // [nH]  -1 for exterior halfedges
+
+    // Boolean attributes (stored as char: 1 = true, 0 = false).
+    std::vector<char> heOrientation;  // [nH]  true iff he == he.edge().halfedge()
+    std::vector<char> heIsInterior;   // [nH]
+};
+
+/** Extract the halfedge mesh topology into a plain struct-of-arrays.
+ *  All indices are 0-based (geometry-central convention). -1 encodes
+ *  geometry-central's INVALID_IND for "none / boundary" slots. */
+MeshTopology getMeshTopology(Manifold& m);
+
 } // namespace nxr::manifold::geometry
 
 namespace nxr::field::generate {
@@ -1496,4 +1537,5 @@ namespace nxr::manifold {
     using geometry::NormalType;
     using geometry::FaceFrames;
     using geometry::VertexFrames;
+    using geometry::MeshTopology;
 } // namespace nxr::manifold

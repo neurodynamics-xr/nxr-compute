@@ -1071,6 +1071,66 @@ void cmdRandomDecomposed1Form(int /*nlhs*/, mxArray** plhs, int nrhs, const mxAr
     plhs[0] = eigenVectorToMx(omega);
 }
 
+// ── topology(handle) → struct ─────────────────────────────────
+//
+// Returns a nested element-grouped struct of the halfedge mesh combinatorics.
+// All indices are 1-based (MATLAB convention); 0 is the sentinel for
+// boundary / invalid (geometry-central INVALID_IND → -1 → 0u).
+//
+// Schema (schemaVersion == 1):
+//   T.vertex.count          uint32 scalar
+//   T.vertex.halfedge       [nV × 1] uint32  — one canonical halfedge per vertex
+//   T.edge.count / .halfedge
+//   T.face.count / .halfedge
+//   T.corner.count / .halfedge
+//   T.halfedge.count        uint32 scalar
+//   T.halfedge.twin         [nH × 1] uint32  (interior: 1-based; always valid on closed mesh)
+//   T.halfedge.next         [nH × 1] uint32
+//   T.halfedge.vertex       [nH × 1] uint32  — tail vertex
+//   T.halfedge.edge         [nH × 1] uint32
+//   T.halfedge.face         [nH × 1] uint32  (0 for exterior halfedges)
+//   T.halfedge.corner       [nH × 1] uint32  (0 for exterior halfedges)
+//   T.halfedge.orientation  [nH × 1] logical — true iff he == he.edge().halfedge()
+//   T.halfedge.isInterior   [nH × 1] logical
+
+void cmdTopology(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs < 2) throw std::invalid_argument("nxr_compute('topology', handle)");
+    ContextHolder& h = getHolder(prhs[1]);
+
+    auto t = nxr::manifold::geometry::getMeshTopology(*h.ctx);
+
+    const char* topFields[] = {"schemaVersion","vertex","edge","face","corner","halfedge"};
+    mxArray* s = mxCreateStructMatrix(1, 1, 6, topFields);
+    mxSetField(s, 0, "schemaVersion", scalarToMx(1));
+
+    { const char* f[] = {"count","halfedge"}; mxArray* g = mxCreateStructMatrix(1,1,2,f);
+      mxSetField(g,0,"count",scalarToMx(t.nV)); mxSetField(g,0,"halfedge",indexVectorToMx1Based(t.vertexHalfedge));
+      mxSetField(s,0,"vertex",g); }
+    { const char* f[] = {"count","halfedge"}; mxArray* g = mxCreateStructMatrix(1,1,2,f);
+      mxSetField(g,0,"count",scalarToMx(t.nE)); mxSetField(g,0,"halfedge",indexVectorToMx1Based(t.edgeHalfedge));
+      mxSetField(s,0,"edge",g); }
+    { const char* f[] = {"count","halfedge"}; mxArray* g = mxCreateStructMatrix(1,1,2,f);
+      mxSetField(g,0,"count",scalarToMx(t.nF)); mxSetField(g,0,"halfedge",indexVectorToMx1Based(t.faceHalfedge));
+      mxSetField(s,0,"face",g); }
+    { const char* f[] = {"count","halfedge"}; mxArray* g = mxCreateStructMatrix(1,1,2,f);
+      mxSetField(g,0,"count",scalarToMx(t.nC)); mxSetField(g,0,"halfedge",indexVectorToMx1Based(t.cornerHalfedge));
+      mxSetField(s,0,"corner",g); }
+    { const char* f[] = {"count","twin","next","vertex","edge","face","corner","orientation","isInterior"};
+      mxArray* g = mxCreateStructMatrix(1,1,9,f);
+      mxSetField(g,0,"count",scalarToMx(t.nH));
+      mxSetField(g,0,"twin",       indexVectorToMx1Based(t.heTwin));
+      mxSetField(g,0,"next",       indexVectorToMx1Based(t.heNext));
+      mxSetField(g,0,"vertex",     indexVectorToMx1Based(t.heVertex));
+      mxSetField(g,0,"edge",       indexVectorToMx1Based(t.heEdge));
+      mxSetField(g,0,"face",       indexVectorToMx1Based(t.heFace));
+      mxSetField(g,0,"corner",     indexVectorToMx1Based(t.heCorner));
+      mxSetField(g,0,"orientation",logicalVectorToMx(t.heOrientation));
+      mxSetField(g,0,"isInterior", logicalVectorToMx(t.heIsInterior));
+      mxSetField(s,0,"halfedge",g); }
+
+    plhs[0] = s;
+}
+
 // ── version() → string ───────────────────────────────────────
 
 void cmdVersion(int /*nlhs*/, mxArray** plhs,
@@ -1142,6 +1202,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "heatDiffusion")               cmdHeatDiffusion(nlhs, plhs, nrhs, prhs);
         else if (cmd == "dampedWave")                  cmdDampedWave(nlhs, plhs, nrhs, prhs);
         else if (cmd == "randomDecomposed1Form")       cmdRandomDecomposed1Form(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "topology")                    cmdTopology(nlhs, plhs, nrhs, prhs);
         else if (cmd == "version")                 cmdVersion(nlhs, plhs, nrhs, prhs);
         else {
             mexErrMsgIdAndTxt("nxr:unknownCommand",
