@@ -950,6 +950,26 @@ Eigen::VectorXd computeTrivialConnection(
     const std::map<int, double>& singularityMap
 );
 
+// ── Trivial-gauge per-vertex rotation ────────────────────────
+//
+// Integrates the trivial-connection 1-form φ (from computeTrivialConnection)
+// into a per-vertex unit-complex rotation r_v = exp(iθ_v) relative to the
+// Levi-Civita vertex frame, by BFS over the vertex graph from a root,
+// accumulating the Levi-Civita transport modulated by exp(i·sign·φ[edge]).
+// The realized trivial gauge frame is r .* vertexGrid (broadcast over the
+// 3 complex columns). See bundle design spec §6.
+//
+// Gauss-Bonnet: Σ singularityMap values must equal χ(mesh) (the caller's
+// responsibility — not checked here).
+struct GaugeRotations {
+    Eigen::VectorXcd vertex;   // [nV] r_v = exp(iθ_v), |r_v| = 1
+};
+GaugeRotations integrateTrivialGaugeRotations(
+    Manifold& m,
+    const ops::DECOperators& dec,
+    ops::CholeskyCache& cache,
+    const std::map<int, double>& singularityMap);
+
 /**
  * Compute a smooth direction field with prescribed singularities.
  * Uses the trivial connections algorithm (Crane, de Goes, Desbrun).

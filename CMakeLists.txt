@@ -63,6 +63,7 @@ add_library(nxr_compute STATIC
   src/connection_laplacian.cpp
   src/query_measure.cpp
   src/geometry_grid.cpp
+  src/gauge.cpp
 )
 
 target_include_directories(nxr_compute PUBLIC

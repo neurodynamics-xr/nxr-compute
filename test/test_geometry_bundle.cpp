@@ -113,10 +113,35 @@ static void testVertexCurvature() {
            "vertexCurvature deterministic");
 }
 
+static void testTrivialGaugeRotations() {
+    std::cout << "\n=== integrateTrivialGaugeRotations ===\n";
+    std::vector<double> V; std::vector<int32_t> F; makeIcosahedron(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+
+    auto dec   = nxr::manifold::ops::assembleDECOperators(m);
+    auto cache = nxr::manifold::ops::CholeskyCache{};
+    // χ(sphere) = 2: two index-1 singularities (Gauss-Bonnet satisfied).
+    std::map<int, double> sing = {{0, 1.0}, {1, 1.0}};
+
+    auto g = nxr::manifold::connection::integrateTrivialGaugeRotations(m, dec, cache, sing);
+    EXPECT(g.vertex.size() == 12, "rotation length == nV");
+
+    double maxModErr = (g.vertex.cwiseAbs().array() - 1.0).abs().maxCoeff();
+    EXPECT(maxModErr < 1e-9, "all rotations unit modulus");
+
+    double spread = (g.vertex.array() - g.vertex(0)).abs().maxCoeff();
+    EXPECT(spread > 1e-6, "trivial gauge differs from Levi-Civita");
+
+    auto g2 = nxr::manifold::connection::integrateTrivialGaugeRotations(m, dec, cache, sing);
+    EXPECT((g.vertex - g2.vertex).cwiseAbs().maxCoeff() < 1e-15,
+           "rotation field deterministic");
+}
+
 int main() {
     testVertexGrid();
     testFaceGrid();
     testVertexCurvature();
+    testTrivialGaugeRotations();
     if (g_failures) { std::cerr << "\n" << g_failures << " failure(s)\n"; return 1; }
     std::cout << "\nALL PASSED\n"; return 0;
 }
