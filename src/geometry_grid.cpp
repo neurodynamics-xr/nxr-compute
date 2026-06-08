@@ -50,7 +50,7 @@ VertexCurvature2RoSy vertexCurvature(Manifold& m) {
         double a = dir.dot(e1);
         double b = dir.dot(e2);
         double theta = std::atan2(b, a);
-        double mag   = 0.5 * (cr.kMax(v) - cr.kMin(v));
+        double mag   = 0.5 * std::abs(cr.kMax(v) - cr.kMin(v));
         out.deviatoric(v) = std::polar(mag, 2.0 * theta);
         out.mean(v)       = 0.5 * (cr.kMax(v) + cr.kMin(v));
     }

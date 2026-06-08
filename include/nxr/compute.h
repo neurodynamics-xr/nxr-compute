@@ -1183,6 +1183,9 @@ Eigen::MatrixXcd faceGrid(Manifold& m);     // [nF, 3] complex
 // is (κmax + κmin)/2. See bundle design spec §5.2. Everything else
 // (principal curvatures/directions, extrinsic Gaussian) derives from
 // these; intrinsic Gaussian comes from the angle-defect (2π − angleSum).
+// If geometry-central principal directions are unavailable at a vertex, the
+// deviatoric phase falls back to 0; only |q| (anisotropy) and mean (H) are
+// reliable there.
 struct VertexCurvature2RoSy {
     Eigen::VectorXcd deviatoric;  // [nV] q
     Eigen::VectorXd  mean;        // [nV] H
