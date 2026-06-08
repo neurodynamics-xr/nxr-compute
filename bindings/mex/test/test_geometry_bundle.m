@@ -20,6 +20,17 @@ assert(numel(G.edge.lengths) == nE, 'edge.lengths nE');
 assert(numel(G.face.areas) == nF, 'face.areas nF');
 assert(isequal(size(G.face.grid), [nF 3]), 'face.grid nF x 3');
 
+nH = 2*nE; nC = 3*nF;
+assert(numel(G.halfedge.cotanWeights) == nH, 'halfedge.cotanWeights nH');
+assert(numel(G.halfedge.transportAlong) == nH, 'halfedge.transportAlong nH');
+assert(~isreal(G.halfedge.transportAlong), 'transportAlong complex');
+assert(~isreal(G.halfedge.vectorsInVertex), 'vectorsInVertex complex');
+assert(~isreal(G.halfedge.transportAcross), 'transportAcross complex');
+assert(numel(G.corner.angles) == nC, 'corner.angles nC');
+assert(numel(G.corner.scaledAngles) == nC, 'corner.scaledAngles nC');
+% halfedge transport vectors are unit-modulus (Levi-Civita rotations)
+assert(max(abs(abs(G.halfedge.transportAlong) - 1)) < 1e-9, 'transportAlong unit modulus');
+
 e1 = real(G.vertex.grid); e2 = imag(G.vertex.grid);
 assert(max(abs(sqrt(sum(e1.^2,2)) - 1)) < 1e-9, 'real(grid) unit');
 assert(max(abs(sqrt(sum(e2.^2,2)) - 1)) < 1e-9, 'imag(grid) unit');
