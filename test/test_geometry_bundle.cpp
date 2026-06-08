@@ -39,22 +39,51 @@ static void testVertexGrid() {
     Eigen::MatrixXcd c = nxr::manifold::geometry::vertexGrid(m);
     EXPECT(c.rows() == 12 && c.cols() == 3, "vertexGrid is [nV, 3]");
 
+    nxr::manifold::geometry::VertexFrames vf = nxr::manifold::geometry::vertexFrames(m);
+
     double maxE1Err = 0, maxE2Err = 0, maxDot = 0, maxCrossErr = 0;
     for (int v = 0; v < 12; ++v) {
         Eigen::Vector3d e1 = c.row(v).real(), e2 = c.row(v).imag();
         maxE1Err = std::max(maxE1Err, std::abs(e1.norm() - 1.0));
         maxE2Err = std::max(maxE2Err, std::abs(e2.norm() - 1.0));
         maxDot   = std::max(maxDot, std::abs(e1.dot(e2)));
-        maxCrossErr = std::max(maxCrossErr, std::abs(e1.cross(e2).norm() - 1.0));
+        Eigen::Vector3d n_gc(vf.normals(v,0), vf.normals(v,1), vf.normals(v,2));
+        maxCrossErr = std::max(maxCrossErr, (e1.cross(e2) - n_gc).norm());
     }
     EXPECT(maxE1Err < 1e-9, "real(c) unit length");
     EXPECT(maxE2Err < 1e-9, "imag(c) unit length");
     EXPECT(maxDot   < 1e-9, "real(c) ⟂ imag(c)");
-    EXPECT(maxCrossErr < 1e-9, "real(c) × imag(c) is unit normal");
+    EXPECT(maxCrossErr < 1e-9, "real(c) × imag(c) matches GC vertex normal");
+}
+
+static void testFaceGrid() {
+    std::cout << "\n=== faceGrid ===\n";
+    std::vector<double> V; std::vector<int32_t> F; makeIcosahedron(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+
+    Eigen::MatrixXcd c = nxr::manifold::geometry::faceGrid(m);
+    EXPECT(c.rows() == 20 && c.cols() == 3, "faceGrid is [nF, 3]");
+
+    nxr::manifold::geometry::FaceFrames ff = nxr::manifold::geometry::frames(m);
+
+    double maxE1Err = 0, maxE2Err = 0, maxDot = 0, maxCrossErr = 0;
+    for (int f = 0; f < 20; ++f) {
+        Eigen::Vector3d e1 = c.row(f).real(), e2 = c.row(f).imag();
+        maxE1Err = std::max(maxE1Err, std::abs(e1.norm() - 1.0));
+        maxE2Err = std::max(maxE2Err, std::abs(e2.norm() - 1.0));
+        maxDot   = std::max(maxDot, std::abs(e1.dot(e2)));
+        Eigen::Vector3d n_gc(ff.normals(f,0), ff.normals(f,1), ff.normals(f,2));
+        maxCrossErr = std::max(maxCrossErr, (e1.cross(e2) - n_gc).norm());
+    }
+    EXPECT(maxE1Err < 1e-9, "real(c) unit length");
+    EXPECT(maxE2Err < 1e-9, "imag(c) unit length");
+    EXPECT(maxDot   < 1e-9, "real(c) ⟂ imag(c)");
+    EXPECT(maxCrossErr < 1e-9, "real(c) × imag(c) matches GC face normal");
 }
 
 int main() {
     testVertexGrid();
+    testFaceGrid();
     if (g_failures) { std::cerr << "\n" << g_failures << " failure(s)\n"; return 1; }
     std::cout << "\nALL PASSED\n"; return 0;
 }

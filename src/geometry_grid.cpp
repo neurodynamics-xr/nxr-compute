@@ -3,6 +3,8 @@
 #include "geometrycentral/surface/manifold_surface_mesh.h"
 #include "geometrycentral/surface/vertex_position_geometry.h"
 
+#include <complex>
+
 namespace nxr::manifold::geometry {
 
 // c = e1 + i·e2, built directly on the existing frame assembly so the
