@@ -1071,6 +1071,86 @@ void cmdRandomDecomposed1Form(int /*nlhs*/, mxArray** plhs, int nrhs, const mxAr
     plhs[0] = eigenVectorToMx(omega);
 }
 
+// ── gauge(handle, type[, opts]) → struct ─────────────────────
+//
+// Returns the Gauge struct for the requested connection type.
+//   type == "euclidean" or "levi-civita":  vertex.rotation = ones(nV,1) (identity)
+//   type == "trivial":                     vertex.rotation = integrateTrivialGaugeRotations(...)
+//                                          opts struct requires singVerts (1-based) + singValues
+//
+// Schema (schemaVersion == 1):
+//   G.type                  string
+//   G.vertex.rotation       [nV x 1]  complex double  (unit modulus)
+//   G.face.rotation         [0 x 0]   complex double  (empty in v1)
+//   G.singularity.vertices  [k x 1]   uint32  1-based
+//   G.singularity.indices   [k x 1]   double
+//   G.singularity.source    string
+
+void cmdGauge(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    namespace conn = nxr::manifold::connection;
+    if (nrhs < 3) throw std::invalid_argument(
+        "nxr_compute('gauge', handle, type[, opts]) — type in {euclidean,levi-civita,trivial}");
+    ContextHolder& h = getHolder(prhs[1]);
+    nxr::manifold::Manifold& m = *h.ctx;
+    std::string type = getStringArg(prhs[2]);
+
+    const int nV = m.nV();
+    Eigen::VectorXcd rot = Eigen::VectorXcd::Ones(nV);   // identity by default
+    std::vector<long> singVerts;
+    Eigen::VectorXd   singIdx;
+    std::string singSource = "none";
+
+    if (type == "euclidean" || type == "levi-civita") {
+        // rotation stays identity; nothing else to compute.
+    } else if (type == "trivial") {
+        if (nrhs < 4 || !mxIsStruct(prhs[3]))
+            throw std::invalid_argument(
+                "gauge('trivial') requires opts struct with singVerts, singValues");
+        const mxArray* fv = mxGetField(prhs[3], 0, "singVerts");
+        const mxArray* fi = mxGetField(prhs[3], 0, "singValues");
+        if (!fv || !fi) throw std::invalid_argument("opts needs singVerts and singValues");
+        std::vector<int> verts = mxToVertexIndices(fv);     // 1-based -> 0-based
+        Eigen::VectorXd  vals  = mxToEigenVector(fi);
+        if (static_cast<size_t>(vals.size()) != verts.size())
+            throw std::invalid_argument("singVerts and singValues length mismatch");
+        std::map<int,double> sing;
+        for (size_t i = 0; i < verts.size(); ++i) sing[verts[i]] = vals[static_cast<Eigen::Index>(i)];
+
+        conn::GaugeRotations gr =
+            conn::integrateTrivialGaugeRotations(m, ensureDec(h), *h.cache, sing);
+        rot = gr.vertex;
+
+        singVerts.assign(verts.begin(), verts.end());       // 0-based; marshal converts to 1-based
+        singIdx = vals;
+        if (const mxArray* fs = mxGetField(prhs[3], 0, "source"))
+            singSource = getStringArg(fs);
+        else
+            singSource = "manual";
+    } else {
+        throw std::invalid_argument("unknown gauge type '" + type + "'");
+    }
+
+    const char* topF[] = {"schemaVersion","type","vertex","face","singularity"};
+    mxArray* s = mxCreateStructMatrix(1,1,5,topF);
+    mxSetField(s,0,"schemaVersion",scalarToMx(1));
+    mxSetField(s,0,"type",mxCreateString(type.c_str()));
+
+    { const char* f[] = {"rotation"}; mxArray* g = mxCreateStructMatrix(1,1,1,f);
+      mxSetField(g,0,"rotation",eigenComplexVectorToMx(rot));
+      mxSetField(s,0,"vertex",g); }
+    { const char* f[] = {"rotation"}; mxArray* g = mxCreateStructMatrix(1,1,1,f);
+      mxSetField(g,0,"rotation",eigenComplexVectorToMx(Eigen::VectorXcd(0)));  // empty in v1
+      mxSetField(s,0,"face",g); }
+    { const char* f[] = {"vertices","indices","source"};
+      mxArray* g = mxCreateStructMatrix(1,1,3,f);
+      mxSetField(g,0,"vertices",indexVectorToMx1Based(singVerts));
+      mxSetField(g,0,"indices",eigenVectorToMx(singIdx));
+      mxSetField(g,0,"source",mxCreateString(singSource.c_str()));
+      mxSetField(s,0,"singularity",g); }
+
+    plhs[0] = s;
+}
+
 // ── geometry(handle) → struct ─────────────────────────────────
 //
 // Returns a nested element-grouped struct of all light per-element
@@ -1290,6 +1370,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "randomDecomposed1Form")       cmdRandomDecomposed1Form(nlhs, plhs, nrhs, prhs);
         else if (cmd == "topology")                    cmdTopology(nlhs, plhs, nrhs, prhs);
         else if (cmd == "geometry")                    cmdGeometry(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "gauge")                       cmdGauge(nlhs, plhs, nrhs, prhs);
         else if (cmd == "version")                 cmdVersion(nlhs, plhs, nrhs, prhs);
         else {
             mexErrMsgIdAndTxt("nxr:unknownCommand",
