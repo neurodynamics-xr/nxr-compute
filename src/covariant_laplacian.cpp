@@ -12,6 +12,11 @@ Eigen::SparseMatrix<double> assembleCovariantLaplacian(
     const Eigen::SparseMatrix<double>& cotanL) {
 
     const int N = static_cast<int>(cotanL.rows());
+    if (K.rows() != N || K.cols() != N || gaugeGrid.rows() != N || gaugeGrid.cols() != 3 || cotanL.cols() != N) {
+        throw Error(ErrorCode::InvalidInput,
+            "assembleCovariantLaplacian: K, gaugeGrid, cotanL dimensions disagree",
+            "Expected K [N×N] complex, gaugeGrid [N×3] complex, cotanL [N×N] real for a single N.");
+    }
     std::vector<Eigen::Triplet<double>> T;
 
     if (coupling == CovariantCoupling::Product) {

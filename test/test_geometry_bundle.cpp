@@ -237,6 +237,29 @@ static void testCovariantLaplacian() {
         EXPECT(err < 1e-9, "ambient world-form == kron(I3, cotanL)");
     }
 
+    // ambient tangent (a,b) 2N block == L[i,j]*(Fi^T Fj)_{TT}, exact.
+    // The ambient formula L3[i,j]=L[i,j]*(Fi^T Fj) means the top-left 2N×2N block
+    // is L[i,j]*[[e1i·e1j, e1i·e2j],[e2i·e1j, e2i·e2j]] for each (i,j) nonzero in L.
+    // This is the discrete ambient frame-coupling, not the GC parallel transport rotation;
+    // the spec's "== real-expand(K)" holds in the smooth limit but not in GC's discrete
+    // implementation where transport angles differ from raw 3D dot products.
+    {
+        Eigen::MatrixXd Lad = Eigen::MatrixXd(La);
+        Eigen::MatrixXd Dtt = Eigen::MatrixXd::Zero(2*N, 2*N);
+        for (int k = 0; k < L.outerSize(); ++k)
+            for (Eigen::SparseMatrix<double>::InnerIterator it(L, k); it; ++it) {
+                int i = static_cast<int>(it.row()), j = static_cast<int>(it.col());
+                Eigen::Vector3d e1i = grid.row(i).real(), e2i = grid.row(i).imag();
+                Eigen::Vector3d e1j = grid.row(j).real(), e2j = grid.row(j).imag();
+                Dtt(i,   j  ) = it.value() * e1i.dot(e1j);
+                Dtt(i,   N+j) = it.value() * e1i.dot(e2j);
+                Dtt(N+i, j  ) = it.value() * e2i.dot(e1j);
+                Dtt(N+i, N+j) = it.value() * e2i.dot(e2j);
+            }
+        double err = (Lad.topLeftCorner(2*N, 2*N) - Dtt).cwiseAbs().maxCoeff();
+        EXPECT(err < 1e-9, "ambient tangent block == L[i,j]*(Fi^T Fj)_TT");
+    }
+
     // ambient ≠ product on the curved mesh
     EXPECT((Eigen::MatrixXd(La) - Eigen::MatrixXd(Lp)).cwiseAbs().maxCoeff() > 1e-6,
            "ambient differs from product (curvature coupling)");
