@@ -129,9 +129,17 @@ FreeSurfer cortex) the cotan / connection / covariant Laplacians can be *indefin
 `nxr_compute('fixDelaunay', V, F) → [V, F']` is a stateless utility that flips edges
 to (extrinsic) Delaunay (`nxr::manifold::fixDelaunay` → GC `fixDelaunay`); same
 vertices, new faces, best-effort PSD (not certified — extrinsic flips perturb the
-surface and needn't fully converge). The *certified*-PSD path is intrinsic-Delaunay
-context normalization (geodesic edges; `SignpostIntrinsicTriangulation::flipToDelaunay`),
-deferred. Design: `docs/superpowers/specs/2026-06-09-normalize-delaunay-design.md`.
+surface and needn't fully converge). The *certified*-PSD path is
+`nxr_compute('create', V, F, struct('intrinsicDelaunay', true))` — intrinsic-Delaunay
+context normalization (**Phase 1 landed**). When set, `Manifold` builds a
+`SignpostIntrinsicTriangulation` + `flipToDelaunay` (vertices/indices preserved,
+geodesic edges) and `assembleManifoldOperators` sources cotan + mass from it via
+`Manifold::operatorGeometry()` — so `Geometry.operators.laplacian` and the ambient
+`covariantLaplacian` are **certified PSD** (Bobenko–Springborn). Connection L, `grid`,
+DEC, and the light `Topology`/`Geometry` bundle stay on the original mesh (Phase 2 =
+connection + intrinsic grid via the per-vertex signpost rotation `φ_v`; Phase 3 = fully-
+intrinsic bundle); so under normalization the cross-DEC identity `cotanL == d0ᵀ★₁d0`
+does not hold. Design: `docs/superpowers/specs/2026-06-09-intrinsic-delaunay-phase1-design.md`.
 (Note `normalize` is the unrelated eigenvector M-orthonormalization, not a mesh op.)
 
 ---
