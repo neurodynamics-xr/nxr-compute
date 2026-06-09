@@ -135,11 +135,18 @@ context normalization (**Phase 1 landed**). When set, `Manifold` builds a
 `SignpostIntrinsicTriangulation` + `flipToDelaunay` (vertices/indices preserved,
 geodesic edges) and `assembleManifoldOperators` sources cotan + mass from it via
 `Manifold::operatorGeometry()` — so `Geometry.operators.laplacian` and the ambient
-`covariantLaplacian` are **certified PSD** (Bobenko–Springborn). Connection L, `grid`,
-DEC, and the light `Topology`/`Geometry` bundle stay on the original mesh (Phase 2 =
-connection + intrinsic grid via the per-vertex signpost rotation `φ_v`; Phase 3 = fully-
-intrinsic bundle); so under normalization the cross-DEC identity `cotanL == d0ᵀ★₁d0`
-does not hold. Design: `docs/superpowers/specs/2026-06-09-intrinsic-delaunay-phase1-design.md`.
+`covariantLaplacian` are **certified PSD** (Bobenko–Springborn). **Phase 2 landed**:
+the **Vertex-domain connection Laplacian** (`Gauge.operators.laplacian`, Levi-Civita,
+any `nSym`) and the **product** `covariantLaplacian` are now also certified PSD —
+`assembleConnectionLaplacian`'s K-matrix (weights/transport/vertex-indices/mesh-iteration)
+routes through `operatorGeometry()`, while the output frames stay on the embedded
+`geometry()`. This is sound because a probe established the per-vertex intrinsic↔input
+gauge rotation **`φ_v ≡ 0`** (SignpostIntrinsicTriangulation anchors `signpostAngle[v.halfedge()]=0`
+and `flipToDelaunay` preserves it), so the `grid` is **unchanged** under normalization.
+Still on the original mesh (Phase 3): DEC, trivial-gauge connection L, Face/Edge connection
+domains, and the light `Topology`/`Geometry` bundle — so under normalization the cross-DEC
+identity `cotanL == d0ᵀ★₁d0` does not hold. Designs:
+`docs/superpowers/specs/2026-06-09-intrinsic-delaunay-phase{1,2}-design.md`.
 (Note `normalize` is the unrelated eigenvector M-orthonormalization, not a mesh op.)
 
 ---
