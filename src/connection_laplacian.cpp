@@ -1,5 +1,6 @@
 #include "nxr/compute.h"
 
+#include "geometrycentral/surface/intrinsic_geometry_interface.h"
 #include "geometrycentral/surface/manifold_surface_mesh.h"
 #include "geometrycentral/surface/vertex_position_geometry.h"
 #include "geometrycentral/utilities/vector2.h"
@@ -26,7 +27,13 @@ using ComplexTriplet = Eigen::Triplet<std::complex<double>>;
 // halfedge. The cotangent weight is the standard mesh edge weight;
 // the connection lifts the scalar Laplacian to the complex tangent
 // bundle.
-void assembleVertexCL(VertexPositionGeometry& geometry,
+//
+// Takes IntrinsicGeometryInterface& so the caller can supply either
+// the embedded VertexPositionGeometry (non-normalized path) or the
+// SignpostIntrinsicTriangulation (normalized path) — all members used
+// here (mesh, vertexIndices, edgeCotanWeights,
+// transportVectorsAlongHalfedge) are on the intrinsic interface.
+void assembleVertexCL(IntrinsicGeometryInterface& geometry,
                       int nSym,
                       std::vector<ComplexTriplet>& out) {
     SurfaceMesh& mesh = geometry.mesh;
@@ -196,8 +203,12 @@ ConnectionLaplacian assembleConnectionLaplacian(
     int N = 0;
     switch (opts.domain) {
         case ConnectionDomain::Vertex:
+            // Route through operatorGeometry() so the vertex connection Laplacian
+            // uses intrinsic-Delaunay cotan weights + transport when the Manifold
+            // is normalized (certified-PSD). Non-normalized path: operatorGeometry()
+            // returns the same embedded geometry, so the result is byte-identical.
             N = m.nV();
-            assembleVertexCL(geometry, opts.nSym, triplets);
+            assembleVertexCL(m.operatorGeometry(), opts.nSym, triplets);
             break;
         case ConnectionDomain::Face:
             N = m.nF();
@@ -228,8 +239,21 @@ ConnectionLaplacian assembleConnectionLaplacian(
 
     // Populate tangent frame (gauge) used to build this Laplacian.
     // Eigenvectors U[:,k] satisfy: field at v = real(U[v,k])*e1(v) + imag(U[v,k])*e2(v).
+    //
+    // Frames stay on the embedded geometry (not operatorGeometry) because
+    // SignpostIntrinsicTriangulation initialises signpostAngle[v.halfedge()]=0
+    // and flipToDelaunay() preserves that invariant (phi_v identically 0, probe-
+    // verified on branch probe/phi-v). The intrinsic vertex gauge therefore
+    // coincides with the embedded vertex gauge, so K's complex eigenvectors decode
+    // against geometry()'s frames without a per-vertex exp(i*phi_v) rotation.
     if (opts.domain == ConnectionDomain::Vertex) {
         geometry.requireVertexTangentBasis();
+        // requireVertexIndices explicitly: when normalised, assembleVertexCL called
+        // requireVertexIndices on m.operatorGeometry() (the intrinsic triangulation),
+        // NOT on m.geometry() (the embedded geometry used here for frames). Without
+        // this explicit require, geometry.vertexIndices[v] would access an uninitialized
+        // VertexData (mesh == nullptr → assertion in debug, crash in release).
+        geometry.requireVertexIndices();
         SurfaceMesh& mesh = geometry.mesh;
         result.frameE1.resize(N, 3);
         result.frameE2.resize(N, 3);

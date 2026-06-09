@@ -2,9 +2,11 @@
 #include <Eigen/Eigenvalues>
 #include <iostream>
 #include <vector>
+#include <complex>
 
 using nxr::manifold::Manifold;
 namespace ops = nxr::manifold::ops;
+namespace cl  = nxr::manifold::ops::laplacian::connection;
 
 static int g_failures = 0;
 #define EXPECT(cond, msg) do { if (!(cond)) { std::cerr << "  [FAIL] " << msg << "\n"; ++g_failures; } \
@@ -20,6 +22,12 @@ static double maxOffDiag(const Eigen::SparseMatrix<double>& L) {
 static double minEig(const Eigen::SparseMatrix<double>& L) {
     Eigen::MatrixXd dense = Eigen::MatrixXd(L);
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(dense);
+    return es.eigenvalues().minCoeff();
+}
+
+static double minEigC(const Eigen::SparseMatrix<std::complex<double>>& K) {
+    Eigen::MatrixXcd dense(K);
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd> es(dense);
     return es.eigenvalues().minCoeff();
 }
 
@@ -62,9 +70,59 @@ static void testIcosphereNoOp() {
     EXPECT(diff < 1e-9, "icosphere already Delaunay: normalized cotan == raw cotan");
 }
 
+static void testConnectionLaplacian() {
+    std::cout << "\n=== intrinsicDelaunay: connection Laplacian ===\n";
+    std::vector<double>  V = {0,0,0,  2,0,0,  1,0.2,0,  1,-0.2,0};
+    std::vector<int32_t> F = {0,2,1,  0,1,3};
+    Manifold mRaw(V.data(), 4, F.data(), 2, false);
+    Manifold mN  (V.data(), 4, F.data(), 2, true);
+
+    cl::ConnectionLaplacianOptions o;
+    o.domain = cl::ConnectionDomain::Vertex; o.nSym = 1;
+    o.format = cl::ConnectionLaplacianFormat::Complex;
+    auto Kraw = cl::assembleConnectionLaplacian(mRaw, o);
+    auto Kn   = cl::assembleConnectionLaplacian(mN,   o);
+
+    EXPECT(Kn.K_complex.rows() == 4, "connection L is V x V");
+    auto herm = (Kn.K_complex -
+                 Eigen::SparseMatrix<std::complex<double>>(Kn.K_complex.adjoint())).norm();
+    EXPECT(herm < 1e-9, "normalized connection L Hermitian");
+    EXPECT(minEigC(Kn.K_complex) > -1e-9, "normalized connection L PSD (min eig >= 0)");
+    EXPECT((Kraw.frameE1 - Kn.frameE1).cwiseAbs().maxCoeff() < 1e-12,
+           "frameE1 unchanged (phi_v=0)");
+    EXPECT((Kraw.frameE2 - Kn.frameE2).cwiseAbs().maxCoeff() < 1e-12,
+           "frameE2 unchanged (phi_v=0)");
+}
+
+static void testConnectionLaplacianIcosphereNoOp() {
+    std::cout << "\n=== intrinsicDelaunay: connection Laplacian icosphere no-op ===\n";
+    const double t = (1.0 + std::sqrt(5.0)) / 2.0;
+    std::vector<double> V = {-1,t,0, 1,t,0, -1,-t,0, 1,-t,0, 0,-1,t, 0,1,t,
+                              0,-1,-t, 0,1,-t, t,0,-1, t,0,1, -t,0,-1, -t,0,1};
+    for (int i=0;i<12;++i){ double n=std::sqrt(V[3*i]*V[3*i]+V[3*i+1]*V[3*i+1]+V[3*i+2]*V[3*i+2]);
+        V[3*i]/=n; V[3*i+1]/=n; V[3*i+2]/=n; }
+    std::vector<int32_t> F = {0,11,5, 0,5,1, 0,1,7, 0,7,10, 0,10,11, 1,5,9, 5,11,4,
+        11,10,2, 10,7,6, 7,1,8, 3,9,4, 3,4,2, 3,2,6, 3,6,8, 3,8,9, 4,9,5, 2,4,11,
+        6,2,10, 8,6,7, 9,8,1};
+    Manifold mRaw(V.data(), 12, F.data(), 20, false);
+    Manifold mN  (V.data(), 12, F.data(), 20, true);
+
+    cl::ConnectionLaplacianOptions o;
+    o.domain = cl::ConnectionDomain::Vertex; o.nSym = 1;
+    o.format = cl::ConnectionLaplacianFormat::Complex;
+    auto Kraw = cl::assembleConnectionLaplacian(mRaw, o);
+    auto Kn   = cl::assembleConnectionLaplacian(mN,   o);
+
+    double diff = (Eigen::MatrixXcd(Kraw.K_complex) -
+                   Eigen::MatrixXcd(Kn.K_complex)).cwiseAbs().maxCoeff();
+    EXPECT(diff < 1e-9, "icosphere already Delaunay: normalized connection L == raw connection L");
+}
+
 int main() {
     testRhombus();
     testIcosphereNoOp();
+    testConnectionLaplacian();
+    testConnectionLaplacianIcosphereNoOp();
     if (g_failures) { std::cerr << "\n" << g_failures << " failure(s)\n"; return 1; }
     std::cout << "\nALL PASSED\n"; return 0;
 }
