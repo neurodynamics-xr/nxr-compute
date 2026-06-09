@@ -14,4 +14,23 @@ private:
     Manifold& m_;
 };
 
+class EmbeddedFacet {
+public:
+    explicit EmbeddedFacet(Manifold& m) : m_(m) {}
+    struct VertexView { Manifold& m;
+        Eigen::MatrixXd  position() const;   // [nV,3] raw input
+        Eigen::MatrixXd  normal()   const;   // [nV,3]
+        Eigen::MatrixXcd grid()     const;   // [nV,3] c = e1 + i e2
+    };
+    struct FaceView { Manifold& m;
+        Eigen::MatrixXd  normal()   const;   // [nF,3]
+        Eigen::MatrixXcd grid()     const;   // [nF,3]
+        Eigen::MatrixXd  centroid() const;   // [nF,3]
+    };
+    VertexView vertex() const { return VertexView{m_}; }
+    FaceView   face()   const { return FaceView{m_}; }
+private:
+    Manifold& m_;
+};
+
 } // namespace nxr::manifold::facet

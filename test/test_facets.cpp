@@ -1,4 +1,5 @@
 #include "nxr/facets.h"
+#include <Eigen/Geometry>
 #include <cmath>
 #include <iostream>
 using namespace nxr::manifold;
@@ -35,8 +36,30 @@ static void testTopologyFacet() {
     EXPECT(m.vertexPositions().rows() == 12, "vertexPositions() [12,3]");
 }
 
+static void testEmbeddedFacet() {
+    std::cout << "\n=== facets: embedded ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+    auto e = m.embedded();
+    EXPECT(e.vertex().position().rows() == 12 && e.vertex().position().cols() == 3, "vertex.position [12,3]");
+    // raw-input identity: position row 0 equals the input
+    EXPECT(std::abs(e.vertex().position()(0,0) - (-1.0)) < 1e-12, "vertex.position is raw input");
+    EXPECT(e.vertex().grid().rows() == 12 && e.vertex().grid().cols() == 3, "vertex.grid [12,3] complex");
+    // facet-identity: embedded.vertex.grid == geometry::vertexGrid(m)
+    EXPECT((e.vertex().grid() - geometry::vertexGrid(m)).cwiseAbs().maxCoeff() < 1e-12, "vertex.grid == vertexGrid(m)");
+    EXPECT(e.face().grid().rows() == 20, "face.grid [20,3]");
+    EXPECT(e.face().centroid().rows() == 20 && e.face().centroid().cols() == 3, "face.centroid [20,3]");
+    EXPECT(e.vertex().normal().rows() == 12, "vertex.normal [12,3]");
+    // grid encodes the normal: Re(c) x Im(c) is unit and aligns with vertex.normal
+    Eigen::Vector3d e1 = e.vertex().grid().row(0).real().transpose();
+    Eigen::Vector3d e2 = e.vertex().grid().row(0).imag().transpose();
+    Eigen::Vector3d nFromGrid = e1.cross(e2);
+    EXPECT(std::abs(nFromGrid.norm() - 1.0) < 1e-9, "Re(c) x Im(c) is unit normal");
+}
+
 int main() {
     testTopologyFacet();
+    testEmbeddedFacet();
     std::cout << (g_failures ? "\nFAILURES\n" : "\nALL PASSED\n");
     return g_failures ? 1 : 0;
 }
