@@ -103,8 +103,21 @@ Library backing (all in `nxr::manifold`): `geometry::vertexGrid`/`faceGrid`,
 converted to 1-based at the single MEX marshal boundary (`indexVectorToMx1Based`);
 complex arrays cross via the R2018a interleaved API. The Cartesian↔intrinsic
 leadfield correspondence is `G_intrinsic = G·cᵀ` (exact, invertible — verified
-in `bindings/mex/test/test_bundle.m`). Heavy operators, `MeshData`, and
-`Gauge.face.rotation` are intentionally deferred.
+in `bindings/mex/test/test_bundle.m`).
+
+**Operators surface (opt-in).** Passing `opts.operators = true` to any of the
+four commands attaches an `.operators` sub-struct of live native MATLAB sparse
+operators to each surface, cached on the handle (design:
+`docs/superpowers/specs/2026-06-08-operators-surface-design.md`). Each surface
+owns the operators whose highest ingredient is that surface — the
+`operators.laplacian` through-line is graph → cotan → connection:
+`Topology.operators` = `laplacian` (graph `D−A` = `d0ᵀd0`, via
+`ops::graphLaplacian`) + `dec.{d0,d1}`; `Geometry.operators` = `laplacian`
+(cotan) + `mass.{lumped,galerkin}` + `hodge.{h0,h1,h2,h1inv}`; `Gauge.operators`
+= `laplacian` (vertex connection Laplacian *in the current gauge* — Levi-Civita
+for euclidean/levi-civita, trivial for trivial — native **complex** sparse,
+`nSym=1`). Light by default (no flag ⇒ byte-identical, no `.operators` field).
+`MeshData` and `Gauge.face.rotation` remain deferred.
 
 ---
 
