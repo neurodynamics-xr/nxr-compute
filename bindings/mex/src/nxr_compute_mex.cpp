@@ -198,17 +198,24 @@ parseCoupling(const mxArray* opts) {
 // ── create / destroy ─────────────────────────────────────────
 
 void cmdCreate(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
-    if (nrhs != 3) {
+    if (nrhs < 3 || nrhs > 4) {
         throw std::invalid_argument(
-            "nxr_compute('create', V, F) takes exactly 2 arguments");
+            "nxr_compute('create', V, F[, opts]) takes 2 or 3 arguments");
     }
     int nV = 0, nF = 0;
     auto verts = mxToVertexBuffer(prhs[1], nV);
     auto faces = mxToFaceBuffer(prhs[2], nF);
 
+    bool intrinsicDelaunay = false;
+    if (nrhs >= 4 && mxIsStruct(prhs[3])) {
+        const mxArray* f = mxGetField(prhs[3], 0, "intrinsicDelaunay");
+        if (f && !mxIsEmpty(f))
+            intrinsicDelaunay = mxIsLogical(f) ? mxGetLogicals(f)[0] : (mxGetScalar(f) != 0.0);
+    }
+
     ContextHolder holder;
     holder.ctx   = std::make_unique<nxr::manifold::Manifold>(
-        verts.data(), nV, faces.data(), nF);
+        verts.data(), nV, faces.data(), nF, intrinsicDelaunay);
     holder.cache = std::make_unique<nxr::manifold::ops::CholeskyCache>();
 
     uint64_t h = sNextHandle++;
