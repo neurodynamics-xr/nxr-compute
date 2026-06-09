@@ -22,6 +22,7 @@
  */
 
 #include "nxr/compute.h"
+#include "nxr/facets.h"
 #include "marshal.h"
 #include "mex.h"
 
@@ -1548,6 +1549,77 @@ void cmdVersion(int /*nlhs*/, mxArray** plhs,
     plhs[0] = mxCreateString("nxr-compute 0.1.0");
 }
 
+// ── operators(handle, family[, subtype]) → sparse / struct ───
+//
+// Exposes the OperatorsFacet operators to MATLAB by name so callers
+// can pull a single named operator and run their own eig/eigs on it.
+//
+//   nxr_compute('operators', h, 'laplacian', 'cotan'|'graph'|'connection'|'covariant')
+//   nxr_compute('operators', h, 'mass',      'lumped'|'galerkin')
+//   nxr_compute('operators', h, 'hodge',     'h0'|'h1'|'h2'|'h1inv')
+//   nxr_compute('operators', h, 'dec')       → struct {d0, d1}
+//
+// All sparse outputs are native MATLAB sparse (real or complex).
+// 'covariant' uses the default Ambient coupling (same as the existing
+//   .operators bundle returned by geometry/topology/gauge/bundle commands).
+
+void cmdOperators(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs < 3)
+        throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+            "operators: expected nxr_compute('operators', handle, family[, subtype]).");
+    ContextHolder& h = getHolder(prhs[1]);
+    auto& m = *h.ctx;                             // Manifold&
+    std::string family = getStringArg(prhs[2]);
+    std::string sub    = (nrhs >= 4) ? getStringArg(prhs[3]) : "";
+    auto ops = m.operators();
+    namespace cl = nxr::manifold::ops::laplacian::connection;
+
+    if (family == "laplacian") {
+        if      (sub == "cotan")
+            plhs[0] = eigenSparseToMx(ops.laplacian().cotan());
+        else if (sub == "graph")
+            plhs[0] = eigenSparseToMx(ops.laplacian().graph());
+        else if (sub == "connection")
+            plhs[0] = eigenComplexSparseToMx(ops.laplacian().connection());
+        else if (sub == "covariant")
+            plhs[0] = eigenSparseToMx(
+                ops.laplacian().covariant(cl::CovariantCoupling::Ambient));
+        else
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                "operators laplacian: subtype must be cotan|graph|connection|covariant.");
+
+    } else if (family == "mass") {
+        if      (sub == "lumped")
+            plhs[0] = eigenSparseToMx(ops.mass().lumped());
+        else if (sub == "galerkin")
+            plhs[0] = eigenSparseToMx(ops.mass().galerkin());
+        else
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                "operators mass: subtype must be lumped|galerkin.");
+
+    } else if (family == "hodge") {
+        if      (sub == "h0")    plhs[0] = eigenSparseToMx(ops.hodge().h0());
+        else if (sub == "h1")    plhs[0] = eigenSparseToMx(ops.hodge().h1());
+        else if (sub == "h2")    plhs[0] = eigenSparseToMx(ops.hodge().h2());
+        else if (sub == "h1inv") plhs[0] = eigenSparseToMx(ops.hodge().h1inv());
+        else
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                "operators hodge: subtype must be h0|h1|h2|h1inv.");
+
+    } else if (family == "dec") {
+        const auto& dec = ops.dec();
+        const char* f[] = {"d0", "d1"};
+        mxArray* s = mxCreateStructMatrix(1, 1, 2, f);
+        mxSetField(s, 0, "d0", eigenSparseToMx(dec.d0));
+        mxSetField(s, 0, "d1", eigenSparseToMx(dec.d1));
+        plhs[0] = s;
+
+    } else {
+        throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+            "operators: family must be laplacian|mass|hodge|dec.");
+    }
+}
+
 } // namespace
 
 // ── mexFunction entry point ──────────────────────────────────
@@ -1617,6 +1689,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "geometry")                    cmdGeometry(nlhs, plhs, nrhs, prhs);
         else if (cmd == "gauge")                       cmdGauge(nlhs, plhs, nrhs, prhs);
         else if (cmd == "bundle")                      cmdBundle(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "operators")                   cmdOperators(nlhs, plhs, nrhs, prhs);
         else if (cmd == "version")                 cmdVersion(nlhs, plhs, nrhs, prhs);
         else {
             mexErrMsgIdAndTxt("nxr:unknownCommand",
@@ -1626,7 +1699,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
                 "parallel, extendScalar, logMap, "
                 "findCenter, signedHeat, smoothFace, "
                 "smoothVertex, compute, computeFreq, "
-                "topology, geometry, gauge, bundle, version.",
+                "topology, geometry, gauge, bundle, operators, version.",
                 cmd.c_str());
         }
     } catch (const nxr::core::Error& e) {
