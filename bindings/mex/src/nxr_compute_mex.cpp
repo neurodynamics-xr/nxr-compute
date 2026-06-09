@@ -207,7 +207,9 @@ void cmdCreate(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
     auto faces = mxToFaceBuffer(prhs[2], nF);
 
     bool intrinsicDelaunay = false;
-    if (nrhs >= 4 && mxIsStruct(prhs[3])) {
+    if (nrhs >= 4) {
+        if (!mxIsStruct(prhs[3]))
+            throw std::invalid_argument("nxr_compute('create', V, F, opts): opts must be a struct");
         const mxArray* f = mxGetField(prhs[3], 0, "intrinsicDelaunay");
         if (f && !mxIsEmpty(f))
             intrinsicDelaunay = mxIsLogical(f) ? mxGetLogicals(f)[0] : (mxGetScalar(f) != 0.0);
