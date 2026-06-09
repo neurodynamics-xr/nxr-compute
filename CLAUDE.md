@@ -84,6 +84,30 @@ When implementing or debugging, consult these files:
 
 ---
 
+## MATLAB coordinate-system bundle (Topology / Geometry / Gauge)
+
+The MEX binding exposes four commands that hand Brainstorm a halfedge-mesh
+coordinate system for MEG leadfield analysis (design:
+`docs/superpowers/specs/2026-06-08-topology-geometry-gauge-bundle-design.md`):
+
+| MEX command | Returns |
+|---|---|
+| `nxr_compute('topology', h)` | element-grouped halfedge struct-of-arrays (1-based; `0` = none/boundary) |
+| `nxr_compute('geometry', h)` | light per-element geometry; frames are the complex `grid` (`c = e1+i·e2`, normal = `real×imag`); curvature is the 2-RoSy deviatoric `q` + `meanCurvature` |
+| `nxr_compute('gauge', h, type[, opts])` | gauge as a transform of the Levi-Civita grid: `euclidean`/`levi-civita`/`trivial` (only `trivial` carries `vertex.rotation` + singularities) |
+| `nxr_compute('bundle', h, gaugeType[, opts])` | `{Topology, Geometry, Gauge}` in one call |
+
+Library backing (all in `nxr::manifold`): `geometry::vertexGrid`/`faceGrid`,
+`geometry::vertexCurvature`, `geometry::meshTopology`, `geometry::meshGeometry`,
+`connection::integrateTrivialGaugeRotations`. Indices are 0-based in C++ and
+converted to 1-based at the single MEX marshal boundary (`indexVectorToMx1Based`);
+complex arrays cross via the R2018a interleaved API. The Cartesian↔intrinsic
+leadfield correspondence is `G_intrinsic = G·cᵀ` (exact, invertible — verified
+in `bindings/mex/test/test_bundle.m`). Heavy operators, `MeshData`, and
+`Gauge.face.rotation` are intentionally deferred.
+
+---
+
 ## C++ API Surface
 
 The compute library API (callable from every binding) is declared in
@@ -357,6 +381,7 @@ bash scripts/build.sh Release
 #   build/Release/test_cholesky_cache.exe         (cache contract canary)
 #   build/Release/test_mass_variants.exe          (Lumped / Galerkin)
 #   build/Release/test_connection_laplacian.exe   (vertex/face/edge CL)
+#   build/Release/test_geometry_bundle.exe        (complex grid / 2-RoSy curvature / trivial gauge)
 #   build/Release/test_field_generators.exe       (eigenmode / heat / wave)
 #   build/Release/test_graph_agnostic.exe         (K/M-agnostic solvers on graphs)
 #   build/Release/test_geometry_central_extras.exe(GC solver wrappers)
