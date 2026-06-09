@@ -301,6 +301,34 @@ void cmdNormalizeEigenmodes(int /*nlhs*/, mxArray** plhs,
     plhs[0] = eigenMatrixToMx(Un);
 }
 
+// ── normalize(V, F) → [V2, F2, nFlips]  (Delaunay edge-flip repair) ──
+//
+// Stateless command. Parses V (Vx3 double, 1-based-OK) and F (Fx3, 1-based),
+// runs nxr::manifold::normalizeDelaunay, returns:
+//   plhs[0] = V (passthrough via mxDuplicateArray — vertices unchanged)
+//   plhs[1] = F2 (Fx3 double, 1-based)
+//   plhs[2] = nFlips (scalar double, if nlhs >= 3)
+
+void cmdNormalizeDelaunay(int nlhs, mxArray** plhs,
+                          int nrhs, const mxArray** prhs) {
+    if (nrhs != 3) throw std::invalid_argument(
+        "nxr_compute('normalize', V, F) takes V and F");
+    int nV = 0, nF = 0;
+    std::vector<double>        Vbuf = mxToVertexBuffer(prhs[1], nV);   // row-major xyz
+    std::vector<std::int32_t>  Fbuf = mxToFaceBuffer(prhs[2], nF);     // 0-based
+
+    auto r = nxr::manifold::normalizeDelaunay(Vbuf.data(), nV, Fbuf.data(), nF);
+
+    plhs[0] = mxDuplicateArray(prhs[1]);                         // V2 == V (passthrough)
+    Eigen::MatrixXd Fd = r.faces.cast<double>().array() + 1.0;  // 0-based → 1-based
+    plhs[1] = eigenMatrixToMx(Fd);                               // nF×3, column-major
+    if (nlhs >= 3) {
+        mxArray* nf = mxCreateDoubleMatrix(1, 1, mxREAL);
+        *mxGetPr(nf) = static_cast<double>(r.flips);
+        plhs[2] = nf;
+    }
+}
+
 // ── removeDC(eigStruct) → eigStruct ──────────────────────────
 
 void cmdRemoveDC(int /*nlhs*/, mxArray** plhs,
@@ -1540,7 +1568,15 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "destroy")       cmdDestroy(nlhs, plhs, nrhs, prhs);
         else if (cmd == "assembleManifoldOperators")   cmdAssembleMeshOperators(nlhs, plhs, nrhs, prhs);
         else if (cmd == "solve")         cmdSolveEigenmodes(nlhs, plhs, nrhs, prhs);
-        else if (cmd == "normalize")     cmdNormalizeEigenmodes(nlhs, plhs, nrhs, prhs);
+        // 'normalize' is overloaded:
+        //   normalize(U, M)   — M is sparse  → M-orthonormalize eigenmodes
+        //   normalize(V, F)   — F is dense   → Delaunay edge-flip repair
+        else if (cmd == "normalize") {
+            if (nrhs == 3 && mxIsSparse(prhs[2]))
+                cmdNormalizeEigenmodes(nlhs, plhs, nrhs, prhs);
+            else
+                cmdNormalizeDelaunay(nlhs, plhs, nrhs, prhs);
+        }
         else if (cmd == "removeDC")                cmdRemoveDC(nlhs, plhs, nrhs, prhs);
         else if (cmd == "precompute")              cmdPrecompute(nlhs, plhs, nrhs, prhs);
         else if (cmd == "parallel")     cmdVectorHeatTransport(nlhs, plhs, nrhs, prhs);
@@ -1581,7 +1617,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else {
             mexErrMsgIdAndTxt("nxr:unknownCommand",
                 "Unknown command: \"%s\". Available: create, destroy, assembleManifoldOperators, "
-                "solve, normalize, removeDC, precompute, "
+                "solve, normalize (eigenmodes: U,M | Delaunay repair: V,F), removeDC, precompute, "
                 "parallel, extendScalar, logMap, "
                 "findCenter, signedHeat, smoothFace, "
                 "smoothVertex, compute, computeFreq, "
