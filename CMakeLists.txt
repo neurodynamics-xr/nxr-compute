@@ -193,4 +193,8 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_facets test/test_facets.cpp)
     target_link_libraries(test_facets PRIVATE nxr_compute)
     add_test(NAME test_facets COMMAND test_facets)
+
+    add_executable(test_gauge_workflow test/test_gauge_workflow.cpp)
+    target_link_libraries(test_gauge_workflow PRIVATE nxr_compute)
+    add_test(NAME test_gauge_workflow COMMAND test_gauge_workflow)
 endif()

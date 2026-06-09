@@ -76,6 +76,8 @@ namespace facet {
 }
 namespace geometry { struct MeshGeometry; struct MeshTopology; }
 
+enum class GaugeType { Euclidean, LeviCivita, Trivial };
+
 // ── Compute Context ──────────────────────────────────────────
 // Owns the geometry-central mesh and geometry objects.
 // All compute functions operate on a context, which can be created
@@ -130,6 +132,23 @@ public:
     const geometry::MeshGeometry& lightGeometry();   // geometry::meshGeometry(*this), cached
     const geometry::MeshTopology& topologyData();    // geometry::meshTopology(*this), cached
 
+    // ── Gauge workflow ──
+    // Singularity-aware constructor (pattern 2): default active gauge = Trivial.
+    // Throws Error(InvalidInput) if Σ singularities != eulerCharacteristic().
+    Manifold(const double* vertices, int nV, const int32_t* faces, int nF,
+             const std::map<int,double>& singularities, bool intrinsicDelaunay = false);
+
+    int eulerCharacteristic() const;                 // nV - nE + nF
+    GaugeType activeGaugeType() const;
+    const std::map<int,double>& activeSingularities() const;
+    // Re-point the active/default gauge. Trivial validates Gauss-Bonnet.
+    void setGauge(GaugeType type, const std::map<int,double>& singularities = {});
+
+    // Declared only; bodies implemented in B2 (require GaugeFacet complete type).
+    facet::GaugeFacet gauge();
+    facet::GaugeFacet gauge(GaugeType type,
+                            const std::map<int,double>& singularities = {});
+
 private:
     std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh>             mesh_;
     std::unique_ptr<geometrycentral::surface::VertexPositionGeometry>         geometry_;
@@ -139,6 +158,11 @@ private:
     Eigen::MatrixXi                          faces_;            // [nF,3] retained input (0-based)
     std::unique_ptr<geometry::MeshGeometry>  lightGeometryCache_;
     std::unique_ptr<geometry::MeshTopology>  topologyDataCache_;
+
+    GaugeType            activeGaugeType_    = GaugeType::LeviCivita;
+    std::map<int,double> activeSingularities_;
+    // Validates Σ singularities == eulerCharacteristic(); throws on mismatch.
+    void validateSingularities_(const std::map<int,double>& s) const;
 };
 
 // Extrinsic Delaunay edge-flip repair (geometry-central fixDelaunay).

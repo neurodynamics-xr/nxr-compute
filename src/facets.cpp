@@ -3,6 +3,9 @@
 #include "geometrycentral/surface/manifold_surface_mesh.h"
 #include "geometrycentral/surface/vertex_position_geometry.h"
 
+#include <cmath>
+#include <string>
+
 namespace nxr::manifold {
 
 const geometry::MeshGeometry& Manifold::lightGeometry() {
@@ -24,6 +27,41 @@ facet::TopologyFacet  Manifold::topology()  { return facet::TopologyFacet(*this)
 facet::EmbeddedFacet  Manifold::embedded()  { return facet::EmbeddedFacet(*this); }
 facet::IntrinsicFacet Manifold::intrinsic() { return facet::IntrinsicFacet(*this); }
 facet::ExtrinsicFacet Manifold::extrinsic() { return facet::ExtrinsicFacet(*this); }
+
+// ── Gauge workflow ────────────────────────────────────────────
+
+int Manifold::eulerCharacteristic() const { return nV() - nE() + nF(); }
+GaugeType Manifold::activeGaugeType() const { return activeGaugeType_; }
+const std::map<int,double>& Manifold::activeSingularities() const { return activeSingularities_; }
+
+void Manifold::validateSingularities_(const std::map<int,double>& s) const {
+    if (s.empty())
+        throw Error(ErrorCode::InvalidInput,
+            "Trivial gauge requires a singularity map; Levi-Civita needs none.",
+            "Pass a {vertexIndex -> index} map whose values sum to the Euler "
+            "characteristic chi = " + std::to_string(eulerCharacteristic()) + ".");
+    double sum = 0.0;
+    for (auto& kv : s) sum += kv.second;
+    const int chi = eulerCharacteristic();
+    if (std::abs(sum - static_cast<double>(chi)) > 1e-9)
+        throw Error(ErrorCode::InvalidInput,
+            "Gauss-Bonnet violated: singularity indices sum to " + std::to_string(sum) +
+            " but must equal the Euler characteristic chi = " + std::to_string(chi) + ".",
+            "A closed genus-0 surface has chi=2 (e.g. two +1 singularities); a disk chi=1.");
+}
+
+void Manifold::setGauge(GaugeType type, const std::map<int,double>& singularities) {
+    if (type == GaugeType::Trivial) {
+        validateSingularities_(singularities);
+    } else if (!singularities.empty()) {
+        // Fail loud rather than silently discard a caller's singularities.
+        throw Error(ErrorCode::InvalidInput,
+            "setGauge: singularities are only meaningful for the trivial gauge.",
+            "Levi-Civita / Euclidean gauges take no singularities — pass an empty map.");
+    }
+    activeGaugeType_ = type;
+    activeSingularities_ = (type == GaugeType::Trivial) ? singularities : std::map<int,double>{};
+}
 
 } // namespace nxr::manifold
 

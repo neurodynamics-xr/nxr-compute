@@ -59,6 +59,16 @@ Manifold::Manifold(const double* vertices, int nV,
     }
 }
 
+// Singularity-aware constructor (pattern 2): delegates to primary ctor,
+// then validates Gauss-Bonnet and sets the active gauge to Trivial.
+Manifold::Manifold(const double* vertices, int nV, const int32_t* faces, int nF,
+                   const std::map<int,double>& singularities, bool intrinsicDelaunay)
+    : Manifold(vertices, nV, faces, nF, intrinsicDelaunay) {
+    validateSingularities_(singularities);
+    activeGaugeType_     = GaugeType::Trivial;
+    activeSingularities_ = singularities;
+}
+
 Manifold::~Manifold() = default;
 
 int Manifold::nV() const { return static_cast<int>(mesh_->nVertices()); }
