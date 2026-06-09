@@ -69,6 +69,13 @@ using core::ErrorCode;
 using core::CancellationToken;
 using core::ProgressObserver;
 
+// Forward declarations for facets and geometry bundles.
+namespace facet {
+    class TopologyFacet;  class EmbeddedFacet;  class IntrinsicFacet;
+    class ExtrinsicFacet; class GaugeFacet;     class OperatorsFacet;
+}
+namespace geometry { struct MeshGeometry; struct MeshTopology; }
+
 // ── Compute Context ──────────────────────────────────────────
 // Owns the geometry-central mesh and geometry objects.
 // All compute functions operate on a context, which can be created
@@ -108,10 +115,30 @@ public:
     // is unchanged and still used for EXTRINSIC quantities (normals, frames).
     geometrycentral::surface::IntrinsicGeometryInterface& operatorGeometry();
 
+    // ── Geometry facets (additive; thin views over the accessors above) ──
+    // Each returns a lightweight view object; see include/nxr/facets.h.
+    facet::TopologyFacet  topology();
+    facet::EmbeddedFacet  embedded();
+    facet::IntrinsicFacet intrinsic();
+    facet::ExtrinsicFacet extrinsic();
+
+    // Raw-input aliases (facet-agnostic literal input, retained from ctor).
+    const Eigen::MatrixXd& vertexPositions() const;  // [nV,3]
+    const Eigen::MatrixXi& faces() const;            // [nF,3], 0-based
+
+    // Lazily-cached light per-element bundles backing the data facets.
+    const geometry::MeshGeometry& lightGeometry();   // geometry::meshGeometry(*this), cached
+    const geometry::MeshTopology& topologyData();    // geometry::meshTopology(*this), cached
+
 private:
     std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh>             mesh_;
     std::unique_ptr<geometrycentral::surface::VertexPositionGeometry>         geometry_;
     std::unique_ptr<geometrycentral::surface::SignpostIntrinsicTriangulation>  intrinsicTri_;  // null unless intrinsicDelaunay=true
+
+    Eigen::MatrixXd                          vertexPositions_;  // [nV,3] retained input
+    Eigen::MatrixXi                          faces_;            // [nF,3] retained input (0-based)
+    std::unique_ptr<geometry::MeshGeometry>  lightGeometryCache_;
+    std::unique_ptr<geometry::MeshTopology>  topologyDataCache_;
 };
 
 // Extrinsic Delaunay edge-flip repair (geometry-central fixDelaunay).

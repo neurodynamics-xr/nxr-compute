@@ -69,6 +69,7 @@ add_library(nxr_compute STATIC
   src/topology.cpp
   src/geometry_bundle.cpp
   src/graph_laplacian.cpp
+  src/facets.cpp
 )
 
 target_include_directories(nxr_compute PUBLIC
@@ -188,4 +189,8 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_intrinsic_delaunay test/test_intrinsic_delaunay.cpp)
     target_link_libraries(test_intrinsic_delaunay PRIVATE nxr_compute)
     add_test(NAME test_intrinsic_delaunay COMMAND test_intrinsic_delaunay)
+
+    add_executable(test_facets test/test_facets.cpp)
+    target_link_libraries(test_facets PRIVATE nxr_compute)
+    add_test(NAME test_facets COMMAND test_facets)
 endif()

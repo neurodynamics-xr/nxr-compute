@@ -37,6 +37,21 @@ Manifold::Manifold(const double* vertices, int nV,
     }
     geometry_ = std::make_unique<VertexPositionGeometry>(*mesh_, positions);
 
+    // Retain raw input positions for vertexPositions() accessor.
+    vertexPositions_.resize(nV, 3);
+    for (int i = 0; i < nV; ++i) {
+        vertexPositions_(i, 0) = vertices[3 * i + 0];
+        vertexPositions_(i, 1) = vertices[3 * i + 1];
+        vertexPositions_(i, 2) = vertices[3 * i + 2];
+    }
+
+    faces_.resize(nF, 3);
+    for (int i = 0; i < nF; ++i) {
+        faces_(i, 0) = faces[3 * i + 0];
+        faces_(i, 1) = faces[3 * i + 1];
+        faces_(i, 2) = faces[3 * i + 2];
+    }
+
     if (intrinsicDelaunay) {
         intrinsicTri_ = std::make_unique<SignpostIntrinsicTriangulation>(
             *mesh_, *geometry_);
