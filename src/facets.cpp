@@ -87,6 +87,55 @@ facet::GaugeFacet Manifold::gauge(GaugeType type, const std::map<int,double>& si
                              type == GaugeType::Trivial ? singularities : std::map<int,double>{});
 }
 
+// ── C1: Operators facet + independent-cache management ───────────────────────
+
+facet::OperatorsFacet Manifold::operators() { return facet::OperatorsFacet(*this); }
+
+bool Manifold::isOperatorCached(OperatorId id) const {
+    switch (id) {
+        case OperatorId::LaplacianCotan:      return (bool)cacheLaplacianCotan_;
+        case OperatorId::LaplacianGraph:      return (bool)cacheLaplacianGraph_;
+        case OperatorId::LaplacianConnection: return (bool)cacheLaplacianConnection_;
+        case OperatorId::LaplacianCovariant:  return (bool)cacheLaplacianCovariant_;
+        case OperatorId::Dec:                 return (bool)decCache_;
+        case OperatorId::MassLumped:          return (bool)cacheMassLumped_;
+        case OperatorId::MassGalerkin:        return (bool)cacheMassGalerkin_;
+    }
+    return false;
+}
+
+void Manifold::releaseOperator(OperatorId id) {
+    switch (id) {
+        case OperatorId::LaplacianCotan:      cacheLaplacianCotan_.reset();      break;
+        case OperatorId::LaplacianGraph:      cacheLaplacianGraph_.reset();      break;
+        case OperatorId::LaplacianConnection: cacheLaplacianConnection_.reset(); break;
+        case OperatorId::LaplacianCovariant:  cacheLaplacianCovariant_.reset();  break;
+        case OperatorId::Dec:                 decCache_.reset();                 break;
+        case OperatorId::MassLumped:          cacheMassLumped_.reset();          break;
+        case OperatorId::MassGalerkin:        cacheMassGalerkin_.reset();        break;
+    }
+}
+
+// Private cache-fill helpers for LaplacianView.
+// cotan: sources DIRECTLY from operatorGeometry().cotanLaplacian — does NOT
+// call assembleManifoldOperators (which fuses cotan+mass+normals).
+const Eigen::SparseMatrix<double>& Manifold::cotanLaplacianCached_() {
+    if (!cacheLaplacianCotan_) {
+        auto& geom = operatorGeometry();
+        geom.requireCotanLaplacian();
+        cacheLaplacianCotan_ =
+            std::make_unique<Eigen::SparseMatrix<double>>(geom.cotanLaplacian);
+    }
+    return *cacheLaplacianCotan_;
+}
+
+const Eigen::SparseMatrix<double>& Manifold::graphLaplacianCached_() {
+    if (!cacheLaplacianGraph_)
+        cacheLaplacianGraph_ =
+            std::make_unique<Eigen::SparseMatrix<double>>(ops::graphLaplacian(*this));
+    return *cacheLaplacianGraph_;
+}
+
 } // namespace nxr::manifold
 
 namespace nxr::manifold::facet {
@@ -128,5 +177,20 @@ Eigen::MatrixXcd GaugeFacet::grid() const {
     for (int v = 0; v < g.rows(); ++v) g.row(v) *= gr.vertex(v);  // exp(i phi_v) .* grid
     return g;
 }
+
+// ── C1: OperatorsFacet::LaplacianView bodies ─────────────────────────────────
+// LaplacianView delegates through OperatorsFacet (which is friend of Manifold),
+// calling the private Manifold cache-fill helpers.
+
+const Eigen::SparseMatrix<double>& OperatorsFacet::LaplacianView::cotan() const {
+    return m.cotanLaplacianCached_();
+}
+
+const Eigen::SparseMatrix<double>& OperatorsFacet::LaplacianView::graph() const {
+    return m.graphLaplacianCached_();
+}
+
+// connection() and covariant() are declared in facets.h for Task C3.
+// They are not implemented in C1 — calling them will produce a link error.
 
 } // namespace nxr::manifold::facet

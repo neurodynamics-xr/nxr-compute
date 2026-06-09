@@ -79,6 +79,11 @@ namespace ops { struct DECOperators; class CholeskyCache; }
 
 enum class GaugeType { Euclidean, LeviCivita, Trivial };
 
+enum class OperatorId {
+    LaplacianCotan, LaplacianGraph, LaplacianConnection, LaplacianCovariant,
+    Dec, MassLumped, MassGalerkin
+};
+
 // ── Compute Context ──────────────────────────────────────────
 // Owns the geometry-central mesh and geometry objects.
 // All compute functions operate on a context, which can be created
@@ -154,7 +159,28 @@ public:
     ops::DECOperators& decOperators();     // assembleDECOperators(*this), cached
     ops::CholeskyCache& choleskyCache();   // owned cache, lazy-initialised
 
+    // ── Operators facet ──
+    facet::OperatorsFacet operators();
+    void releaseOperator(OperatorId id);        // drop a cached operator
+    bool isOperatorCached(OperatorId id) const;
+
 private:
+    // Per-operator independent cache slots. Requesting one NEVER builds another.
+    // (Dec reuses decCache_ from the gauge path.)
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheLaplacianCotan_;
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheLaplacianGraph_;
+    std::unique_ptr<Eigen::SparseMatrix<std::complex<double>>>           cacheLaplacianConnection_;
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheLaplacianCovariant_;
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheMassLumped_;
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheMassGalerkin_;
+
+    // Private cache-fill helpers called by OperatorsFacet::LaplacianView.
+    // These source DIRECTLY from operatorGeometry()'s GC cache without
+    // calling assembleManifoldOperators (which would fuse cotan+mass+normals).
+    const Eigen::SparseMatrix<double>& cotanLaplacianCached_();
+    const Eigen::SparseMatrix<double>& graphLaplacianCached_();
+
+    friend class facet::OperatorsFacet;
     std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh>             mesh_;
     std::unique_ptr<geometrycentral::surface::VertexPositionGeometry>         geometry_;
     std::unique_ptr<geometrycentral::surface::SignpostIntrinsicTriangulation>  intrinsicTri_;  // null unless intrinsicDelaunay=true

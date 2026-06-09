@@ -197,4 +197,8 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_gauge_workflow test/test_gauge_workflow.cpp)
     target_link_libraries(test_gauge_workflow PRIVATE nxr_compute)
     add_test(NAME test_gauge_workflow COMMAND test_gauge_workflow)
+
+    add_executable(test_operators_facet test/test_operators_facet.cpp)
+    target_link_libraries(test_operators_facet PRIVATE nxr_compute)
+    add_test(NAME test_operators_facet COMMAND test_operators_facet)
 endif()

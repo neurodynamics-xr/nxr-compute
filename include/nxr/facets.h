@@ -88,4 +88,30 @@ private:
     std::map<int,double> sing_;
 };
 
+class OperatorsFacet {
+public:
+    explicit OperatorsFacet(Manifold& m) : m_(m) {}
+
+    // Views hold Manifold& (not OperatorsFacet&) so a stored view
+    // (auto v = m.operators().laplacian()) does not dangle when the
+    // OperatorsFacet temporary expires. Manifold befriends OperatorsFacet,
+    // and per CWG 45 its nested views inherit that access to the private
+    // *Cached_() helpers.
+    struct LaplacianView {
+        Manifold& m;
+        const Eigen::SparseMatrix<double>& cotan() const;   // real, intrinsic (directly from GC cotan cache)
+        const Eigen::SparseMatrix<double>& graph() const;   // real, topological
+
+        // Declared; implemented in Task C3.
+        const Eigen::SparseMatrix<std::complex<double>>& connection() const;
+        const Eigen::SparseMatrix<double>& covariant(
+            ops::laplacian::connection::CovariantCoupling coupling) const;
+    };
+
+    LaplacianView laplacian() { return LaplacianView{m_}; }
+
+private:
+    Manifold& m_;
+};
+
 } // namespace nxr::manifold::facet
