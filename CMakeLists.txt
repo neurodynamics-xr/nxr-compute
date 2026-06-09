@@ -66,6 +66,7 @@ add_library(nxr_compute STATIC
   src/gauge.cpp
   src/topology.cpp
   src/geometry_bundle.cpp
+  src/graph_laplacian.cpp
 )
 
 target_include_directories(nxr_compute PUBLIC

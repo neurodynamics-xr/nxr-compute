@@ -257,6 +257,11 @@ const Eigen::SparseMatrix<double>& hodge2(Manifold& m);
 const Eigen::SparseMatrix<double>& hodge1Inverse(Manifold& m);
 const Eigen::VectorXd&             vertexDualAreas(Manifold& m);
 
+// Graph (combinatorial) Laplacian L = D − A, built as d0ᵀ d0 from the
+// metric-free exterior derivative. Pure topology — independent of vertex
+// positions. Symmetric PSD; diagonal = vertex degree, off-diagonal = −(#edges).
+Eigen::SparseMatrix<double> graphLaplacian(Manifold& m);
+
 // ── Factor Cache ─────────────────────────────────────────────
 //
 // Pre-factored Cholesky / LU decompositions of mesh-derived

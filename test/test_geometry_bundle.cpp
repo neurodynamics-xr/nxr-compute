@@ -140,11 +140,35 @@ static void testTrivialGaugeRotations() {
            "rotation field deterministic");
 }
 
+static void testGraphLaplacian() {
+    std::cout << "\n=== graphLaplacian ===\n";
+    std::vector<double> V; std::vector<int32_t> F; makeIcosahedron(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+
+    Eigen::SparseMatrix<double> L = nxr::manifold::ops::graphLaplacian(m);
+    EXPECT(L.rows() == 12 && L.cols() == 12, "graphLaplacian is V×V");
+
+    Eigen::SparseMatrix<double> asym = L - Eigen::SparseMatrix<double>(L.transpose());
+    EXPECT(asym.norm() < 1e-12, "graphLaplacian symmetric");
+
+    Eigen::VectorXd ones = Eigen::VectorXd::Ones(12);
+    EXPECT((L * ones).cwiseAbs().maxCoeff() < 1e-12, "zero row sums");
+
+    bool degOk = true, offOk = true;
+    for (int i = 0; i < 12; ++i) if (std::abs(L.coeff(i,i) - 5.0) > 1e-12) degOk = false;
+    for (int i = 0; i < 12; ++i) for (int j = 0; j < 12; ++j) if (i!=j) {
+        double v = L.coeff(i,j); if (v != 0.0 && std::abs(v + 1.0) > 1e-12) offOk = false;
+    }
+    EXPECT(degOk, "diagonal == degree (5 on icosahedron)");
+    EXPECT(offOk, "off-diagonal in {0, -1}");
+}
+
 int main() {
     testVertexGrid();
     testFaceGrid();
     testVertexCurvature();
     testTrivialGaugeRotations();
+    testGraphLaplacian();
     if (g_failures) { std::cerr << "\n" << g_failures << " failure(s)\n"; return 1; }
     std::cout << "\nALL PASSED\n"; return 0;
 }
