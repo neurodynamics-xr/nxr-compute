@@ -1,4 +1,4 @@
-# 3D Vector (Covariant) Laplacian — `Gauge.operators.laplacian3D`
+# 3D Vector (Covariant) Laplacian — `Gauge.operators.covariantLaplacian`
 
 **Date:** 2026-06-08
 **Status:** Design — pending review
@@ -14,7 +14,7 @@ Add the 3-component sibling to the existing Laplacian ladder:
 |---|---|---|
 | scalars | 1 | cotan Laplace–Beltrami (`Geometry.operators.laplacian`) |
 | tangent vectors | 2 (complex `z`) | connection Laplacian (`Gauge.operators.laplacian`) |
-| **3D frame vectors** | **3 (`a,b` tangent + `c` normal)** | **`Gauge.operators.laplacian3D`** ← this spec |
+| **3D frame vectors** | **3 (`a,b` tangent + `c` normal)** | **`Gauge.operators.covariantLaplacian`** ← this spec |
 
 It is the covariant Laplacian on the rank-3 frame bundle `[e1, e2, n]` defined by
 the gauge grid, acting on a full 3D vector per vertex expressed in frame
@@ -69,34 +69,40 @@ Symmetric PSD (Bochner Laplacian). Native MATLAB **real** sparse.
 
 ## 4. Construction
 
-Unified per-edge transport. For edge `(i,j)` with cotan weight `w_ij`:
-- `R_ij ∈ SO(3) = R^tan_ij ∘ R^nrm_ij`, where
-  - `R^tan_ij` = the tangent rotation of the active gauge connection (Levi-Civita
-    transport, or trivial = Levi-Civita · the trivial-connection edge rotation),
-    acting in the tangent plane.
-  - `R^nrm_ij` = the normal-aligning rotation taking `n_j` to `n_i` (Rodrigues
-    about `n_i × n_j` by the angle between them). Included only for `ambient`;
-    identity for `product`.
-- Accumulate the Dirichlet energy `E = Σ w_ij |w_i − R_ij w_j|²` in frame coords
-  → `L3 = Σ w_ij (selector)ᵀ(I − R_ij in frame coords)...` assembled as a
-  symmetric sparse matrix (standard graph-Laplacian-with-rotations assembly, the
-  same shape as the connection-Laplacian assembly but with 3×3 blocks).
+Both variants assemble exactly from quantities we already have; neither needs a
+discretization choice. Frame: `F_v = [e1_v, e2_v, n_v] ∈ SO(3)` (the gauge 3-frame
+— grid tangent axes + cross-product normal). `L_cotan` = scalar cotan Laplacian;
+`K` = the gauge connection Laplacian (V×V complex; Levi-Civita or trivial).
 
-Equivalent, and the recommended assembly: build the tangent `2N` block by the
-complex→real expansion of `K` (the gauge connection Laplacian we already
-assemble), the normal block from the cotan Laplacian, and — for `ambient` — the
-two coupling blocks from the per-edge shape operator. The two assembly routes must
-agree (cross-check in the test).
+**ambient** — the covariant Laplacian of the flat ℝΒ³ (embedding) connection. Its
+*world-coordinate* form is the scalar Laplacian on each Cartesian component,
+`kron(I₃, L_cotan)`. Expressed in the moving gauge frame, the per-entry 3×3 block is
+```
+    L3_ambient[i,j]  =  L_cotan[i,j] · (F_iᵀ F_j)
+```
+so `L3_ambient = blockdiag(F)ᵀ · kron(I₃, L_cotan) · blockdiag(F)`. The
+tangent↔normal coupling falls out of the relative frame rotation `F_iᵀF_j` exactly
+— no shape-operator discretization. Symmetric PSD by construction (orthogonal
+conjugation of a PSD matrix). The gauge only changes coordinates: the spectrum is
+gauge-invariant, and the tangent `(a,b)` block equals the gauge connection
+Laplacian (since `L_cotan[i,j]·(F_iᵀF_j)|_tangent = −w_ij ρ_ij = K[i,j]`).
 
-The discrete shape operator coupling per edge derives from the normal change
-`n_i → n_j` resolved in the tangent frame; on a sphere of radius r it must reduce
-to `S = (1/r)·I` (so `ambient` = `product` + `(1/r)`-coupling), and on a flat
-patch `S = 0` (so `ambient ≡ product`). These are the validation anchors.
+**product** — the Laplacian of the product connection `∇^{TM} ⊕ ∇^{NM}`, coupling
+removed:
+```
+    L3_product  =  blkdiag( [[Re K, −Im K],[Im K, Re K]] , L_cotan )
+```
+Block-diagonal; tangent and normal decoupled. Gauge-dependent (`K` differs LC vs
+trivial). `ambient − product` is the pure coupling (the `(a,c)`/`(b,c)` blocks plus
+the normal-block curvature reweighting `L_ij·(n_iᵀn_j)` vs `L_ij`); it vanishes on a
+flat patch (where `F_iᵀF_j = I`) and grows with curvature.
+
+Both returned in frame coords, block layout `[a; b; c] = [Re z; Im z; normal]`.
 
 ## 5. API / schema
 
 ```
-Gauge.operators.laplacian3D    3N×3N real sparse   % present when operators=true
+Gauge.operators.covariantLaplacian    3N×3N real sparse   % present when operators=true
 ```
 Selected by the gauge type (tangent connection) + a `coupling` option. Surfaced
 on the `Gauge.operators` sub-struct alongside `.laplacian`. The `operators` opt-in
@@ -106,7 +112,7 @@ flag gains a companion for the coupling choice:
 % ambient (default) covariant 3D Laplacian, trivial tangent connection:
 B = nxr_compute('bundle', h, 'trivial', ...
       struct('singVerts',sv,'singValues',si,'operators',true));
-L3 = B.Gauge.operators.laplacian3D;          % 3N×3N real sparse, [a;b;c]
+L3 = B.Gauge.operators.covariantLaplacian;          % 3N×3N real sparse, [a;b;c]
 
 % product variant:
 G = nxr_compute('gauge', h, 'levi-civita', ...
@@ -114,8 +120,8 @@ G = nxr_compute('gauge', h, 'levi-civita', ...
 ```
 `coupling` is read from the same opts struct as `operators` (default `'ambient'`).
 
-**Library:** a new `nxr::manifold::ops::laplacian::connection` entry, e.g.
-`assembleVectorLaplacian3D(Manifold&, gaugeType, coupling, singMap?)`, returning a
+**Library:** a new `nxr::manifold::ops::laplacian::connection` entry,
+`assembleCovariantLaplacian(Manifold&, gaugeType, coupling, singMap?)`, returning a
 real `Eigen::SparseMatrix<double>` of size `3N×3N`. Caching: keyed on
 `(gaugeType, coupling)` on the ContextHolder (new slot or extend the operator
 cache).
@@ -123,15 +129,18 @@ cache).
 ## 6. Test plan
 
 - **Native** (`test/test_geometry_bundle.cpp`): on the icosphere,
-  - `L3` is 3N×3N, symmetric (`||L3 − L3ᵀ|| < 1e-9`), PSD (min eig ≥ −1e-9).
-  - `product` is exactly block-diagonal: the `(a,b)|c` off-diagonal blocks are
-    zero; the `(a,b)` block equals the complex→real expansion of `K`; the `c`
-    block equals the cotan Laplacian.
-  - `ambient` differs from `product` only in the coupling blocks; on the unit
-    icosphere the coupling magnitude ≈ the mean curvature (`κ ≈ 1`).
-  - the two assembly routes (per-edge SO(3) vs block-assembly) agree.
+  - `L3` is 3N×3N, symmetric (`||L3 − L3ᵀ|| < 1e-9`), PSD (min eig ≥ −1e-9), for
+    both couplings and both tangent connections.
+  - **ambient world-coords identity (exact):** `blockdiag(F) · L3_ambient ·
+    blockdiag(F)ᵀ == kron(I₃, L_cotan)` to machine precision (the defining anchor).
+  - **product blkdiag identity (exact):** `L3_product == blkdiag(real-expand(K),
+    L_cotan)`.
+  - **ambient tangent block == K:** the `(a,b)` 2N sub-block of `L3_ambient`
+    equals `real-expand(K)` (exact, for the matching gauge).
+  - `ambient ≠ product` on the curved icosphere (non-zero coupling); they coincide
+    in the flat limit.
 - **MATLAB** (`bindings/mex/test/test_operators.m`):
-  - `Gauge.operators.laplacian3D` is `3N×3N` real sparse, symmetric.
+  - `Gauge.operators.covariantLaplacian` is `3N×3N` real sparse, symmetric.
   - `coupling='product'` reproduces `blkdiag([[Re K,−Im K],[Im K,Re K]], L_cotan)`
     from the already-exposed `Gauge.operators.laplacian` (K) and
     `Geometry.operators.laplacian` (cotan) — a cross-surface identity.
@@ -146,9 +155,9 @@ cache).
 | 2 | representation | 3N×3N real symmetric sparse, frame coords, block `[a;b;c]=[Re z;Im z;normal]` |
 | 3 | tangent connection | follows gauge type (LC / trivial), parallel to `.laplacian` |
 | 4 | coupling | `product` (blkdiag) or `ambient` (shape-operator); default `ambient` |
-| 5 | ambient transport | tangent-gauge rotation ∘ normal-aligning rotation; gauge-independent normal part |
-| 6 | schema home | `Gauge.operators.laplacian3D`, opt-in via `operators=true`; `coupling` opt |
-| 7 | validation | sphere `S=κI`, flat patch `S=0`; product == blkdiag identity |
+| 5 | ambient assembly | `L3[i,j] = L_cotan[i,j]·(F_iᵀF_j)` = frame-conjugate of `kron(I₃,L_cotan)`; coupling exact (no discretization) |
+| 6 | schema home | `Gauge.operators.covariantLaplacian`, opt-in via `operators=true`; `coupling` opt |
+| 7 | validation | ambient world-form `== kron(I₃,L_cotan)` (exact); product `== blkdiag(real-expand(K),L_cotan)` (exact); ambient tangent block `== K` |
 
 ## 8. Deferred
 
