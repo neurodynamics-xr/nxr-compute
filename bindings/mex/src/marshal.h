@@ -199,6 +199,35 @@ inline mxArray* eigenSparseToMx(const Eigen::SparseMatrix<double>& src) {
     return arr;
 }
 
+// Eigen complex sparse → native MATLAB complex sparse (interleaved, R2018a+).
+// Mirrors eigenSparseToMx exactly: makeCompressed(), raw outerIndexPtr /
+// innerIndexPtr / valuePtr loop, cast int → mwIndex element-by-element.
+inline mxArray* eigenComplexSparseToMx(
+    const Eigen::SparseMatrix<std::complex<double>>& src) {
+    Eigen::SparseMatrix<std::complex<double>> m = src;  // ensure CSC + compressed
+    m.makeCompressed();
+    int rows = static_cast<int>(m.rows());
+    int cols = static_cast<int>(m.cols());
+    int nnz  = static_cast<int>(m.nonZeros());
+
+    mxArray* arr = mxCreateSparse(rows, cols, nnz, mxCOMPLEX);
+    mwIndex*        jc = mxGetJc(arr);
+    mwIndex*        ir = mxGetIr(arr);
+    mxComplexDouble* pr = mxGetComplexDoubles(arr);
+
+    // Eigen compressed CSC: outerIndexPtr() = col pointers (cols+1),
+    // innerIndexPtr() = row indices (nnz), valuePtr() = values (nnz).
+    for (int c = 0; c <= cols; c++) {
+        jc[c] = static_cast<mwIndex>(m.outerIndexPtr()[c]);
+    }
+    for (int k = 0; k < nnz; k++) {
+        ir[k]      = static_cast<mwIndex>(m.innerIndexPtr()[k]);
+        pr[k].real = m.valuePtr()[k].real();
+        pr[k].imag = m.valuePtr()[k].imag();
+    }
+    return arr;
+}
+
 // ── Vertex index lists (1-based MATLAB → 0-based C) ─────────
 //
 // Source-vertex arguments to vector heat / signed heat / find center
