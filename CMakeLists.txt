@@ -61,6 +61,7 @@ add_library(nxr_compute STATIC
   src/smooth_field.cpp
   src/stripe_patterns.cpp
   src/connection_laplacian.cpp
+  src/covariant_laplacian.cpp
   src/query_measure.cpp
   src/geometry_grid.cpp
   src/gauge.cpp

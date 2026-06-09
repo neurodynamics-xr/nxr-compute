@@ -473,6 +473,32 @@ ConnectionLaplacian assembleTrivialConnectionLaplacian(
     const ConnectionLaplacianOptions& opts = {}
 );
 
+// ── Covariant (3-frame) Laplacian ─────────────────────────────
+//
+// 3N×3N real symmetric sparse Laplacian on the full 3-frame
+// [a; b; c] = [Re z; Im z; normal], component-major block layout.
+// Two couplings: Product (blkdiag) and Ambient (frame-conjugate).
+// See spec docs/superpowers/specs/2026-06-08-vector-laplacian-3d-design.md §3–4.
+
+// Coupling for the 3-frame covariant Laplacian (see covariant-laplacian spec).
+enum class CovariantCoupling {
+    Product,   // blkdiag(real-expand(K), cotanL) — tangent ⊕ normal decoupled
+    Ambient    // frame-conjugate of kron(I3, cotanL): L3[i,j] = cotanL[i,j]·(Fiᵀ Fj)
+};
+
+// 3N×3N real symmetric Laplacian on the 3-frame [a;b;c] = [Re z; Im z; normal],
+// component-major block layout. Pure linear algebra over pieces the caller holds:
+//   K        = gauge connection Laplacian (V×V complex Hermitian) — used by Product
+//              (and equals the Ambient tangent block for the matching gauge)
+//   gaugeGrid= realized gauge frame, V×3 complex c = e1 + i·e2 (normal = Re×Im) — used by Ambient
+//   cotanL   = scalar cotan Laplacian (V×V real)
+// See spec §3–4. Symmetric PSD.
+Eigen::SparseMatrix<double> assembleCovariantLaplacian(
+    CovariantCoupling coupling,
+    const Eigen::SparseMatrix<std::complex<double>>& K,
+    const Eigen::MatrixXcd& gaugeGrid,
+    const Eigen::SparseMatrix<double>& cotanL);
+
 } // namespace nxr::manifold::ops::laplacian::connection
 
 namespace nxr::manifold::solve {

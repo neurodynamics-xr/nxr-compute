@@ -168,12 +168,96 @@ static void testGraphLaplacian() {
     EXPECT(es.eigenvalues().minCoeff() > -1e-9, "graphLaplacian PSD (min eigenvalue >= 0)");
 }
 
+static void testCovariantLaplacian() {
+    std::cout << "\n=== covariantLaplacian ===\n";
+    namespace cl = nxr::manifold::ops::laplacian::connection;
+    std::vector<double> V; std::vector<int32_t> F; makeIcosahedron(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+    const int N = 12;
+
+    auto ops = nxr::manifold::ops::assembleManifoldOperators(m);   // cotanLaplacian
+    Eigen::SparseMatrix<double> L = ops.cotanLaplacian;
+    Eigen::MatrixXcd grid = nxr::manifold::geometry::vertexGrid(m); // V×3 complex (LC frame)
+
+    cl::ConnectionLaplacianOptions o; o.domain = cl::ConnectionDomain::Vertex;
+    o.nSym = 1; o.format = cl::ConnectionLaplacianFormat::Complex;
+    auto K = cl::assembleConnectionLaplacian(m, o).K_complex;       // V×V complex
+
+    auto Lp = cl::assembleCovariantLaplacian(cl::CovariantCoupling::Product,  K, grid, L);
+    auto La = cl::assembleCovariantLaplacian(cl::CovariantCoupling::Ambient,  K, grid, L);
+
+    EXPECT(Lp.rows()==3*N && Lp.cols()==3*N, "covariantLaplacian is 3N×3N");
+
+    // symmetric
+    auto symErr = [](const Eigen::SparseMatrix<double>& A){
+        return (A - Eigen::SparseMatrix<double>(A.transpose())).norm(); };
+    EXPECT(symErr(Lp) < 1e-9, "product symmetric");
+    EXPECT(symErr(La) < 1e-9, "ambient symmetric");
+
+    // product == blkdiag(real-expand(K), cotanL), exact.
+    // real-expand(K): aa=ReK, ab=-ImK, ba=ImK, bb=ReK; cc=L.
+    // Build ReK, ImK by iterating K nonzeros (complex sparse .real()/.imag() not available).
+    {
+        std::vector<Eigen::Triplet<double>> reT, imT;
+        for (int k = 0; k < K.outerSize(); ++k)
+            for (Eigen::SparseMatrix<std::complex<double>>::InnerIterator it(K, k); it; ++it) {
+                reT.emplace_back(static_cast<int>(it.row()), static_cast<int>(it.col()), it.value().real());
+                imT.emplace_back(static_cast<int>(it.row()), static_cast<int>(it.col()), it.value().imag());
+            }
+        Eigen::SparseMatrix<double> ReK(N,N), ImK(N,N);
+        ReK.setFromTriplets(reT.begin(), reT.end());
+        ImK.setFromTriplets(imT.begin(), imT.end());
+
+        Eigen::MatrixXd D = Eigen::MatrixXd::Zero(3*N, 3*N);
+        D.block(0,0,N,N)    =  Eigen::MatrixXd(ReK);
+        D.block(0,N,N,N)    = -Eigen::MatrixXd(ImK);
+        D.block(N,0,N,N)    =  Eigen::MatrixXd(ImK);
+        D.block(N,N,N,N)    =  Eigen::MatrixXd(ReK);
+        D.block(2*N,2*N,N,N)=  Eigen::MatrixXd(L);
+        double err = (Eigen::MatrixXd(Lp) - D).cwiseAbs().maxCoeff();
+        EXPECT(err < 1e-9, "product == blkdiag(real-expand(K), cotanL)");
+    }
+
+    // ambient world-form identity: Fbd · La · Fbdᵀ == kron(I3, L), exact.
+    // Fbd is 3N×3N, component-major: block (p-comp, q-comp) is diag over v of F_v[p][q],
+    // F_v columns = e1=Re(grid_v), e2=Im(grid_v), n=e1×e2.
+    {
+        Eigen::MatrixXd Fbd = Eigen::MatrixXd::Zero(3*N, 3*N);
+        for (int v=0; v<N; ++v) {
+            Eigen::Vector3d e1 = grid.row(v).real(), e2 = grid.row(v).imag();
+            Eigen::Vector3d nrm = e1.cross(e2);
+            Eigen::Matrix3d Fv; Fv.col(0)=e1; Fv.col(1)=e2; Fv.col(2)=nrm;
+            for (int p=0;p<3;++p) for (int q=0;q<3;++q) Fbd(p*N+v, q*N+v) = Fv(p,q);
+        }
+        Eigen::MatrixXd kronI3L = Eigen::MatrixXd::Zero(3*N,3*N);
+        kronI3L.block(0,0,N,N)     = Eigen::MatrixXd(L);
+        kronI3L.block(N,N,N,N)     = Eigen::MatrixXd(L);
+        kronI3L.block(2*N,2*N,N,N) = Eigen::MatrixXd(L);
+        double err = (Fbd * Eigen::MatrixXd(La) * Fbd.transpose() - kronI3L).cwiseAbs().maxCoeff();
+        EXPECT(err < 1e-9, "ambient world-form == kron(I3, cotanL)");
+    }
+
+    // ambient ≠ product on the curved mesh
+    EXPECT((Eigen::MatrixXd(La) - Eigen::MatrixXd(Lp)).cwiseAbs().maxCoeff() > 1e-6,
+           "ambient differs from product (curvature coupling)");
+
+    // PSD
+    auto minEig = [](const Eigen::SparseMatrix<double>& A) -> double {
+        Eigen::MatrixXd Ad(A);
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Ad);
+        return es.eigenvalues().minCoeff();
+    };
+    EXPECT(minEig(Lp) > -1e-9, "product PSD");
+    EXPECT(minEig(La) > -1e-9, "ambient PSD");
+}
+
 int main() {
     testVertexGrid();
     testFaceGrid();
     testVertexCurvature();
     testTrivialGaugeRotations();
     testGraphLaplacian();
+    testCovariantLaplacian();
     if (g_failures) { std::cerr << "\n" << g_failures << " failure(s)\n"; return 1; }
     std::cout << "\nALL PASSED\n"; return 0;
 }
