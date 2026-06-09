@@ -1,5 +1,6 @@
 #include "nxr/compute.h"
 #include <Eigen/Geometry>
+#include <Eigen/Eigenvalues>
 #include <iostream>
 #include <cmath>
 #include <complex>
@@ -161,6 +162,10 @@ static void testGraphLaplacian() {
     }
     EXPECT(degOk, "diagonal == degree (5 on icosahedron)");
     EXPECT(offOk, "off-diagonal in {0, -1}");
+
+    Eigen::MatrixXd Ld = Eigen::MatrixXd(L);
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Ld);
+    EXPECT(es.eigenvalues().minCoeff() > -1e-9, "graphLaplacian PSD (min eigenvalue >= 0)");
 }
 
 int main() {
