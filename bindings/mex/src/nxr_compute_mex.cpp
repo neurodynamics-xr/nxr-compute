@@ -104,6 +104,9 @@ struct ContextHolder {
     std::unique_ptr<nxr::manifold::solve::SignedHeatSolver>       shs;       // lazy: ensureSHS
     std::unique_ptr<nxr::manifold::solve::HeatGeodesicSolver>     heatGeo;   // lazy: ensureHeatGeo
 
+    std::unique_ptr<Eigen::SparseMatrix<double>> graphLap;       // lazy: graphLaplacian
+    std::unique_ptr<Eigen::SparseMatrix<double>> massGalerkin;   // lazy: Galerkin mass
+
     std::map<std::pair<int, bool>, Eigen::MatrixXd>              smoothFaceFieldCache;
     std::map<std::pair<int, bool>,
              nxr::manifold::connection::SmoothVertexFieldResult> smoothVertexFieldCache;
@@ -163,6 +166,16 @@ nxr::manifold::solve::SignedHeatSolver& ensureSHS(ContextHolder& h) {
 nxr::manifold::solve::HeatGeodesicSolver& ensureHeatGeo(ContextHolder& h) {
     if (!h.heatGeo) h.heatGeo = std::make_unique<nxr::manifold::solve::HeatGeodesicSolver>(*h.ctx);
     return *h.heatGeo;
+}
+
+// Parse the 'operators' flag out of an optional opts struct.
+// Returns true iff opts is a struct with a non-empty truthy 'operators' field.
+static bool readOperatorsFlag(const mxArray* opts) {
+    if (!opts || !mxIsStruct(opts)) return false;
+    const mxArray* f = mxGetField(opts, 0, "operators");
+    if (!f || mxIsEmpty(f)) return false;
+    if (mxIsLogical(f)) return mxGetLogicals(f)[0];
+    return mxIsNumeric(f) && mxGetScalar(f) != 0.0;
 }
 
 // ── create / destroy ─────────────────────────────────────────
@@ -1071,6 +1084,90 @@ void cmdRandomDecomposed1Form(int /*nlhs*/, mxArray** plhs, int nrhs, const mxAr
     plhs[0] = eigenVectorToMx(omega);
 }
 
+// ── operator sub-struct builders ─────────────────────────────
+//
+// Called when the caller passes opts.operators = true.
+// Each builder pulls from the same lazy caches (ensureOps/ensureDec/clCache)
+// and the new graphLap/massGalerkin slots on ContextHolder.
+
+mxArray* buildTopologyOperators(ContextHolder& h) {
+    if (!h.graphLap)
+        h.graphLap = std::make_unique<Eigen::SparseMatrix<double>>(
+            nxr::manifold::ops::graphLaplacian(*h.ctx));
+    auto& dec = ensureDec(h);
+    const char* f[] = {"laplacian","dec"};
+    mxArray* s = mxCreateStructMatrix(1,1,2,f);
+    mxSetField(s,0,"laplacian", eigenSparseToMx(*h.graphLap));
+    const char* df[] = {"d0","d1"};
+    mxArray* d = mxCreateStructMatrix(1,1,2,df);
+    mxSetField(d,0,"d0", eigenSparseToMx(dec.d0));
+    mxSetField(d,0,"d1", eigenSparseToMx(dec.d1));
+    mxSetField(s,0,"dec", d);
+    return s;
+}
+
+mxArray* buildGeometryOperators(ContextHolder& h) {
+    auto& ops = ensureOps(h);
+    auto& dec = ensureDec(h);
+    if (!h.massGalerkin) {
+        auto g = nxr::manifold::ops::assembleManifoldOperators(
+                     *h.ctx, nxr::manifold::ops::MassMatrixVariant::Galerkin);
+        h.massGalerkin = std::make_unique<Eigen::SparseMatrix<double>>(g.mass);
+    }
+    const char* f[] = {"laplacian","mass","hodge"};
+    mxArray* s = mxCreateStructMatrix(1,1,3,f);
+    mxSetField(s,0,"laplacian", eigenSparseToMx(ops.cotanLaplacian));
+    const char* mf[] = {"lumped","galerkin"};
+    mxArray* mm = mxCreateStructMatrix(1,1,2,mf);
+    mxSetField(mm,0,"lumped",   eigenSparseToMx(dec.hodge0));
+    mxSetField(mm,0,"galerkin", eigenSparseToMx(*h.massGalerkin));
+    mxSetField(s,0,"mass", mm);
+    const char* hf[] = {"h0","h1","h2","h1inv"};
+    mxArray* hh = mxCreateStructMatrix(1,1,4,hf);
+    mxSetField(hh,0,"h0",    eigenSparseToMx(dec.hodge0));
+    mxSetField(hh,0,"h1",    eigenSparseToMx(dec.hodge1));
+    mxSetField(hh,0,"h2",    eigenSparseToMx(dec.hodge2));
+    mxSetField(hh,0,"h1inv", eigenSparseToMx(dec.hodge1Inverse));
+    mxSetField(s,0,"hodge", hh);
+    return s;
+}
+
+// type/opts mirror buildGaugeStruct; opts may carry singVerts/singValues for 'trivial'.
+mxArray* buildGaugeOperators(ContextHolder& h, const std::string& type, const mxArray* opts) {
+    namespace cl = nxr::manifold::ops::laplacian::connection;
+    cl::ConnectionLaplacianOptions o;
+    o.domain = cl::ConnectionDomain::Vertex;
+    o.nSym   = 1;
+    o.format = cl::ConnectionLaplacianFormat::Complex;
+    Eigen::SparseMatrix<std::complex<double>> K;
+    if (type == "trivial") {
+        if (!opts || !mxIsStruct(opts))
+            throw std::invalid_argument("gauge('trivial') operators require singVerts/singValues in opts");
+        const mxArray* fv = mxGetField(opts, 0, "singVerts");
+        const mxArray* fi = mxGetField(opts, 0, "singValues");
+        if (!fv || !fi) throw std::invalid_argument("opts needs singVerts and singValues");
+        std::vector<int> verts = mxToVertexIndices(fv);
+        Eigen::VectorXd  vals  = mxToEigenVector(fi);
+        std::map<int,double> sing;
+        for (size_t i = 0; i < verts.size(); ++i) sing[verts[i]] = vals[static_cast<Eigen::Index>(i)];
+        auto clr = cl::assembleTrivialConnectionLaplacian(*h.ctx, sing, ensureDec(h), *h.cache, o);
+        K = clr.K_complex;
+    } else {  // euclidean / levi-civita → Levi-Civita connection Laplacian (clCache)
+        ContextHolder::CLKey key{o.domain, o.nSym, o.regularization, o.format};
+        auto it = h.clCache.find(key);
+        if (it == h.clCache.end()) {
+            auto clp = std::make_shared<cl::ConnectionLaplacian>(
+                cl::assembleConnectionLaplacian(*h.ctx, o));
+            it = h.clCache.emplace(key, std::move(clp)).first;
+        }
+        K = it->second->K_complex;
+    }
+    const char* f[] = {"laplacian"};
+    mxArray* s = mxCreateStructMatrix(1,1,1,f);
+    mxSetField(s,0,"laplacian", eigenComplexSparseToMx(K));
+    return s;
+}
+
 // ── buildGaugeStruct / buildGeometryStruct / buildTopologyStruct ──
 //
 // Reusable builders shared by the standalone cmdXxx commands and
@@ -1092,7 +1189,8 @@ void cmdRandomDecomposed1Form(int /*nlhs*/, mxArray** plhs, int nrhs, const mxAr
 //   G.singularity.indices   [k x 1]   double
 //   G.singularity.source    string
 
-mxArray* buildGaugeStruct(ContextHolder& h, const std::string& type, const mxArray* opts) {
+mxArray* buildGaugeStruct(ContextHolder& h, const std::string& type, const mxArray* opts,
+                          bool withOps = false) {
     namespace conn = nxr::manifold::connection;
     nxr::manifold::Manifold& m = *h.ctx;
 
@@ -1150,6 +1248,11 @@ mxArray* buildGaugeStruct(ContextHolder& h, const std::string& type, const mxArr
       mxSetField(g,0,"source",mxCreateString(singSource.c_str()));
       mxSetField(s,0,"singularity",g); }
 
+    if (withOps) {
+        int fn = mxAddField(s, "operators");
+        mxSetFieldByNumber(s, 0, fn, buildGaugeOperators(h, type, opts));
+    }
+
     return s;
 }
 
@@ -1159,7 +1262,8 @@ void cmdGauge(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
     ContextHolder& h = getHolder(prhs[1]);
     std::string type = getStringArg(prhs[2]);
     const mxArray* opts = (nrhs >= 4) ? prhs[3] : nullptr;
-    plhs[0] = buildGaugeStruct(h, type, opts);
+    bool withOps = readOperatorsFlag(opts);
+    plhs[0] = buildGaugeStruct(h, type, opts, withOps);
 }
 
 // ── geometry(handle) → struct ─────────────────────────────────
@@ -1190,7 +1294,7 @@ void cmdGauge(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
 //   G.corner.angles               [nH x 1]  double (nH == nC on closed mesh)
 //   G.corner.scaledAngles         [nH x 1]  double
 
-mxArray* buildGeometryStruct(ContextHolder& h) {
+mxArray* buildGeometryStruct(ContextHolder& h, bool withOps = false) {
     nxr::manifold::geometry::MeshGeometry g =
         nxr::manifold::geometry::meshGeometry(*h.ctx);
 
@@ -1237,16 +1341,22 @@ mxArray* buildGeometryStruct(ContextHolder& h) {
       mxSetField(gg, 0, "scaledAngles", eigenVectorToMx(g.cornerScaledAngles));
       mxSetField(s,  0, "corner", gg); }
 
+    if (withOps) {
+        int fn = mxAddField(s, "operators");
+        mxSetFieldByNumber(s, 0, fn, buildGeometryOperators(h));
+    }
+
     return s;
 }
 
 void cmdGeometry(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
-    if (nrhs != 2) {
+    if (nrhs < 2 || nrhs > 3) {
         throw std::invalid_argument(
-            "nxr_compute('geometry', handle) takes exactly 1 argument");
+            "nxr_compute('geometry', handle[, opts]) takes 1 or 2 arguments");
     }
     ContextHolder& h = getHolder(prhs[1]);
-    plhs[0] = buildGeometryStruct(h);
+    bool withOps = (nrhs >= 3) && readOperatorsFlag(prhs[2]);
+    plhs[0] = buildGeometryStruct(h, withOps);
 }
 
 // ── topology(handle) → struct ─────────────────────────────────
@@ -1271,7 +1381,7 @@ void cmdGeometry(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
 //   T.halfedge.orientation  [nH × 1] logical — true iff he == he.edge().halfedge()
 //   T.halfedge.isInterior   [nH × 1] logical
 
-mxArray* buildTopologyStruct(ContextHolder& h) {
+mxArray* buildTopologyStruct(ContextHolder& h, bool withOps = false) {
     auto t = nxr::manifold::geometry::meshTopology(*h.ctx);
 
     const char* topFields[] = {"schemaVersion","vertex","edge","face","corner","halfedge"};
@@ -1303,16 +1413,22 @@ mxArray* buildTopologyStruct(ContextHolder& h) {
       mxSetField(g,0,"isInterior", logicalVectorToMx(t.heIsInterior));
       mxSetField(s,0,"halfedge",g); }
 
+    if (withOps) {
+        int fn = mxAddField(s, "operators");
+        mxSetFieldByNumber(s, 0, fn, buildTopologyOperators(h));
+    }
+
     return s;
 }
 
 void cmdTopology(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
-    if (nrhs != 2) {
+    if (nrhs < 2 || nrhs > 3) {
         throw std::invalid_argument(
-            "nxr_compute('topology', handle) takes exactly 1 argument");
+            "nxr_compute('topology', handle[, opts]) takes 1 or 2 arguments");
     }
     ContextHolder& h = getHolder(prhs[1]);
-    plhs[0] = buildTopologyStruct(h);
+    bool withOps = (nrhs >= 3) && readOperatorsFlag(prhs[2]);
+    plhs[0] = buildTopologyStruct(h, withOps);
 }
 
 // ── bundle(handle, gaugeType[, opts]) → struct ───────────────
@@ -1334,12 +1450,13 @@ void cmdBundle(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
     ContextHolder& h = getHolder(prhs[1]);
     std::string type = getStringArg(prhs[2]);
     const mxArray* opts = (nrhs >= 4) ? prhs[3] : nullptr;
+    bool withOps = readOperatorsFlag(opts);
 
     const char* f[] = {"Topology","Geometry","Gauge"};
     mxArray* s = mxCreateStructMatrix(1,1,3,f);
-    mxSetField(s,0,"Topology", buildTopologyStruct(h));
-    mxSetField(s,0,"Geometry", buildGeometryStruct(h));
-    mxSetField(s,0,"Gauge",    buildGaugeStruct(h, type, opts));
+    mxSetField(s,0,"Topology", buildTopologyStruct(h, withOps));
+    mxSetField(s,0,"Geometry", buildGeometryStruct(h, withOps));
+    mxSetField(s,0,"Gauge",    buildGaugeStruct(h, type, opts, withOps));
     plhs[0] = s;
 }
 
