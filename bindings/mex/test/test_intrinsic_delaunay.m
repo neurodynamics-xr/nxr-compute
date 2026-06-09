@@ -29,6 +29,24 @@ C = GaN.operators.covariantLaplacian;
 assert(norm(C - C','fro') < 1e-9, 'covariant symmetric');
 assert(min(eig(full(C))) > -1e-9, 'covariant PSD under normalization');
 
+% --- Phase 2: connection Laplacian + product covariant certified-PSD ---
+GlN = nxr_compute('gauge', hN, 'levi-civita', struct('operators',true));
+K = GlN.operators.laplacian;                 % V x V complex connection Laplacian
+assert(norm(K - K','fro') < 1e-9, 'normalized connection L Hermitian');
+assert(min(eig(full(K))) > -1e-9, 'normalized connection L PSD');
+
+% product covariant under normalization is symmetric + PSD
+GpN = nxr_compute('gauge', hN, 'levi-civita', struct('operators',true,'coupling','product'));
+Cp = GpN.operators.covariantLaplacian;
+assert(norm(Cp - Cp','fro') < 1e-9, 'product covariant symmetric');
+assert(min(eig(full(Cp))) > -1e-9, 'product covariant PSD under normalization');
+
+% grid unchanged (phi_v = 0): normalized grid == raw grid
+GgeoRaw = nxr_compute('geometry', hRaw);
+GgeoN   = nxr_compute('geometry', hN);
+assert(max(abs(GgeoRaw.vertex.grid(:) - GgeoN.vertex.grid(:))) < 1e-12, ...
+       'grid unchanged under normalization (phi_v = 0)');
+
 nxr_compute('destroy', hRaw); nxr_compute('destroy', hN);
 fprintf('ALL TESTS PASSED: test_intrinsic_delaunay\n');
 end
