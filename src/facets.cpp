@@ -23,6 +23,7 @@ const Eigen::MatrixXi& Manifold::faces() const { return faces_; }
 facet::TopologyFacet  Manifold::topology()  { return facet::TopologyFacet(*this); }
 facet::EmbeddedFacet  Manifold::embedded()  { return facet::EmbeddedFacet(*this); }
 facet::IntrinsicFacet Manifold::intrinsic() { return facet::IntrinsicFacet(*this); }
+facet::ExtrinsicFacet Manifold::extrinsic() { return facet::ExtrinsicFacet(*this); }
 
 } // namespace nxr::manifold
 
@@ -49,4 +50,9 @@ Eigen::VectorXd  IntrinsicFacet::EdgeView::cotanWeight()  const { return m.light
 Eigen::VectorXd  IntrinsicFacet::HalfedgeView::cotanWeight()     const { return m.lightGeometry().halfedgeCotanWeights; }
 Eigen::VectorXcd IntrinsicFacet::HalfedgeView::transportAlong()  const { return m.lightGeometry().halfedgeTransportAlong; }
 Eigen::VectorXcd IntrinsicFacet::HalfedgeView::transportAcross() const { return m.lightGeometry().halfedgeTransportAcross; }
+
+Eigen::VectorXcd ExtrinsicFacet::VertexView::curvature2RoSy() const { return m.lightGeometry().vertexCurvatureDeviatoric; }
+Eigen::VectorXd  ExtrinsicFacet::VertexView::meanCurvature()  const { return m.lightGeometry().vertexMeanCurvature; }
+Eigen::MatrixXd  ExtrinsicFacet::VertexView::principalDir()   const { return geometry::curvatures(m).principalDirMax; }
+Eigen::VectorXd  ExtrinsicFacet::EdgeView::dihedralAngle()    const { return m.lightGeometry().edgeDihedralAngles; }
 } // namespace nxr::manifold::facet

@@ -56,4 +56,21 @@ private:
     Manifold& m_;
 };
 
+class ExtrinsicFacet {
+public:
+    explicit ExtrinsicFacet(Manifold& m) : m_(m) {}
+    struct VertexView { Manifold& m;
+        Eigen::VectorXcd curvature2RoSy() const;  // [nV] deviatoric q
+        Eigen::VectorXd  meanCurvature()  const;  // [nV] H
+        Eigen::MatrixXd  principalDir()   const;  // [nV,3] max principal dir
+    };
+    struct EdgeView { Manifold& m;
+        Eigen::VectorXd dihedralAngle() const;    // [nE]
+    };
+    VertexView vertex() const { return VertexView{m_}; }
+    EdgeView   edge()   const { return EdgeView{m_}; }
+private:
+    Manifold& m_;
+};
+
 } // namespace nxr::manifold::facet

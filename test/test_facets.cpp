@@ -80,10 +80,25 @@ static void testIntrinsicFacet() {
     EXPECT((in.edge().length() - direct).cwiseAbs().maxCoeff() < 1e-12, "edge.length == GC edgeLengths");
 }
 
+static void testExtrinsicFacet() {
+    std::cout << "\n=== facets: extrinsic ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+    auto ex = m.extrinsic();
+    EXPECT(ex.vertex().curvature2RoSy().size() == 12, "vertex.curvature2RoSy [12]");
+    EXPECT(ex.vertex().meanCurvature().size() == 12, "vertex.meanCurvature [12]");
+    EXPECT(ex.vertex().principalDir().rows() == 12 && ex.vertex().principalDir().cols() == 3, "vertex.principalDir [12,3]");
+    EXPECT(ex.edge().dihedralAngle().size() == 30, "edge.dihedralAngle [30]");
+    // identity vs geometry::vertexCurvature
+    auto vc = geometry::vertexCurvature(m);
+    EXPECT((ex.vertex().meanCurvature() - vc.mean).cwiseAbs().maxCoeff() < 1e-12, "meanCurvature == vertexCurvature.mean");
+}
+
 int main() {
     testTopologyFacet();
     testEmbeddedFacet();
     testIntrinsicFacet();
+    testExtrinsicFacet();
     std::cout << (g_failures ? "\nFAILURES\n" : "\nALL PASSED\n");
     return g_failures ? 1 : 0;
 }
