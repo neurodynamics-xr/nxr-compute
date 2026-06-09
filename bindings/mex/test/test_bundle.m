@@ -21,6 +21,9 @@ G = nxr_compute('geometry', h);
 assert(isequal(B.Topology.halfedge.twin, T.halfedge.twin), 'bundle Topology == topology');
 assert(isequal(B.Geometry.vertex.grid, G.vertex.grid), 'bundle Geometry == geometry');
 
+Ge2 = nxr_compute('gauge', h, 'levi-civita');
+assert(isequal(B.Gauge.vertex.rotation, Ge2.vertex.rotation), 'bundle Gauge == gauge');
+
 % ── leadfield round-trip (the deliverable) ──
 rng(0); nSensors = 7;
 c = B.Gauge.vertex.rotation .* B.Geometry.vertex.grid;   % realized frame (LC: rotation==1)

@@ -17,6 +17,7 @@ assert(max(abs(Ge.vertex.rotation - 1)) < 1e-12, 'euclidean rotation == 1');
 assert(Ge.schemaVersion == 1, 'gauge schemaVersion == 1');
 assert(isempty(Ge.face.rotation), 'face.rotation empty in v1');
 assert(isempty(Ge.singularity.vertices), 'euclidean has no singularities');
+assert(isempty(Ge.singularity.indices), 'euclidean has no singularity indices');
 
 Gl = nxr_compute('gauge', h, 'levi-civita');
 assert(max(abs(Gl.vertex.rotation - 1)) < 1e-12, 'levi-civita rotation == 1');
