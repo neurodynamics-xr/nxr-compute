@@ -178,6 +178,23 @@ static bool readOperatorsFlag(const mxArray* opts) {
     return mxIsNumeric(f) && mxGetScalar(f) != 0.0;
 }
 
+// Parse the 'coupling' option out of an optional opts struct.
+// Reads opts.coupling string ('product'|'ambient'), default Ambient, throws on unknown.
+static nxr::manifold::ops::laplacian::connection::CovariantCoupling
+parseCoupling(const mxArray* opts) {
+    namespace cl = nxr::manifold::ops::laplacian::connection;
+    if (opts && mxIsStruct(opts)) {
+        const mxArray* f = mxGetField(opts, 0, "coupling");
+        if (f && mxIsChar(f)) {
+            std::string s = getStringArg(f);
+            if (s == "product") return cl::CovariantCoupling::Product;
+            if (s == "ambient") return cl::CovariantCoupling::Ambient;
+            throw std::invalid_argument("coupling must be 'product' or 'ambient'");
+        }
+    }
+    return cl::CovariantCoupling::Ambient;   // default
+}
+
 // ── create / destroy ─────────────────────────────────────────
 
 void cmdCreate(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
@@ -1133,13 +1150,20 @@ mxArray* buildGeometryOperators(ContextHolder& h) {
 }
 
 // type/opts mirror buildGaugeStruct; opts may carry singVerts/singValues for 'trivial'.
-mxArray* buildGaugeOperators(ContextHolder& h, const std::string& type, const mxArray* opts) {
+// coupling selects the covariant Laplacian variant (Product or Ambient, default Ambient).
+mxArray* buildGaugeOperators(ContextHolder& h, const std::string& type, const mxArray* opts,
+                              nxr::manifold::ops::laplacian::connection::CovariantCoupling coupling) {
     namespace cl = nxr::manifold::ops::laplacian::connection;
+    namespace conn = nxr::manifold::connection;
     cl::ConnectionLaplacianOptions o;
     o.domain = cl::ConnectionDomain::Vertex;
     o.nSym   = 1;
     o.format = cl::ConnectionLaplacianFormat::Complex;
     Eigen::SparseMatrix<std::complex<double>> K;
+
+    // Realized gauge grid: LC frame for euclidean/levi-civita; trivial rotates each row.
+    Eigen::MatrixXcd grid = nxr::manifold::geometry::vertexGrid(*h.ctx);
+
     if (type == "trivial") {
         if (!opts || !mxIsStruct(opts))
             throw std::invalid_argument("gauge('trivial') operators require singVerts/singValues in opts");
@@ -1152,8 +1176,14 @@ mxArray* buildGaugeOperators(ContextHolder& h, const std::string& type, const mx
             throw std::invalid_argument("singVerts and singValues length mismatch");
         std::map<int,double> sing;
         for (size_t i = 0; i < verts.size(); ++i) sing[verts[i]] = vals[static_cast<Eigen::Index>(i)];
+        // Compute trivial gauge rotations once; reuse both for K and for the realized grid.
+        conn::GaugeRotations gr =
+            conn::integrateTrivialGaugeRotations(*h.ctx, ensureDec(h), *h.cache, sing);
         auto clr = cl::assembleTrivialConnectionLaplacian(*h.ctx, sing, ensureDec(h), *h.cache, o);
         K = clr.K_complex;
+        // Apply per-vertex rotation to realize the trivial gauge frame.
+        for (int v = 0; v < static_cast<int>(grid.rows()); ++v)
+            grid.row(v) *= gr.vertex(v);
     } else if (type == "euclidean" || type == "levi-civita") {  // Levi-Civita connection Laplacian (clCache)
         ContextHolder::CLKey key{o.domain, o.nSym, o.regularization, o.format};
         auto it = h.clCache.find(key);
@@ -1163,12 +1193,20 @@ mxArray* buildGaugeOperators(ContextHolder& h, const std::string& type, const mx
             it = h.clCache.emplace(key, std::move(clp)).first;
         }
         K = it->second->K_complex;
+        // grid stays as the raw LC frame (rotation == 1 for levi-civita).
     } else {
         throw std::invalid_argument("unknown gauge type '" + type + "'");
     }
-    const char* f[] = {"laplacian"};
-    mxArray* s = mxCreateStructMatrix(1,1,1,f);
-    mxSetField(s,0,"laplacian", eigenComplexSparseToMx(K));
+
+    // Covariant 3-frame Laplacian.
+    const auto& cotanL = ensureOps(h).cotanLaplacian;
+    Eigen::SparseMatrix<double> covL =
+        cl::assembleCovariantLaplacian(coupling, K, grid, cotanL);
+
+    const char* f[] = {"laplacian", "covariantLaplacian"};
+    mxArray* s = mxCreateStructMatrix(1,1,2,f);
+    mxSetField(s,0,"laplacian",           eigenComplexSparseToMx(K));
+    mxSetField(s,0,"covariantLaplacian",  eigenSparseToMx(covL));
     return s;
 }
 
@@ -1254,7 +1292,7 @@ mxArray* buildGaugeStruct(ContextHolder& h, const std::string& type, const mxArr
 
     if (withOps) {
         int fn = mxAddField(s, "operators");
-        mxSetFieldByNumber(s, 0, fn, buildGaugeOperators(h, type, opts));
+        mxSetFieldByNumber(s, 0, fn, buildGaugeOperators(h, type, opts, parseCoupling(opts)));
     }
 
     return s;

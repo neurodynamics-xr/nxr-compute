@@ -61,6 +61,35 @@ assert(isequal(B.Gauge.operators.laplacian, Gl.operators.laplacian), 'bundle gau
 Gg2 = nxr_compute('geometry', h, struct('operators',true));
 assert(isequal(Gg2.operators.laplacian, Gg.operators.laplacian), 'operators deterministic/cached');
 
+% covariant (3-frame) Laplacian
+G = nxr_compute('geometry', h);                                % plain geometry — has vertex.grid
+nVc = nV;
+Lc3 = Gl.operators.covariantLaplacian;                        % default 'ambient', levi-civita
+assert(issparse(Lc3) && isequal(size(Lc3),[3*nVc 3*nVc]), 'covariantLaplacian 3N×3N sparse');
+assert(norm(Lc3 - Lc3','fro') < 1e-9, 'covariantLaplacian symmetric');
+
+% product == blkdiag(real-expand(K), cotanL), using already-exposed operators
+Gp = nxr_compute('gauge', h, 'levi-civita', struct('operators',true,'coupling','product'));
+Lp3 = Gp.operators.covariantLaplacian;
+Kc  = Gl.operators.laplacian;                                  % V×V complex (connection L)
+Lcot= Gg.operators.laplacian;                                  % V×V cotan (from geometry ops)
+ReK = real(Kc); ImK = imag(Kc);
+D = [ ReK, -ImK, sparse(nVc,nVc);
+      ImK,  ReK, sparse(nVc,nVc);
+      sparse(nVc,nVc), sparse(nVc,nVc), Lcot ];
+assert(norm(Lp3 - D, 'fro') < 1e-9, 'product == blkdiag(real-expand(K), cotanL)');
+
+% ambient world-form == kron(I3, cotanL) via the realized frame
+c = Gl.vertex.rotation .* G.vertex.grid;  % realized LC frame (rotation==1 for LC)
+e1 = real(c); e2 = imag(c); nrm = cross(e1, e2, 2);
+% block-diag frame Fbd (3N×3N), component-major [a;b;c]
+Fbd = [ spdiags(e1(:,1),0,nVc,nVc), spdiags(e2(:,1),0,nVc,nVc), spdiags(nrm(:,1),0,nVc,nVc);
+        spdiags(e1(:,2),0,nVc,nVc), spdiags(e2(:,2),0,nVc,nVc), spdiags(nrm(:,2),0,nVc,nVc);
+        spdiags(e1(:,3),0,nVc,nVc), spdiags(e2(:,3),0,nVc,nVc), spdiags(nrm(:,3),0,nVc,nVc) ];
+kronI3L = blkdiag(Lcot, Lcot, Lcot);
+assert(norm(Fbd*Lc3*Fbd' - kronI3L, 'fro') < 1e-9, 'ambient world-form == kron(I3, cotanL)');
+assert(norm(Lc3 - Lp3,'fro') > 1e-6, 'ambient differs from product');
+
 nxr_compute('destroy', h);
 fprintf('ALL TESTS PASSED: test_operators\n');
 end
