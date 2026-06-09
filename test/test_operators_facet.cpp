@@ -47,8 +47,35 @@ static void testLaplacianCotanGraph() {
     EXPECT(view.cotan().rows() == 12, "stored laplacian view is safe (holds Manifold&)");
 }
 
+static void testMassDecHodge() {
+    std::cout << "\n=== operators: dec/mass/hodge ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+    auto ops = m.operators();
+
+    EXPECT(ops.mass().lumped().rows() == 12, "mass.lumped [12,12]");
+    EXPECT(ops.mass().lumped().nonZeros() == 12, "mass.lumped is diagonal (12 nnz)");
+    EXPECT(ops.mass().galerkin().nonZeros() > 12, "mass.galerkin has off-diagonals");
+    // lumped mass sums to total area
+    double s = 0; auto Ml = ops.mass().lumped();
+    for (int k = 0; k < Ml.outerSize(); ++k)
+        for (Eigen::SparseMatrix<double>::InnerIterator it(Ml,k); it; ++it) s += it.value();
+    EXPECT(std::abs(s - m.lightGeometry().totalArea) < 1e-9, "lumped mass sums to total area");
+
+    const auto& dec = ops.dec();
+    EXPECT(dec.d0.rows() == 30 && dec.d0.cols() == 12, "dec.d0 [E,V] = [30,12]");
+    EXPECT(dec.d1.rows() == 20 && dec.d1.cols() == 30, "dec.d1 [F,E] = [20,30]");
+    EXPECT(ops.hodge().h1().rows() == 30, "hodge.h1 [E,E] = [30,30]");
+    // requesting mass.lumped only built the lumped slot, not galerkin (independent)
+    Manifold m2(V.data(), 12, F.data(), 20);
+    (void)m2.operators().mass().lumped();
+    EXPECT(m2.isOperatorCached(OperatorId::MassLumped) && !m2.isOperatorCached(OperatorId::MassGalerkin),
+           "mass.lumped did not build galerkin (independent)");
+}
+
 int main() {
     testLaplacianCotanGraph();
+    testMassDecHodge();
     std::cout << (g_failures ? "\nFAILURES\n" : "\nALL PASSED\n");
     return g_failures ? 1 : 0;
 }

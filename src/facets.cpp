@@ -136,6 +136,30 @@ const Eigen::SparseMatrix<double>& Manifold::graphLaplacianCached_() {
     return *cacheLaplacianGraph_;
 }
 
+// ── C2: Mass cache-fill helpers ───────────────────────────────────────────────
+// Each sources DIRECTLY from operatorGeometry()'s GC require* — completely
+// independent: requesting lumped NEVER triggers galerkin and vice-versa.
+
+const Eigen::SparseMatrix<double>& Manifold::massLumpedCached_() {
+    if (!cacheMassLumped_) {
+        auto& geom = operatorGeometry();
+        geom.requireVertexLumpedMassMatrix();
+        cacheMassLumped_ =
+            std::make_unique<Eigen::SparseMatrix<double>>(geom.vertexLumpedMassMatrix);
+    }
+    return *cacheMassLumped_;
+}
+
+const Eigen::SparseMatrix<double>& Manifold::massGalerkinCached_() {
+    if (!cacheMassGalerkin_) {
+        auto& geom = operatorGeometry();
+        geom.requireVertexGalerkinMassMatrix();
+        cacheMassGalerkin_ =
+            std::make_unique<Eigen::SparseMatrix<double>>(geom.vertexGalerkinMassMatrix);
+    }
+    return *cacheMassGalerkin_;
+}
+
 } // namespace nxr::manifold
 
 namespace nxr::manifold::facet {
@@ -192,5 +216,33 @@ const Eigen::SparseMatrix<double>& OperatorsFacet::LaplacianView::graph() const 
 
 // connection() and covariant() are declared in facets.h for Task C3.
 // They are not implemented in C1 — calling them will produce a link error.
+
+// ── C2: dec / mass / hodge bodies ────────────────────────────────────────────
+
+// dec(): returns the lazily-cached DECOperators bundle via Manifold::decOperators().
+const ops::DECOperators& OperatorsFacet::dec() const { return m_.decOperators(); }
+
+// MassView: each helper calls through to the independent private Manifold cache-fill.
+// Holds Manifold& m (C1 pattern) — never dangles.
+const Eigen::SparseMatrix<double>& OperatorsFacet::MassView::lumped()   const {
+    return m.massLumpedCached_();
+}
+const Eigen::SparseMatrix<double>& OperatorsFacet::MassView::galerkin() const {
+    return m.massGalerkinCached_();
+}
+
+// HodgeView: all four delegate through Manifold::decOperators() — the lazy DEC.
+const Eigen::SparseMatrix<double>& OperatorsFacet::HodgeView::h0()    const {
+    return m.decOperators().hodge0;
+}
+const Eigen::SparseMatrix<double>& OperatorsFacet::HodgeView::h1()    const {
+    return m.decOperators().hodge1;
+}
+const Eigen::SparseMatrix<double>& OperatorsFacet::HodgeView::h2()    const {
+    return m.decOperators().hodge2;
+}
+const Eigen::SparseMatrix<double>& OperatorsFacet::HodgeView::h1inv() const {
+    return m.decOperators().hodge1Inverse;
+}
 
 } // namespace nxr::manifold::facet

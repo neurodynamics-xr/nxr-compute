@@ -180,6 +180,12 @@ private:
     const Eigen::SparseMatrix<double>& cotanLaplacianCached_();
     const Eigen::SparseMatrix<double>& graphLaplacianCached_();
 
+    // Private cache-fill helpers for OperatorsFacet::MassView.
+    // Each sources DIRECTLY from operatorGeometry()'s GC require* — independent:
+    // requesting lumped NEVER builds galerkin and vice-versa.
+    const Eigen::SparseMatrix<double>& massLumpedCached_();
+    const Eigen::SparseMatrix<double>& massGalerkinCached_();
+
     friend class facet::OperatorsFacet;
     std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh>             mesh_;
     std::unique_ptr<geometrycentral::surface::VertexPositionGeometry>         geometry_;

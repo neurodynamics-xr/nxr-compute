@@ -108,7 +108,30 @@ public:
             ops::laplacian::connection::CovariantCoupling coupling) const;
     };
 
-    LaplacianView laplacian() { return LaplacianView{m_}; }
+    // ── Task C2: dec / mass / hodge ──────────────────────────────────────────
+    // Views hold Manifold& m (not OperatorsFacet&) — same C1 pattern;
+    // a stored view (auto v = m.operators().mass()) does not dangle.
+
+    struct MassView {
+        Manifold& m;
+        const Eigen::SparseMatrix<double>& lumped()   const;
+        const Eigen::SparseMatrix<double>& galerkin() const;
+    };
+
+    struct HodgeView {
+        Manifold& m;
+        const Eigen::SparseMatrix<double>& h0()    const;
+        const Eigen::SparseMatrix<double>& h1()    const;
+        const Eigen::SparseMatrix<double>& h2()    const;
+        const Eigen::SparseMatrix<double>& h1inv() const;
+    };
+
+    // dec(): returns the full DECOperators bundle {d0,d1,hodge0..2,hodge1Inverse}.
+    const ops::DECOperators& dec()  const;
+    MassView  mass()  const { return MassView{m_}; }
+    HodgeView hodge() const { return HodgeView{m_}; }
+
+    LaplacianView laplacian() const { return LaplacianView{m_}; }
 
 private:
     Manifold& m_;
