@@ -99,7 +99,7 @@ private:
     std::unique_ptr<geometrycentral::surface::VertexPositionGeometry> geometry_;
 };
 
-// Extrinsic Delaunay edge-flip normalization (geometry-central fixDelaunay).
+// Extrinsic Delaunay edge-flip repair (geometry-central fixDelaunay).
 // Flips edges in place — same vertices (positions/count/indices), new faces.
 // Best-effort PSD (reduces obtuse/negative cotan weights), not a certificate;
 // the intrinsic-Delaunay certificate is a separate facility. Input must be a
@@ -108,7 +108,7 @@ struct DelaunayNormalization {
     Eigen::MatrixXi faces;  // [nF, 3] 0-based, re-triangulated; same vertex indices
     int flips = 0;          // edge flips performed (0 => already Delaunay)
 };
-DelaunayNormalization normalizeDelaunay(
+DelaunayNormalization fixDelaunay(
     const double* vertices, int nV, const int32_t* faces, int nF);
 
 } // namespace nxr::manifold

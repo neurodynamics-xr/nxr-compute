@@ -9,7 +9,7 @@ namespace nxr::manifold {
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
 
-DelaunayNormalization normalizeDelaunay(
+DelaunayNormalization fixDelaunay(
     const double* vertices, int nV, const int32_t* faces, int nF) {
 
     std::vector<std::vector<size_t>> polygons(nF);

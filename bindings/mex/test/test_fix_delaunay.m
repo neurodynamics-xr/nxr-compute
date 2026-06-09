@@ -1,5 +1,5 @@
-function test_normalize
-fprintf('[test_normalize] starting\n');
+function test_fix_delaunay
+fprintf('[test_fix_delaunay] starting\n');
 thisDir  = fileparts(mfilename('fullpath'));
 repoRoot = fullfile(thisDir, '..', '..', '..');
 hits = dir(fullfile(repoRoot, 'build', '**', ['nxr_compute.' mexext]));
@@ -8,7 +8,7 @@ assert(~isempty(hits), 'mex not found'); addpath(hits(1).folder); clear nxr_comp
 % thin quad, split along the long diagonal (1-2 in 1-based) -> must flip
 V = [0 0 0; 2 0 0; 1 0.2 0; 1 -0.2 0];
 F = [1 3 2; 1 2 4];            % 1-based; shared edge 1-2 (the long diagonal)
-[V2, F2, n] = nxr_compute('normalize', V, F);
+[V2, F2, n] = nxr_compute('fixDelaunay', V, F);
 assert(isequal(V2, V), 'vertices unchanged');
 assert(n == 1, 'one flip');
 assert(isequal(size(F2), size(F)), 'same #faces');
@@ -20,11 +20,11 @@ assert(hasEdge(F2,3,4),  'short diagonal present');
 
 % already-Delaunay icosahedron -> 0 flips
 [Vi, Fi] = local_icosahedron();
-[~, Fi2, ni] = nxr_compute('normalize', Vi, Fi);
+[~, Fi2, ni] = nxr_compute('fixDelaunay', Vi, Fi);
 assert(ni == 0, 'icosahedron already Delaunay');
 assert(isequal(sortrows(sort(Fi2,2)), sortrows(sort(Fi,2))), 'faces unchanged as a set');
 
-fprintf('ALL TESTS PASSED: test_normalize\n');
+fprintf('ALL TESTS PASSED: test_fix_delaunay\n');
 end
 
 function [V, F] = local_icosahedron()
