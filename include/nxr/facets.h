@@ -112,8 +112,11 @@ public:
 
         // Declared; implemented in Task C3.
         const Eigen::SparseMatrix<std::complex<double>>& connection() const;
+        // Default coupling is Ambient — the full 3D-frame embedded covariant.
+        // Product (intrinsic connection on the tangent block) is opt-in.
         const Eigen::SparseMatrix<double>& covariant(
-            ops::laplacian::connection::CovariantCoupling coupling) const;
+            ops::laplacian::connection::CovariantCoupling coupling =
+                ops::laplacian::connection::CovariantCoupling::Ambient) const;
     };
 
     // ── Task C2: dec / mass / hodge ──────────────────────────────────────────

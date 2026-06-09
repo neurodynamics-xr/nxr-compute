@@ -196,12 +196,24 @@ const Eigen::SparseMatrix<double>& Manifold::covariantLaplacianCached_(
     if (!cacheLaplacianCovariant_ ||
         cachedCovariantCoupling_ != static_cast<int>(coupling)) {
         namespace cl = ops::laplacian::connection;
-        const auto& K      = connectionLaplacianCached_();       // active-gauge complex K
         Eigen::MatrixXcd g  = gauge().grid();                     // realized active-gauge frame
         const auto& cotanL = cotanLaplacianCached_();             // real cotan Laplacian
-        cacheLaplacianCovariant_ =
-            std::make_unique<Eigen::SparseMatrix<double>>(
-                cl::assembleCovariantLaplacian(coupling, K, g, cotanL));
+        // The Ambient covariant (the default 3D-frame view) is built purely from
+        // the frames + scalar weights and does NOT use the connection Laplacian K
+        // (frame-conjugate of kron(I3, cotanL)). Only the Product coupling — which
+        // puts the intrinsic connection on the tangent block — needs K, so we skip
+        // the connection assembly (incl. the trivial-gauge Poisson solve) otherwise.
+        if (coupling == cl::CovariantCoupling::Product) {
+            const auto& K = connectionLaplacianCached_();
+            cacheLaplacianCovariant_ =
+                std::make_unique<Eigen::SparseMatrix<double>>(
+                    cl::assembleCovariantLaplacian(coupling, K, g, cotanL));
+        } else {
+            const Eigen::SparseMatrix<std::complex<double>> noK;  // unused by Ambient
+            cacheLaplacianCovariant_ =
+                std::make_unique<Eigen::SparseMatrix<double>>(
+                    cl::assembleCovariantLaplacian(coupling, noK, g, cotanL));
+        }
         cachedCovariantCoupling_ = static_cast<int>(coupling);
     }
     return *cacheLaplacianCovariant_;

@@ -12,10 +12,18 @@ Eigen::SparseMatrix<double> assembleCovariantLaplacian(
     const Eigen::SparseMatrix<double>& cotanL) {
 
     const int N = static_cast<int>(cotanL.rows());
-    if (K.rows() != N || K.cols() != N || gaugeGrid.rows() != N || gaugeGrid.cols() != 3 || cotanL.cols() != N) {
+    if (gaugeGrid.rows() != N || gaugeGrid.cols() != 3 || cotanL.cols() != N) {
         throw Error(ErrorCode::InvalidInput,
-            "assembleCovariantLaplacian: K, gaugeGrid, cotanL dimensions disagree",
-            "Expected K [N×N] complex, gaugeGrid [N×3] complex, cotanL [N×N] real for a single N.");
+            "assembleCovariantLaplacian: gaugeGrid / cotanL dimensions disagree",
+            "Expected gaugeGrid [N×3] complex, cotanL [N×N] real for a single N.");
+    }
+    // K is only consumed by the Product coupling (intrinsic connection on the
+    // tangent block). Ambient is built from frames + weights alone and ignores K,
+    // so it accepts an empty K — only validate K when it's actually used.
+    if (coupling == CovariantCoupling::Product && (K.rows() != N || K.cols() != N)) {
+        throw Error(ErrorCode::InvalidInput,
+            "assembleCovariantLaplacian: K dimensions disagree (Product coupling)",
+            "Product coupling needs the connection Laplacian K [N×N] complex.");
     }
     std::vector<Eigen::Triplet<double>> T;
 

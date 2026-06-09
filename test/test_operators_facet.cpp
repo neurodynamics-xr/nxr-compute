@@ -125,6 +125,24 @@ static void testCovariantCouplingCacheKey() {
     // Re-requesting Product returns the Product matrix again (rebuild on mismatch).
     Eigen::SparseMatrix<double> Cp2 = m.operators().laplacian().covariant(cl::CovariantCoupling::Product);
     EXPECT((Cp2 - Cp).norm() < 1e-12, "re-request of product coupling is stable");
+
+    // Ambient is the default coupling (full 3D-frame embedded covariant).
+    Manifold md(V.data(), 12, F.data(), 20);
+    Eigen::SparseMatrix<double> Cdef = md.operators().laplacian().covariant();   // no arg
+    Eigen::SparseMatrix<double> Camb = md.operators().laplacian().covariant(cl::CovariantCoupling::Ambient);
+    EXPECT((Cdef - Camb).norm() < 1e-12, "default covariant() == Ambient");
+
+    // Ambient must NOT build the connection Laplacian K (it ignores it) — the
+    // intrinsic connection assembly is skipped for the 3D-frame view.
+    Manifold ma(V.data(), 12, F.data(), 20);
+    (void)ma.operators().laplacian().covariant(cl::CovariantCoupling::Ambient);
+    EXPECT(!ma.isOperatorCached(OperatorId::LaplacianConnection),
+           "Ambient covariant does not build the connection Laplacian (no wasted K)");
+    // Product DOES build K (it puts the intrinsic connection on the tangent block).
+    Manifold mp(V.data(), 12, F.data(), 20);
+    (void)mp.operators().laplacian().covariant(cl::CovariantCoupling::Product);
+    EXPECT(mp.isOperatorCached(OperatorId::LaplacianConnection),
+           "Product covariant builds the connection Laplacian (needs K)");
 }
 
 static double minEigReal(const Eigen::SparseMatrix<double>& K) {
