@@ -123,6 +123,17 @@ design: `docs/superpowers/specs/2026-06-08-vector-laplacian-3d-design.md`). Ligh
 by default (no flag ⇒ byte-identical, no `.operators` field). `MeshData` and
 `Gauge.face.rotation` remain deferred.
 
+**Mesh quality / PSD note.** All operators use geometry-central's raw signed cotan
+weights (matching GC), so on non-Delaunay meshes (obtuse triangles — common on
+FreeSurfer cortex) the cotan / connection / covariant Laplacians can be *indefinite*.
+`nxr_compute('fixDelaunay', V, F) → [V, F']` is a stateless utility that flips edges
+to (extrinsic) Delaunay (`nxr::manifold::fixDelaunay` → GC `fixDelaunay`); same
+vertices, new faces, best-effort PSD (not certified — extrinsic flips perturb the
+surface and needn't fully converge). The *certified*-PSD path is intrinsic-Delaunay
+context normalization (geodesic edges; `SignpostIntrinsicTriangulation::flipToDelaunay`),
+deferred. Design: `docs/superpowers/specs/2026-06-09-normalize-delaunay-design.md`.
+(Note `normalize` is the unrelated eigenvector M-orthonormalization, not a mesh op.)
+
 ---
 
 ## C++ API Surface
