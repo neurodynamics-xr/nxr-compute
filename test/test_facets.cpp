@@ -1,4 +1,6 @@
 #include "nxr/facets.h"
+#include "geometrycentral/surface/manifold_surface_mesh.h"
+#include "geometrycentral/surface/vertex_position_geometry.h"
 #include <Eigen/Geometry>
 #include <cmath>
 #include <iostream>
@@ -57,9 +59,31 @@ static void testEmbeddedFacet() {
     EXPECT(std::abs(nFromGrid.norm() - 1.0) < 1e-9, "Re(c) x Im(c) is unit normal");
 }
 
+static void testIntrinsicFacet() {
+    std::cout << "\n=== facets: intrinsic ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+    auto in = m.intrinsic();
+    EXPECT(in.vertex().dualArea().size() == 12, "vertex.dualArea [12]");
+    EXPECT(in.vertex().angleSum().size() == 12, "vertex.angleSum [12]");
+    EXPECT(in.edge().length().size() == 30, "edge.length [30]");
+    EXPECT(in.edge().cotanWeight().size() == 30, "edge.cotanWeight [30]");
+    EXPECT(in.halfedge().transportAlong().size() == 60, "halfedge.transportAlong [60]");
+    EXPECT(in.halfedge().transportAcross().size() == 60, "halfedge.transportAcross [60]");
+    EXPECT(in.halfedge().cotanWeight().size() == 60, "halfedge.cotanWeight [60]");
+    // dual areas sum to total area (closed mesh)
+    EXPECT(std::abs(in.vertex().dualArea().sum() - m.lightGeometry().totalArea) < 1e-9, "dualArea sums to totalArea");
+    // facet-identity: intrinsic.edge.length matches a direct GC require
+    auto& g = m.operatorGeometry(); g.requireEdgeLengths();
+    Eigen::VectorXd direct(30);
+    for (auto edge : m.mesh().edges()) direct(edge.getIndex()) = g.edgeLengths[edge];
+    EXPECT((in.edge().length() - direct).cwiseAbs().maxCoeff() < 1e-12, "edge.length == GC edgeLengths");
+}
+
 int main() {
     testTopologyFacet();
     testEmbeddedFacet();
+    testIntrinsicFacet();
     std::cout << (g_failures ? "\nFAILURES\n" : "\nALL PASSED\n");
     return g_failures ? 1 : 0;
 }

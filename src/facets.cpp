@@ -22,6 +22,7 @@ const Eigen::MatrixXi& Manifold::faces() const { return faces_; }
 
 facet::TopologyFacet  Manifold::topology()  { return facet::TopologyFacet(*this); }
 facet::EmbeddedFacet  Manifold::embedded()  { return facet::EmbeddedFacet(*this); }
+facet::IntrinsicFacet Manifold::intrinsic() { return facet::IntrinsicFacet(*this); }
 
 } // namespace nxr::manifold
 
@@ -40,4 +41,12 @@ Eigen::MatrixXcd EmbeddedFacet::VertexView::grid()     const { return m.lightGeo
 Eigen::MatrixXd  EmbeddedFacet::FaceView::normal()     const { return geometry::frames(m).normals; }
 Eigen::MatrixXcd EmbeddedFacet::FaceView::grid()       const { return m.lightGeometry().faceGrid; }
 Eigen::MatrixXd  EmbeddedFacet::FaceView::centroid()   const { return m.lightGeometry().faceCentroids; }
+
+Eigen::VectorXd  IntrinsicFacet::VertexView::dualArea() const { return m.lightGeometry().vertexDualAreas; }
+Eigen::VectorXd  IntrinsicFacet::VertexView::angleSum() const { return m.lightGeometry().vertexAngleSums; }
+Eigen::VectorXd  IntrinsicFacet::EdgeView::length()       const { return m.lightGeometry().edgeLengths; }
+Eigen::VectorXd  IntrinsicFacet::EdgeView::cotanWeight()  const { return m.lightGeometry().edgeCotanWeights; }
+Eigen::VectorXd  IntrinsicFacet::HalfedgeView::cotanWeight()     const { return m.lightGeometry().halfedgeCotanWeights; }
+Eigen::VectorXcd IntrinsicFacet::HalfedgeView::transportAlong()  const { return m.lightGeometry().halfedgeTransportAlong; }
+Eigen::VectorXcd IntrinsicFacet::HalfedgeView::transportAcross() const { return m.lightGeometry().halfedgeTransportAcross; }
 } // namespace nxr::manifold::facet
