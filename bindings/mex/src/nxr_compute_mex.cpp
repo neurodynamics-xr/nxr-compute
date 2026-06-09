@@ -1148,11 +1148,13 @@ mxArray* buildGaugeOperators(ContextHolder& h, const std::string& type, const mx
         if (!fv || !fi) throw std::invalid_argument("opts needs singVerts and singValues");
         std::vector<int> verts = mxToVertexIndices(fv);
         Eigen::VectorXd  vals  = mxToEigenVector(fi);
+        if (static_cast<size_t>(vals.size()) != verts.size())
+            throw std::invalid_argument("singVerts and singValues length mismatch");
         std::map<int,double> sing;
         for (size_t i = 0; i < verts.size(); ++i) sing[verts[i]] = vals[static_cast<Eigen::Index>(i)];
         auto clr = cl::assembleTrivialConnectionLaplacian(*h.ctx, sing, ensureDec(h), *h.cache, o);
         K = clr.K_complex;
-    } else {  // euclidean / levi-civita → Levi-Civita connection Laplacian (clCache)
+    } else if (type == "euclidean" || type == "levi-civita") {  // Levi-Civita connection Laplacian (clCache)
         ContextHolder::CLKey key{o.domain, o.nSym, o.regularization, o.format};
         auto it = h.clCache.find(key);
         if (it == h.clCache.end()) {
@@ -1161,6 +1163,8 @@ mxArray* buildGaugeOperators(ContextHolder& h, const std::string& type, const mx
             it = h.clCache.emplace(key, std::move(clp)).first;
         }
         K = it->second->K_complex;
+    } else {
+        throw std::invalid_argument("unknown gauge type '" + type + "'");
     }
     const char* f[] = {"laplacian"};
     mxArray* s = mxCreateStructMatrix(1,1,1,f);

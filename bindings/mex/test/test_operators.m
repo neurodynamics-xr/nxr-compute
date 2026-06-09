@@ -11,6 +11,10 @@ h = nxr_compute('create', V, F);
 % light by default: no operators field
 G0 = nxr_compute('geometry', h);
 assert(~isfield(G0,'operators'), 'geometry light by default');
+T0 = nxr_compute('topology', h);
+assert(~isfield(T0,'operators'), 'topology light by default');
+Gl0 = nxr_compute('gauge', h, 'levi-civita');
+assert(~isfield(Gl0,'operators'), 'gauge light by default');
 
 % topology operators
 T = nxr_compute('topology', h, struct('operators',true));
@@ -32,6 +36,11 @@ assert(isequal(size(Gg.operators.hodge.h1),[nE nE]), 'h1 E×E');
 % cross-surface identity: cotan == d0' * h1 * d0
 d0 = T.operators.dec.d0; h1 = Gg.operators.hodge.h1;
 assert(max(max(abs(Lc - d0'*h1*d0))) < 1e-9, 'cotan == d0''*h1*d0');
+assert(isequal(size(Gg.operators.mass.lumped),[nV nV]), 'mass.lumped V×V');
+assert(isequal(size(Gg.operators.mass.galerkin),[nV nV]), 'mass.galerkin V×V');
+assert(isequal(size(Gg.operators.hodge.h0),[nV nV]), 'h0 V×V');
+assert(isequal(size(Gg.operators.hodge.h2),[nF nF]), 'h2 F×F');
+assert(isequal(size(Gg.operators.hodge.h1inv),[nE nE]), 'h1inv E×E');
 
 % gauge operators (levi-civita vs trivial differ; complex Hermitian)
 Gl = nxr_compute('gauge', h, 'levi-civita', struct('operators',true));
@@ -48,6 +57,9 @@ assert(norm(Kt - Kl,'fro') > 1e-6, 'trivial differs from levi-civita');
 B = nxr_compute('bundle', h, 'levi-civita', struct('operators',true));
 assert(isequal(B.Topology.operators.laplacian, T.operators.laplacian), 'bundle topo ops match');
 assert(isequal(B.Geometry.operators.laplacian, Gg.operators.laplacian), 'bundle geo ops match');
+assert(isequal(B.Gauge.operators.laplacian, Gl.operators.laplacian), 'bundle gauge ops match');
+Gg2 = nxr_compute('geometry', h, struct('operators',true));
+assert(isequal(Gg2.operators.laplacian, Gg.operators.laplacian), 'operators deterministic/cached');
 
 nxr_compute('destroy', h);
 fprintf('ALL TESTS PASSED: test_operators\n');
