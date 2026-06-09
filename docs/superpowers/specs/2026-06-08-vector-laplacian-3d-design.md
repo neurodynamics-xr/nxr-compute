@@ -84,8 +84,12 @@ so `L3_ambient = blockdiag(F)ᵀ · kron(I₃, L_cotan) · blockdiag(F)`. The
 tangent↔normal coupling falls out of the relative frame rotation `F_iᵀF_j` exactly
 — no shape-operator discretization. Symmetric PSD by construction (orthogonal
 conjugation of a PSD matrix). The gauge only changes coordinates: the spectrum is
-gauge-invariant, and the tangent `(a,b)` block equals the gauge connection
-Laplacian (since `L_cotan[i,j]·(F_iᵀF_j)|_tangent = −w_ij ρ_ij = K[i,j]`).
+gauge-invariant. *Continuum note:* the tangent `(a,b)` sub-block is the
+**extrinsic** frame-transport Laplacian `L_cotan[i,j]·(F_iᵀF_j)|_{tangent}`, which
+converges to the intrinsic connection Laplacian `K` under refinement but is **not**
+discretely equal to geometry-central's `K` (whose transport is angle-based, not the
+3D frame dot-product) — on a coarse curved mesh they differ. So the ambient tangent
+block is verified by self-consistency with the ambient formula, not by equality to `K`.
 
 **product** — the Laplacian of the product connection `∇^{TM} ⊕ ∇^{NM}`, coupling
 removed:
@@ -93,9 +97,11 @@ removed:
     L3_product  =  blkdiag( [[Re K, −Im K],[Im K, Re K]] , L_cotan )
 ```
 Block-diagonal; tangent and normal decoupled. Gauge-dependent (`K` differs LC vs
-trivial). `ambient − product` is the pure coupling (the `(a,c)`/`(b,c)` blocks plus
-the normal-block curvature reweighting `L_ij·(n_iᵀn_j)` vs `L_ij`); it vanishes on a
-flat patch (where `F_iᵀF_j = I`) and grows with curvature.
+trivial). `ambient − product` differs in the `(a,c)`/`(b,c)` coupling blocks, the
+normal-block curvature reweighting (`L_ij·(n_iᵀn_j)` vs `L_ij`), and — discretely —
+the tangent block itself (extrinsic frame transport in `ambient` vs intrinsic `K` in
+`product`). All these vanish on a flat patch (where `F_iᵀF_j = I` and the two
+transports coincide) and grow with curvature.
 
 Both returned in frame coords, block layout `[a; b; c] = [Re z; Im z; normal]`.
 
@@ -135,8 +141,10 @@ cache).
     blockdiag(F)ᵀ == kron(I₃, L_cotan)` to machine precision (the defining anchor).
   - **product blkdiag identity (exact):** `L3_product == blkdiag(real-expand(K),
     L_cotan)`.
-  - **ambient tangent block == K:** the `(a,b)` 2N sub-block of `L3_ambient`
-    equals `real-expand(K)` (exact, for the matching gauge).
+  - **ambient tangent self-consistency (exact):** the `(a,b)` 2N sub-block of
+    `L3_ambient` equals `L_cotan[i,j]·(F_iᵀF_j)|_{tangent}` (the ambient formula
+    restricted to tangent) — *not* `real-expand(K)`, which differs discretely
+    (extrinsic frame transport vs geometry-central's intrinsic angle-based `K`).
   - `ambient ≠ product` on the curved icosphere (non-zero coupling); they coincide
     in the flat limit.
 - **MATLAB** (`bindings/mex/test/test_operators.m`):
@@ -157,7 +165,7 @@ cache).
 | 4 | coupling | `product` (blkdiag) or `ambient` (shape-operator); default `ambient` |
 | 5 | ambient assembly | `L3[i,j] = L_cotan[i,j]·(F_iᵀF_j)` = frame-conjugate of `kron(I₃,L_cotan)`; coupling exact (no discretization) |
 | 6 | schema home | `Gauge.operators.covariantLaplacian`, opt-in via `operators=true`; `coupling` opt |
-| 7 | validation | ambient world-form `== kron(I₃,L_cotan)` (exact); product `== blkdiag(real-expand(K),L_cotan)` (exact); ambient tangent block `== K` |
+| 7 | validation | ambient world-form `== kron(I₃,L_cotan)` (exact); product `== blkdiag(real-expand(K),L_cotan)` (exact); ambient tangent block self-consistent with the formula (extrinsic transport, ≠ intrinsic `K` discretely) |
 
 ## 8. Deferred
 
