@@ -190,7 +190,11 @@ const Eigen::SparseMatrix<std::complex<double>>& Manifold::connectionLaplacianCa
 
 const Eigen::SparseMatrix<double>& Manifold::covariantLaplacianCached_(
         ops::laplacian::connection::CovariantCoupling coupling) {
-    if (!cacheLaplacianCovariant_) {
+    // Rebuild when the slot is empty OR the cached coupling differs — the two
+    // couplings (Product / Ambient) produce different matrices, so the cache
+    // must key on the coupling, not just on presence.
+    if (!cacheLaplacianCovariant_ ||
+        cachedCovariantCoupling_ != static_cast<int>(coupling)) {
         namespace cl = ops::laplacian::connection;
         const auto& K      = connectionLaplacianCached_();       // active-gauge complex K
         Eigen::MatrixXcd g  = gauge().grid();                     // realized active-gauge frame
@@ -198,6 +202,7 @@ const Eigen::SparseMatrix<double>& Manifold::covariantLaplacianCached_(
         cacheLaplacianCovariant_ =
             std::make_unique<Eigen::SparseMatrix<double>>(
                 cl::assembleCovariantLaplacian(coupling, K, g, cotanL));
+        cachedCovariantCoupling_ = static_cast<int>(coupling);
     }
     return *cacheLaplacianCovariant_;
 }

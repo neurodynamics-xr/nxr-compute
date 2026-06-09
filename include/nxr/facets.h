@@ -33,6 +33,14 @@ private:
     Manifold& m_;
 };
 
+// NOTE (intrinsic-Delaunay scope): the intrinsic facet DATA below slices from
+// the embedded-sourced light geometry bundle, so under intrinsicDelaunay=true it
+// is NOT swapped to the Delaunay metric — it stays consistent with the input
+// embedding. The intrinsic OPERATORS (operators().laplacian().cotan(), mass) DO
+// source from operatorGeometry() and are certified-PSD under normalization. So
+// edge().cotanWeight() here can differ from the weights backing the cotan
+// operator when normalized. Routing this data through operatorGeometry() is
+// deferred to the fully-intrinsic Phase 3.
 class IntrinsicFacet {
 public:
     explicit IntrinsicFacet(Manifold& m) : m_(m) {}

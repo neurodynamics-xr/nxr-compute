@@ -172,6 +172,10 @@ private:
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheLaplacianGraph_;
     std::unique_ptr<Eigen::SparseMatrix<std::complex<double>>>           cacheLaplacianConnection_;
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheLaplacianCovariant_;
+    // Coupling the covariant cache was built with (as int, since CovariantCoupling
+    // is only forward-declared here) — rebuild on mismatch so covariant(Product)
+    // and covariant(Ambient) on one handle never alias. -1 = nothing cached yet.
+    int                                                                  cachedCovariantCoupling_ = -1;
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheMassLumped_;
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheMassGalerkin_;
 

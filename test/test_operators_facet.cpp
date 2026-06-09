@@ -113,10 +113,44 @@ static void testConnectionCovariant() {
     EXPECT((Ktri - Klc).norm() > 1e-6, "connection rebuilt for new gauge after setGauge (not stale)");
 }
 
+static void testCovariantCouplingCacheKey() {
+    std::cout << "\n=== operators: covariant cache keys on coupling ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+    namespace cl = ops::laplacian::connection;
+    // Request Product then Ambient on the SAME instance — must NOT alias.
+    Eigen::SparseMatrix<double> Cp = m.operators().laplacian().covariant(cl::CovariantCoupling::Product);
+    Eigen::SparseMatrix<double> Ca = m.operators().laplacian().covariant(cl::CovariantCoupling::Ambient);
+    EXPECT((Cp - Ca).norm() > 1e-6, "product covariant != ambient covariant (cache keys on coupling)");
+    // Re-requesting Product returns the Product matrix again (rebuild on mismatch).
+    Eigen::SparseMatrix<double> Cp2 = m.operators().laplacian().covariant(cl::CovariantCoupling::Product);
+    EXPECT((Cp2 - Cp).norm() < 1e-12, "re-request of product coupling is stable");
+}
+
+static double minEigReal(const Eigen::SparseMatrix<double>& K) {
+    Eigen::MatrixXd dense(K);
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(dense);
+    return es.eigenvalues().minCoeff();
+}
+
+static void testOperatorsUnderIntrinsicDelaunay() {
+    std::cout << "\n=== operators: certified-PSD cotan under intrinsicDelaunay ===\n";
+    // Non-Delaunay rhombus (long-diagonal split): raw cotan is indefinite,
+    // intrinsic-Delaunay normalization makes the cotan operator PSD.
+    std::vector<double>  V = {0,0,0,  2,0,0,  1,0.2,0,  1,-0.2,0};
+    std::vector<int32_t> F = {0,2,1,  0,1,3};
+    Manifold mN(V.data(), 4, F.data(), 2, /*intrinsicDelaunay=*/true);
+    const auto& L = mN.operators().laplacian().cotan();   // sources from operatorGeometry()
+    EXPECT(L.rows() == 4, "normalized cotan operator [4,4]");
+    EXPECT(minEigReal(L) > -1e-9, "operators().laplacian().cotan() is PSD under intrinsicDelaunay");
+}
+
 int main() {
     testLaplacianCotanGraph();
     testMassDecHodge();
     testConnectionCovariant();
+    testCovariantCouplingCacheKey();
+    testOperatorsUnderIntrinsicDelaunay();
     std::cout << (g_failures ? "\nFAILURES\n" : "\nALL PASSED\n");
     return g_failures ? 1 : 0;
 }
