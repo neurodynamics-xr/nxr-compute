@@ -40,7 +40,7 @@ struct DelaunayNormalization {
     Eigen::MatrixXi faces;  // [nF, 3] 0-based, re-triangulated; same vertex indices
     int flips;              // number of edge flips performed (0 ⇒ already Delaunay)
 };
-DelaunayNormalization normalizeDelaunay(
+DelaunayNormalization fixDelaunay(
     const double* vertices, int nV, const int32_t* faces, int nF);
 ```
 Builds `ManifoldSurfaceMesh(polygons)` + `VertexPositionGeometry` exactly as the
@@ -49,10 +49,13 @@ Builds `ManifoldSurfaceMesh(polygons)` + `VertexPositionGeometry` exactly as the
 via `mesh.getFaceVertexList()` into `faces` (0-based). Vertices are untouched, so the
 caller keeps `V`.
 
-**MEX** — stateless command (no handle), added to the dispatch chain:
+**MEX** — stateless command (no handle), added to the dispatch chain. NOTE: the
+command is `fixDelaunay`, **not** `normalize` — `normalize` is the pre-existing
+eigenvector M-orthonormalization (`nxr_compute('normalize', U, M)`); a distinct name
+avoids overloading two unrelated operations.
 ```matlab
-[V2, F2]          = nxr_compute('normalize', V, F);   % V2 == V (passthrough)
-[V2, F2, nFlips]  = nxr_compute('normalize', V, F);   % optional flip count
+[V2, F2]          = nxr_compute('fixDelaunay', V, F);   % V2 == V (passthrough)
+[V2, F2, nFlips]  = nxr_compute('fixDelaunay', V, F);   % optional flip count
 ```
 - `V`/`F` are 1-based MATLAB inputs (parsed via `mxToVertexBuffer` / `mxToFaceBuffer`,
   which convert faces 1-based → 0-based).
