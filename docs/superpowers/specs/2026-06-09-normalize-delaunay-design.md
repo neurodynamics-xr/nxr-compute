@@ -62,17 +62,20 @@ caller keeps `V`.
 
 ## 4. Test plan
 
-- **Native** (`test/test_geometry_bundle.cpp` or a new `test_normalize.cpp`):
-  fixture = a thin rectangle (4 vertices: `(0,0,0),(3,0,0),(3,1,0),(0,1,0)`) split
-  along the **long** diagonal `(0–2)` — the non-Delaunay diagonal. Assert:
-  - `flips == 1` (the long diagonal is flipped to the short `(1–3)`).
-  - result is a valid 4-vertex / 2-face / 5-edge manifold (counts unchanged).
-  - the output faces use the **short** diagonal (vertices 1 and 3 now share an edge;
-    no face contains both 0 and 2 as the shared diagonal). Concretely: after
-    normalization, every edge's cotan weight `≥ 0` (assemble the cotan Laplacian on
-    the normalized faces and check, or check the two new triangles are the
-    short-diagonal split).
-  - on the icosphere (already Delaunay): `flips == 0` and faces unchanged (as a set).
+- **Native** (`test/test_normalize.cpp`): fixture = a thin **rhombus** (4 vertices
+  `(0,0,0),(2,0,0),(1,0.2,0),(1,-0.2,0)`) split along the **long** diagonal `0–1`
+  (the far-apart vertices at x=0 and x=2) — the non-Delaunay split, whose opposite
+  angles sum to ≫ 180° (a near-degenerate obtuse triangle). NOTE: a *rectangle* is
+  a poor fixture here — its diagonals are equal-length (cocircular), so the flip is
+  ambiguous; the rhombus is unambiguous. Assert:
+  - `flips == 1` (the long diagonal `0–1` is flipped to the short `2–3`).
+  - 2 triangles preserved; exactly the 4 vertex indices `{0,1,2,3}` appear.
+  - output uses the **short** diagonal: no face contains both `0` and `1`; some face
+    contains both `2` and `3`.
+  - **cotan-weight improvement (the PSD point):** the *input* cotan Laplacian has a
+    negative edge weight (positive off-diagonal entry) on `0–1`; the *normalized*
+    output's cotan Laplacian has all off-diagonals `≤ tol` (all weights `≥ 0`).
+  - on the icosphere (already Delaunay): `flips == 0` and faces unchanged as a set.
 - **MATLAB** (`bindings/mex/test/test_normalize.m`):
   - thin-rectangle: `[V2,F2,n] = nxr_compute('normalize', V, F)` → `isequal(V2,V)`,
     `n == 1`, `size(F2) == size(F)`, and `F2` differs from `F`.
