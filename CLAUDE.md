@@ -96,6 +96,7 @@ coordinate system for MEG leadfield analysis (design:
 | `nxr_compute('geometry', h)` | light per-element geometry; frames are the complex `grid` (`c = e1+i·e2`, normal = `real×imag`); curvature is the 2-RoSy deviatoric `q` + `meanCurvature` |
 | `nxr_compute('gauge', h, type[, opts])` | gauge as a transform of the Levi-Civita grid: `euclidean`/`levi-civita`/`trivial` (only `trivial` carries `vertex.rotation` + singularities) |
 | `nxr_compute('bundle', h, gaugeType[, opts])` | `{Topology, Geometry, Gauge}` in one call |
+| `nxr_compute('operators', h, family[, subtype])` | a single named operator as native sparse — `laplacian` (`cotan`/`graph`/`connection`/`covariant`), `mass` (`lumped`/`galerkin`), `hodge` (`h0`/`h1`/`h2`/`h1inv`), `dec` (struct `{d0,d1}`); `connection` is complex. Same matrix the internal solvers use (single source of truth). |
 
 Library backing (all in `nxr::manifold`): `geometry::vertexGrid`/`faceGrid`,
 `geometry::vertexCurvature`, `geometry::meshTopology`, `geometry::meshGeometry`,
@@ -148,6 +149,26 @@ domains, and the light `Topology`/`Geometry` bundle — so under normalization t
 identity `cotanL == d0ᵀ★₁d0` does not hold. Designs:
 `docs/superpowers/specs/2026-06-09-intrinsic-delaunay-phase{1,2}-design.md`.
 (Note `normalize` is the unrelated eigenvector M-orthonormalization, not a mesh op.)
+
+**Manifold geometry facets (C++).** `Manifold` exposes a GC-faithful, embedding-rooted
+facet layer (`include/nxr/facets.h`, `src/facets.cpp`; design/plan
+`docs/superpowers/{specs,plans}/2026-06-09-manifold-geometry-facets*`): typed views
+`topology()/embedded()/intrinsic()/extrinsic()` (per-element *data*, element-first —
+e.g. `embedded().vertex().grid()`, `intrinsic().edge().cotanWeight()`), `gauge()`
+(frame *transforms*), and `operators()` (assembled *matrices*). Raw-input aliases
+`vertexPositions()`/`faces()`. Additive — the existing `mesh()/geometry()/operatorGeometry()`
+accessors are unchanged; data facets slice a lazily-cached `geometry::meshGeometry`/
+`meshTopology`. **Gauge workflow:** three patterns over one mechanism — `Manifold(V,F)` →
+Levi-Civita; `Manifold(V,F,singularities)` → trivial (default fixed at construction);
+ad-hoc `gauge(type,sing)` returns a pure value; `setGauge` re-points the active gauge.
+Trivial requires `Σ singularity index == χ` (Gauss–Bonnet, validated; throws InvalidInput).
+**Operators facet:** independent per-operator lazy cache (requesting `cotan` never builds
+`mass`; `lumped`≠`galerkin`), `releaseOperator`/`isOperatorCached` (GC `require`/`unrequire`
+model); `laplacian().connection()/covariant(coupling)` build in the *active gauge* and are
+invalidated by `setGauge`; covariant cache keys on coupling. The MEX `operators` command
+(above) is the string-dispatch veneer over this typed core. NOTE the intrinsic facet *data*
+stays embedded-sourced under `intrinsicDelaunay` (only the *operators* swap to the certified-
+PSD Delaunay metric) — Phase-3 deferral, documented on `IntrinsicFacet`.
 
 ---
 
