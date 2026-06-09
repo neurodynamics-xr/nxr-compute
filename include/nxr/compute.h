@@ -76,6 +76,7 @@ namespace facet {
 }
 namespace geometry { struct MeshGeometry; struct MeshTopology; }
 namespace ops { struct DECOperators; class CholeskyCache; }
+namespace ops::laplacian::connection { enum class CovariantCoupling; }
 
 enum class GaugeType { Euclidean, LeviCivita, Trivial };
 
@@ -185,6 +186,13 @@ private:
     // requesting lumped NEVER builds galerkin and vice-versa.
     const Eigen::SparseMatrix<double>& massLumpedCached_();
     const Eigen::SparseMatrix<double>& massGalerkinCached_();
+
+    // Private cache-fill helpers for OperatorsFacet::LaplacianView::connection/covariant.
+    // connection: builds in the ACTIVE gauge (LC or trivial); stores K_complex.
+    // covariant: delegates to connection() + gauge().grid() + cotan() then assembles.
+    const Eigen::SparseMatrix<std::complex<double>>& connectionLaplacianCached_();
+    const Eigen::SparseMatrix<double>& covariantLaplacianCached_(
+        ops::laplacian::connection::CovariantCoupling coupling);
 
     friend class facet::OperatorsFacet;
     std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh>             mesh_;

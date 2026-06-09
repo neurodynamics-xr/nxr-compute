@@ -61,6 +61,11 @@ void Manifold::setGauge(GaugeType type, const std::map<int,double>& singularitie
     }
     activeGaugeType_ = type;
     activeSingularities_ = (type == GaugeType::Trivial) ? singularities : std::map<int,double>{};
+    // Gauge-dependent operators (spec §5b: connection/covariant source from
+    // intrinsic + active gauge) are now stale — drop them so the next request
+    // rebuilds in the new gauge.
+    releaseOperator(OperatorId::LaplacianConnection);
+    releaseOperator(OperatorId::LaplacianCovariant);
 }
 
 // ── B2: Lazy DEC / Cholesky cache + gauge() overload bodies ──────────────────
@@ -160,6 +165,43 @@ const Eigen::SparseMatrix<double>& Manifold::massGalerkinCached_() {
     return *cacheMassGalerkin_;
 }
 
+// ── C3: Connection / Covariant Laplacian cache-fill helpers ──────────────────
+// connection: builds in the ACTIVE gauge (LC or trivial). Stores K_complex.
+// covariant: calls connection() + gauge().grid() + cotanLaplacianCached_() and
+// assembles the 3N×3N real symmetric matrix.
+
+const Eigen::SparseMatrix<std::complex<double>>& Manifold::connectionLaplacianCached_() {
+    if (!cacheLaplacianConnection_) {
+        namespace cl = ops::laplacian::connection;
+        cl::ConnectionLaplacianOptions o;
+        o.domain = cl::ConnectionDomain::Vertex;
+        o.nSym   = 1;
+        o.format = cl::ConnectionLaplacianFormat::Complex;
+        cl::ConnectionLaplacian r =
+            (activeGaugeType_ == GaugeType::Trivial)
+              ? cl::assembleTrivialConnectionLaplacian(*this, activeSingularities_,
+                                                       decOperators(), choleskyCache(), o)
+              : cl::assembleConnectionLaplacian(*this, o);
+        cacheLaplacianConnection_ =
+            std::make_unique<Eigen::SparseMatrix<std::complex<double>>>(std::move(r.K_complex));
+    }
+    return *cacheLaplacianConnection_;
+}
+
+const Eigen::SparseMatrix<double>& Manifold::covariantLaplacianCached_(
+        ops::laplacian::connection::CovariantCoupling coupling) {
+    if (!cacheLaplacianCovariant_) {
+        namespace cl = ops::laplacian::connection;
+        const auto& K      = connectionLaplacianCached_();       // active-gauge complex K
+        Eigen::MatrixXcd g  = gauge().grid();                     // realized active-gauge frame
+        const auto& cotanL = cotanLaplacianCached_();             // real cotan Laplacian
+        cacheLaplacianCovariant_ =
+            std::make_unique<Eigen::SparseMatrix<double>>(
+                cl::assembleCovariantLaplacian(coupling, K, g, cotanL));
+    }
+    return *cacheLaplacianCovariant_;
+}
+
 } // namespace nxr::manifold
 
 namespace nxr::manifold::facet {
@@ -214,8 +256,22 @@ const Eigen::SparseMatrix<double>& OperatorsFacet::LaplacianView::graph() const 
     return m.graphLaplacianCached_();
 }
 
-// connection() and covariant() are declared in facets.h for Task C3.
-// They are not implemented in C1 — calling them will produce a link error.
+// ── C3: connection / covariant bodies ────────────────────────────────────────
+// Both delegate through the private Manifold cache-fill helpers so that
+// connection() can be called standalone without dragging in covariant, and
+// vice-versa. The covariant helper depends on connection + cotan being built,
+// but the cotan slot is also independently reusable for other callers.
+
+const Eigen::SparseMatrix<std::complex<double>>&
+OperatorsFacet::LaplacianView::connection() const {
+    return m.connectionLaplacianCached_();
+}
+
+const Eigen::SparseMatrix<double>&
+OperatorsFacet::LaplacianView::covariant(
+        ops::laplacian::connection::CovariantCoupling coupling) const {
+    return m.covariantLaplacianCached_(coupling);
+}
 
 // ── C2: dec / mass / hodge bodies ────────────────────────────────────────────
 

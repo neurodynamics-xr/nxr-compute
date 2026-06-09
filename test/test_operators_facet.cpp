@@ -73,9 +73,50 @@ static void testMassDecHodge() {
            "mass.lumped did not build galerkin (independent)");
 }
 
+#include <Eigen/Eigenvalues>
+
+static double minEigC(const Eigen::SparseMatrix<std::complex<double>>& K) {
+    Eigen::MatrixXcd Kd(K);
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd> es(Kd);
+    return es.eigenvalues().minCoeff();
+}
+
+static void testConnectionCovariant() {
+    std::cout << "\n=== operators: connection + covariant (active gauge) ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);     // LC active
+    auto ops = m.operators();
+    namespace cl = ops::laplacian::connection;
+
+    const auto& K = ops.laplacian().connection();
+    EXPECT(K.rows() == 12 && K.cols() == 12, "connection L [12,12] complex");
+    auto herm = (K - Eigen::SparseMatrix<std::complex<double>>(K.adjoint())).norm();
+    EXPECT(herm < 1e-9, "LC connection L Hermitian");
+    EXPECT(minEigC(K) > -1e-9, "LC connection L PSD on icosphere (Delaunay)");
+
+    const auto& C = ops.laplacian().covariant(cl::CovariantCoupling::Ambient);
+    EXPECT(C.rows() == 36 && C.cols() == 36, "ambient covariant [3V,3V] = [36,36]");
+    EXPECT((C - Eigen::SparseMatrix<double>(C.transpose())).norm() < 1e-9, "covariant symmetric");
+
+    // active-gauge sensitivity: trivial gauge yields a different connection L
+    std::map<int,double> sing{{0,1.0},{3,1.0}};
+    Manifold mt(V.data(), 12, F.data(), 20, sing);    // trivial active
+    const auto& Kt = mt.operators().laplacian().connection();
+    EXPECT((Kt - K).norm() > 1e-6, "trivial-gauge connection L differs from LC");
+
+    // setGauge invalidates the cached connection/covariant: a single instance
+    // rebuilds in the new gauge rather than returning the stale LC matrix.
+    Eigen::SparseMatrix<std::complex<double>> Klc = m.operators().laplacian().connection(); // LC, cached
+    m.setGauge(GaugeType::Trivial, sing);
+    EXPECT(!m.isOperatorCached(OperatorId::LaplacianConnection), "setGauge drops stale connection cache");
+    Eigen::SparseMatrix<std::complex<double>> Ktri = m.operators().laplacian().connection(); // rebuilt
+    EXPECT((Ktri - Klc).norm() > 1e-6, "connection rebuilt for new gauge after setGauge (not stale)");
+}
+
 int main() {
     testLaplacianCotanGraph();
     testMassDecHodge();
+    testConnectionCovariant();
     std::cout << (g_failures ? "\nFAILURES\n" : "\nALL PASSED\n");
     return g_failures ? 1 : 0;
 }
