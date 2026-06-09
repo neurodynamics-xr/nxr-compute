@@ -116,8 +116,12 @@ owns the operators whose highest ingredient is that surface — the
 (cotan) + `mass.{lumped,galerkin}` + `hodge.{h0,h1,h2,h1inv}`; `Gauge.operators`
 = `laplacian` (vertex connection Laplacian *in the current gauge* — Levi-Civita
 for euclidean/levi-civita, trivial for trivial — native **complex** sparse,
-`nSym=1`). Light by default (no flag ⇒ byte-identical, no `.operators` field).
-`MeshData` and `Gauge.face.rotation` remain deferred.
+`nSym=1`) + `covariantLaplacian` (the 3-frame covariant Laplacian, `3N×3N` real
+sparse on `[a;b;c] = [Re z; Im z; normal]`; `coupling ∈ {product, ambient}`,
+default `ambient` — `ambient`'s world-coords form is `kron(I₃, cotanLaplacian)`;
+design: `docs/superpowers/specs/2026-06-08-vector-laplacian-3d-design.md`). Light
+by default (no flag ⇒ byte-identical, no `.operators` field). `MeshData` and
+`Gauge.face.rotation` remain deferred.
 
 ---
 
