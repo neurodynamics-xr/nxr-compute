@@ -73,4 +73,19 @@ private:
     Manifold& m_;
 };
 
+class GaugeFacet {
+public:
+    GaugeFacet(Manifold& m, GaugeType type, std::map<int,double> singularities)
+        : m_(m), type_(type), sing_(std::move(singularities)) {}
+    GaugeType type() const { return type_; }
+    const std::map<int,double>& singularities() const { return sing_; }
+    // Realized per-vertex frame in this gauge: [nV,3] complex c = e1 + i e2.
+    // Levi-Civita/Euclidean: the raw vertex grid. Trivial: exp(i phi_v) .* grid.
+    Eigen::MatrixXcd grid() const;
+private:
+    Manifold& m_;
+    GaugeType type_;
+    std::map<int,double> sing_;
+};
+
 } // namespace nxr::manifold::facet

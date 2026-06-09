@@ -63,6 +63,30 @@ void Manifold::setGauge(GaugeType type, const std::map<int,double>& singularitie
     activeSingularities_ = (type == GaugeType::Trivial) ? singularities : std::map<int,double>{};
 }
 
+// ── B2: Lazy DEC / Cholesky cache + gauge() overload bodies ──────────────────
+
+ops::DECOperators& Manifold::decOperators() {
+    if (!decCache_)
+        decCache_ = std::make_unique<ops::DECOperators>(ops::assembleDECOperators(*this));
+    return *decCache_;
+}
+
+ops::CholeskyCache& Manifold::choleskyCache() {
+    if (!choleskyCachePtr_)
+        choleskyCachePtr_ = std::make_unique<ops::CholeskyCache>();
+    return *choleskyCachePtr_;
+}
+
+facet::GaugeFacet Manifold::gauge() {
+    return facet::GaugeFacet(*this, activeGaugeType_, activeSingularities_);
+}
+
+facet::GaugeFacet Manifold::gauge(GaugeType type, const std::map<int,double>& singularities) {
+    if (type == GaugeType::Trivial) validateSingularities_(singularities);
+    return facet::GaugeFacet(*this, type,
+                             type == GaugeType::Trivial ? singularities : std::map<int,double>{});
+}
+
 } // namespace nxr::manifold
 
 namespace nxr::manifold::facet {
@@ -93,4 +117,16 @@ Eigen::VectorXcd ExtrinsicFacet::VertexView::curvature2RoSy() const { return m.l
 Eigen::VectorXd  ExtrinsicFacet::VertexView::meanCurvature()  const { return m.lightGeometry().vertexMeanCurvature; }
 Eigen::MatrixXd  ExtrinsicFacet::VertexView::principalDir()   const { return geometry::curvatures(m).principalDirMax; }
 Eigen::VectorXd  ExtrinsicFacet::EdgeView::dihedralAngle()    const { return m.lightGeometry().edgeDihedralAngles; }
+
+// ── B2: GaugeFacet::grid() ────────────────────────────────────────────────────
+
+Eigen::MatrixXcd GaugeFacet::grid() const {
+    Eigen::MatrixXcd g = geometry::vertexGrid(m_);            // LC / euclidean base frame
+    if (type_ != GaugeType::Trivial) return g;
+    connection::GaugeRotations gr = connection::integrateTrivialGaugeRotations(
+        m_, m_.decOperators(), m_.choleskyCache(), sing_);
+    for (int v = 0; v < g.rows(); ++v) g.row(v) *= gr.vertex(v);  // exp(i phi_v) .* grid
+    return g;
+}
+
 } // namespace nxr::manifold::facet

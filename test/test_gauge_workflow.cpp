@@ -59,8 +59,39 @@ static void testDefaultsAndValidation() {
     EXPECT(threw, "pattern 2 ctor validates Gauss-Bonnet");
 }
 
+static void testGridRealization() {
+    std::cout << "\n=== gauge: grid realization ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+
+    // pattern 1: gauge() is LC; grid == raw vertexGrid
+    auto gLC = m.gauge();
+    EXPECT(gLC.type() == GaugeType::LeviCivita, "active gauge LC");
+    EXPECT((gLC.grid() - geometry::vertexGrid(m)).cwiseAbs().maxCoeff() < 1e-12, "LC grid == vertexGrid");
+
+    // pattern 3: ad-hoc trivial request returns a value; default unchanged
+    std::map<int,double> sing{{0,1.0},{3,1.0}};
+    auto gTriReq = m.gauge(GaugeType::Trivial, sing);
+    EXPECT(m.activeGaugeType() == GaugeType::LeviCivita, "ad-hoc gauge() does not mutate default");
+    Eigen::MatrixXcd triGrid = gTriReq.grid();
+    EXPECT(triGrid.rows() == 12 && triGrid.cols() == 3, "trivial grid [12,3]");
+    // realized trivial frame stays unit-tangent (|c row| preserved vs LC up to rotation)
+    EXPECT(std::abs(triGrid.row(0).norm() - geometry::vertexGrid(m).row(0).norm()) < 1e-9,
+           "trivial rotation preserves frame magnitude");
+
+    // pattern 2 default trivial equals the pattern-3 value for same singularities
+    Manifold m2(V.data(), 12, F.data(), 20, sing);
+    EXPECT((m2.gauge().grid() - triGrid).cwiseAbs().maxCoeff() < 1e-9,
+           "pattern 2 default == pattern 3 request (same singularities)");
+
+    // setGauge re-points default
+    m.setGauge(GaugeType::Trivial, sing);
+    EXPECT(m.gauge().type() == GaugeType::Trivial, "setGauge re-points active gauge");
+}
+
 int main() {
     testDefaultsAndValidation();
+    testGridRealization();
     std::cout << (g_failures ? "\nFAILURES\n" : "\nALL PASSED\n");
     return g_failures ? 1 : 0;
 }

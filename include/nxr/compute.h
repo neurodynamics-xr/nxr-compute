@@ -75,6 +75,7 @@ namespace facet {
     class ExtrinsicFacet; class GaugeFacet;     class OperatorsFacet;
 }
 namespace geometry { struct MeshGeometry; struct MeshTopology; }
+namespace ops { struct DECOperators; class CholeskyCache; }
 
 enum class GaugeType { Euclidean, LeviCivita, Trivial };
 
@@ -149,6 +150,10 @@ public:
     facet::GaugeFacet gauge(GaugeType type,
                             const std::map<int,double>& singularities = {});
 
+    // Lazy operator-assembly helpers shared by gauge + operators facets.
+    ops::DECOperators& decOperators();     // assembleDECOperators(*this), cached
+    ops::CholeskyCache& choleskyCache();   // owned cache, lazy-initialised
+
 private:
     std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh>             mesh_;
     std::unique_ptr<geometrycentral::surface::VertexPositionGeometry>         geometry_;
@@ -163,6 +168,9 @@ private:
     std::map<int,double> activeSingularities_;
     // Validates Σ singularities == eulerCharacteristic(); throws on mismatch.
     void validateSingularities_(const std::map<int,double>& s) const;
+
+    std::unique_ptr<ops::DECOperators>  decCache_;
+    std::unique_ptr<ops::CholeskyCache> choleskyCachePtr_;
 };
 
 // Extrinsic Delaunay edge-flip repair (geometry-central fixDelaunay).
