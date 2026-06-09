@@ -2,6 +2,7 @@
 
 #include "geometrycentral/surface/manifold_surface_mesh.h"
 #include "geometrycentral/surface/vertex_position_geometry.h"
+#include "geometrycentral/surface/signpost_intrinsic_triangulation.h"
 
 #include <vector>
 #include <iostream>
@@ -14,7 +15,8 @@ using namespace geometrycentral::surface;
 // ── Manifold implementation ────────────────────────────
 
 Manifold::Manifold(const double* vertices, int nV,
-                                const int32_t* faces, int nF) {
+                                const int32_t* faces, int nF,
+                                bool intrinsicDelaunay) {
     // Build polygon list from flat face array
     std::vector<std::vector<size_t>> polygons(nF);
     for (int i = 0; i < nF; i++) {
@@ -34,6 +36,12 @@ Manifold::Manifold(const double* vertices, int nV,
         };
     }
     geometry_ = std::make_unique<VertexPositionGeometry>(*mesh_, positions);
+
+    if (intrinsicDelaunay) {
+        intrinsicTri_ = std::make_unique<SignpostIntrinsicTriangulation>(
+            *mesh_, *geometry_);
+        intrinsicTri_->flipToDelaunay();
+    }
 }
 
 Manifold::~Manifold() = default;
@@ -44,6 +52,13 @@ int Manifold::nF() const { return static_cast<int>(mesh_->nFaces()); }
 
 ManifoldSurfaceMesh& Manifold::mesh() { return *mesh_; }
 VertexPositionGeometry& Manifold::geometry() { return *geometry_; }
+
+bool Manifold::isIntrinsicDelaunay() const { return intrinsicTri_ != nullptr; }
+
+geometrycentral::surface::IntrinsicGeometryInterface& Manifold::operatorGeometry() {
+    if (intrinsicTri_) return *intrinsicTri_;
+    return *geometry_;   // VertexPositionGeometry IS-A IntrinsicGeometryInterface
+}
 
 } // namespace nxr::manifold
 
@@ -73,7 +88,12 @@ using namespace geometrycentral::surface;
 ManifoldOperators assembleManifoldOperators(Manifold& m,
                                     MassMatrixVariant variant) {
     auto& mesh = m.mesh();
-    auto& geometry = m.geometry();
+    // opGeom  — intrinsic Delaunay geometry when normalised, else embedded.
+    // Used for cotan Laplacian, mass (lumped/Galerkin), dual areas, totalArea.
+    auto& opGeom  = m.operatorGeometry();
+    // embGeom — always the embedded VertexPositionGeometry.
+    // Used for vertex normals (extrinsic quantity).
+    auto& embGeom = m.geometry();
 
     int nV = m.nV();
     int nE = m.nE();
@@ -83,7 +103,7 @@ ManifoldOperators assembleManifoldOperators(Manifold& m,
     // cotanLaplacian is already symmetric (cotan weights symmetric,
     // diagonal = negative row sum); the previous (L+Lᵀ)/2 step has been
     // dropped (verified bit-identical across all numerical test suites).
-    geometry.requireCotanLaplacian();
+    opGeom.requireCotanLaplacian();
 
     // Mass matrix per requested variant — both source directly from
     // geometry-central. Mass is stored by VALUE (not a view) so the
@@ -93,12 +113,12 @@ ManifoldOperators assembleManifoldOperators(Manifold& m,
     Eigen::SparseMatrix<double> mass;
     double totalArea = 0.0;
     if (variant == MassMatrixVariant::Lumped) {
-        geometry.requireVertexLumpedMassMatrix();
-        mass = geometry.vertexLumpedMassMatrix;
+        opGeom.requireVertexLumpedMassMatrix();
+        mass = opGeom.vertexLumpedMassMatrix;
         totalArea = mass.diagonal().sum();
     } else if (variant == MassMatrixVariant::Galerkin) {
-        geometry.requireVertexGalerkinMassMatrix();
-        mass = geometry.vertexGalerkinMassMatrix;
+        opGeom.requireVertexGalerkinMassMatrix();
+        mass = opGeom.vertexGalerkinMassMatrix;
         // Σᵢⱼ Mᵢⱼ ≡ totalArea for the Galerkin matrix by construction
         // (each face contributes A_T · sum_of_element_matrix/12 = A_T).
         totalArea = mass.sum();
@@ -111,24 +131,29 @@ ManifoldOperators assembleManifoldOperators(Manifold& m,
     // of the chosen mass variant — downstream consumers (curvature,
     // gradients, diffusion) want a per-vertex weight even when the L²
     // inner product uses a non-diagonal M.
-    geometry.requireVertexDualAreas();
+    // NOTE: when normalised, opGeom is the intrinsic triangulation whose
+    // .mesh is its own ManifoldSurfaceMesh (1:1 vertex correspondence with
+    // the input). We iterate opGeom.mesh.vertices() to stay on the correct
+    // mesh; indices are 1:1 by construction (flipToDelaunay adds no Steiner).
+    opGeom.requireVertexDualAreas();
     Eigen::VectorXd vertexDualAreas(nV);
-    for (Vertex v : mesh.vertices()) {
+    for (Vertex v : opGeom.mesh.vertices()) {
         vertexDualAreas(static_cast<int>(v.getIndex())) =
-            geometry.vertexDualAreas[v];
+            opGeom.vertexDualAreas[v];
     }
 
-    // Vertex normals — V×3 lifted from VertexData<Vector3>. Stored
-    // row-major (VertexNormalsMatrix alias) so the §11 row-major
-    // output buffer at the binding edge is a direct memcpy of
-    // .data(); no transpose pass needed. Value-copy is unavoidable
-    // either way: geometry-central stores normals as a labeled
-    // array, not a contiguous matrix.
-    geometry.requireVertexNormals();
+    // Vertex normals — extrinsic quantity; sourced from the embedded
+    // VertexPositionGeometry regardless of normalisation. V×3 lifted
+    // from VertexData<Vector3>. Stored row-major (VertexNormalsMatrix
+    // alias) so the §11 row-major output buffer at the binding edge is
+    // a direct memcpy; no transpose pass needed. Value-copy is
+    // unavoidable: geometry-central stores normals as a labelled array,
+    // not a contiguous matrix.
+    embGeom.requireVertexNormals();
     VertexNormalsMatrix vertexNormals(nV, 3);
     for (Vertex v : mesh.vertices()) {
         int idx = static_cast<int>(v.getIndex());
-        Vector3 n = geometry.vertexNormals[v];
+        Vector3 n = embGeom.vertexNormals[v];
         vertexNormals(idx, 0) = n.x;
         vertexNormals(idx, 1) = n.y;
         vertexNormals(idx, 2) = n.z;
@@ -144,7 +169,7 @@ ManifoldOperators assembleManifoldOperators(Manifold& m,
               << ", mass nnz = " << mass.nonZeros() << ")" << std::endl;
 
     return ManifoldOperators(
-        geometry.cotanLaplacian,
+        opGeom.cotanLaplacian,
         std::move(mass),
         variant,
         std::move(vertexDualAreas),

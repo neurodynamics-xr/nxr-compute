@@ -54,6 +54,8 @@ namespace geometrycentral {
 namespace surface {
 class ManifoldSurfaceMesh;
 class VertexPositionGeometry;
+class IntrinsicGeometryInterface;
+class SignpostIntrinsicTriangulation;
 }
 }
 
@@ -74,8 +76,10 @@ using core::ProgressObserver;
 
 class Manifold {
 public:
+    // trailing param defaults to false — every existing call site is unchanged
     Manifold(const double* vertices, int nV,
-                   const int32_t* faces, int nF);
+                   const int32_t* faces, int nF,
+                   bool intrinsicDelaunay = false);
     ~Manifold();
 
     // Non-copyable
@@ -94,9 +98,20 @@ public:
     geometrycentral::surface::ManifoldSurfaceMesh& mesh();
     geometrycentral::surface::VertexPositionGeometry& geometry();
 
+    // Returns true iff this Manifold was built with intrinsicDelaunay=true
+    // (i.e. intrinsicTri_ is populated and flipToDelaunay() has been called).
+    bool isIntrinsicDelaunay() const;
+
+    // Geometry to assemble INTRINSIC-interface operators on (cotan, mass, dual
+    // areas, …). Intrinsic Delaunay geometry when normalised, else the embedded
+    // VertexPositionGeometry (itself an IntrinsicGeometryInterface). geometry()
+    // is unchanged and still used for EXTRINSIC quantities (normals, frames).
+    geometrycentral::surface::IntrinsicGeometryInterface& operatorGeometry();
+
 private:
-    std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh> mesh_;
-    std::unique_ptr<geometrycentral::surface::VertexPositionGeometry> geometry_;
+    std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh>             mesh_;
+    std::unique_ptr<geometrycentral::surface::VertexPositionGeometry>         geometry_;
+    std::unique_ptr<geometrycentral::surface::SignpostIntrinsicTriangulation>  intrinsicTri_;  // null unless intrinsicDelaunay=true
 };
 
 // Extrinsic Delaunay edge-flip repair (geometry-central fixDelaunay).

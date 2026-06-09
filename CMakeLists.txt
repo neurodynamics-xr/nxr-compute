@@ -184,4 +184,8 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_normalize test/test_normalize.cpp)
     target_link_libraries(test_normalize PRIVATE nxr_compute)
     add_test(NAME test_normalize COMMAND test_normalize)
+
+    add_executable(test_intrinsic_delaunay test/test_intrinsic_delaunay.cpp)
+    target_link_libraries(test_intrinsic_delaunay PRIVATE nxr_compute)
+    add_test(NAME test_intrinsic_delaunay COMMAND test_intrinsic_delaunay)
 endif()
