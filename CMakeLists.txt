@@ -40,6 +40,7 @@ FetchContent_Populate(spectra)
 
 add_library(nxr_compute STATIC
   src/mesh_operators.cpp
+  src/normalize_delaunay.cpp
   src/eigensolver.cpp
   src/normalize.cpp
   src/cholesky_cache.cpp
@@ -179,4 +180,8 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_query_measure test/test_query_measure.cpp)
     target_link_libraries(test_query_measure PRIVATE nxr_compute)
     add_test(NAME test_query_measure COMMAND test_query_measure)
+
+    add_executable(test_normalize test/test_normalize.cpp)
+    target_link_libraries(test_normalize PRIVATE nxr_compute)
+    add_test(NAME test_normalize COMMAND test_normalize)
 endif()
