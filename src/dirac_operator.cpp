@@ -9,7 +9,11 @@
 namespace nxr::manifold::ops::dirac {
 
 // 4×4 real matrix of LEFT-multiplication by a purely imaginary quaternion
-// v = x·i + y·j + z·k, in component order [w,x,y,z]. Antisymmetric.
+// v = x·i + y·j + z·k, in component order [w,x,y,z]. Antisymmetric, with an
+// identically-zero diagonal (from the integer literals below — exact in IEEE
+// 754). The `if (B(a,b) != 0.0)` filter in the assembly loop relies on that:
+// it skips precisely these structural diagonal zeros, never a rounded-to-zero
+// off-diagonal (those come from normal differences and are nonzero off flats).
 static Eigen::Matrix4d leftMulImag(const Eigen::Vector3d& v) {
     const double x = v.x(), y = v.y(), z = v.z();
     Eigen::Matrix4d L;
@@ -43,6 +47,12 @@ Eigen::SparseMatrix<double> extrinsicBlock(Manifold& m) {
     for (Face f : mesh.faces()) {
         const int fi = static_cast<int>(f.getIndex());
         const double A = geom.faceAreas[f];
+        // Fail loud (CLAUDE.md §6): a single zero-area face would poison the
+        // whole E with inf/NaN via the 1/(2A) below — diagnose, don't propagate.
+        if (A <= 0.0)
+            throw Error(ErrorCode::InvalidInput,
+                "dirac::extrinsicBlock: degenerate (zero-area) face",
+                "Face index " + std::to_string(fi) + "; fix mesh quality first.");
         std::array<int,3> vid{};
         int c = 0;
         for (Vertex v : f.adjacentVertices()) vid[c++] = static_cast<int>(v.getIndex());
@@ -74,6 +84,9 @@ Eigen::SparseMatrix<double> extrinsicBlock(Manifold& m) {
     Eigen::SparseMatrix<double> WF(4 * Fn, 4 * Fn);
     WF.setFromTriplets(TW.begin(), TW.end());
 
+    // Materialise D.transpose() into its own matrix before the multiply chain:
+    // the lazy Transpose proxy shares D's storage, and chaining * WF * D on it
+    // would alias. The explicit temporary forces evaluation first.
     Eigen::SparseMatrix<double> E = (Eigen::SparseMatrix<double>(D.transpose()) * WF * D).pruned();
     E.makeCompressed();
     return E;
