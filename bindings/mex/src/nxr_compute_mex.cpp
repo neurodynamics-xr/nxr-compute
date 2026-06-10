@@ -1821,7 +1821,7 @@ void cmdOperators(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) 
         plhs[0] = s;
 
     } else if (family == "gradient3D") {
-        plhs[0] = eigenSparseToMx(nxr::manifold::differential::covariantGradient(m));
+        plhs[0] = eigenSparseToMx(m.operators().gradient3D());   // cached on the handle
 
     } else {
         throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,

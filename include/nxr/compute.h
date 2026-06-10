@@ -82,7 +82,7 @@ enum class GaugeType { Euclidean, LeviCivita, Trivial };
 
 enum class OperatorId {
     LaplacianCotan, LaplacianGraph, LaplacianConnection, LaplacianCovariant,
-    Dec, MassLumped, MassGalerkin
+    Dec, MassLumped, MassGalerkin, Gradient3D
 };
 
 // ── Compute Context ──────────────────────────────────────────
@@ -178,6 +178,7 @@ private:
     int                                                                  cachedCovariantCoupling_ = -1;
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheMassLumped_;
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheMassGalerkin_;
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheGradient3D_;
 
     // Private cache-fill helpers called by OperatorsFacet::LaplacianView.
     // These source DIRECTLY from operatorGeometry()'s GC cache without
@@ -197,6 +198,10 @@ private:
     const Eigen::SparseMatrix<std::complex<double>>& connectionLaplacianCached_();
     const Eigen::SparseMatrix<double>& covariantLaplacianCached_(
         ops::laplacian::connection::CovariantCoupling coupling);
+
+    // Covariant gradient G (3E x 3N) — differential::covariantGradient(*this), cached
+    // (mesh-only; depends on the frames, not the gauge or any parameter).
+    const Eigen::SparseMatrix<double>& gradient3DCached_();
 
     friend class facet::OperatorsFacet;
     std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh>             mesh_;

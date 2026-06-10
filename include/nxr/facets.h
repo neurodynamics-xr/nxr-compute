@@ -144,6 +144,10 @@ public:
 
     LaplacianView laplacian() const { return LaplacianView{m_}; }
 
+    // gradient3D(): the covariant gradient operator G (3E x 3N), cached. Artifact-free
+    // covariant difference of a 3-vector cortical field (differential::covariantGradient).
+    const Eigen::SparseMatrix<double>& gradient3D() const;
+
 private:
     Manifold& m_;
 };

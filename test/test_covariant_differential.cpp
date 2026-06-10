@@ -107,12 +107,44 @@ static void testCovariantGradient() {
         m.operators().laplacian().covariant(cl::CovariantCoupling::Ambient);
     EXPECT((Eigen::MatrixXd(GtWG) - Eigen::MatrixXd(Camb)).cwiseAbs().maxCoeff() < 1e-9,
            "G^T W G == Ambient covariant Laplacian (consistency)");
+
+    // gradient3D is cached on the handle via the operators facet (matches the other operators)
+    EXPECT((m.operators().gradient3D() - G).norm() < 1e-12, "operators().gradient3D() == covariantGradient");
+    EXPECT(m.isOperatorCached(OperatorId::Gradient3D), "gradient3D cached after request");
+    m.releaseOperator(OperatorId::Gradient3D);
+    EXPECT(!m.isOperatorCached(OperatorId::Gradient3D), "releaseOperator(Gradient3D) clears the cache");
+}
+
+// The motivating case: two frames with OPPOSED normals (opposite sulcal walls). A vector
+// that is the SAME in Cartesian space transports correctly between them — the antiparallel
+// reading is a frame artifact that frameTransport removes.
+static void testSulcalWallTransport() {
+    std::cout << "\n=== covariant-differential: sulcal-wall transport ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+    Eigen::MatrixXd Fm = differential::vertexFrameMatrices(m);
+    auto frame = [&](int v) {
+        Eigen::Matrix3d Fv;
+        Fv << Fm(v,0),Fm(v,1),Fm(v,2), Fm(v,3),Fm(v,4),Fm(v,5), Fm(v,6),Fm(v,7),Fm(v,8);
+        return Fv;
+    };
+    // icosphere vertices 0 and 3 are nearly antipodal ⇒ opposed normals (the sulcal-wall case)
+    Eigen::Matrix3d F0 = frame(0), F3 = frame(3);
+    EXPECT(F0.col(2).dot(F3.col(2)) < -0.5, "vertices 0,3 have opposed normals (sulcal-wall fixture)");
+    // a single Cartesian vector, expressed in each frame, is related EXACTLY by frameTransport
+    Eigen::Vector3d w(0.2, 0.5, -0.3);
+    Eigen::Vector3d loc0 = F0.transpose() * w;                              // w in frame 0
+    Eigen::Vector3d loc3 = F3.transpose() * w;                              // w in frame 3
+    Eigen::Vector3d moved = differential::frameTransport(m, 0, 3) * loc0;   // transport 0 -> 3
+    EXPECT((moved - loc3).cwiseAbs().maxCoeff() < 1e-12,
+           "frameTransport maps the shared Cartesian vector between opposed-normal frames");
 }
 
 int main() {
     testFrameTransport();
     testLifts();
     testCovariantGradient();
+    testSulcalWallTransport();
     std::cout << (g_failures ? "\nFAILURES\n" : "\nALL PASSED\n");
     return g_failures ? 1 : 0;
 }

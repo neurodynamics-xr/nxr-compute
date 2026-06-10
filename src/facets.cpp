@@ -105,6 +105,7 @@ bool Manifold::isOperatorCached(OperatorId id) const {
         case OperatorId::Dec:                 return (bool)decCache_;
         case OperatorId::MassLumped:          return (bool)cacheMassLumped_;
         case OperatorId::MassGalerkin:        return (bool)cacheMassGalerkin_;
+        case OperatorId::Gradient3D:          return (bool)cacheGradient3D_;
     }
     return false;
 }
@@ -118,6 +119,7 @@ void Manifold::releaseOperator(OperatorId id) {
         case OperatorId::Dec:                 decCache_.reset();                 break;
         case OperatorId::MassLumped:          cacheMassLumped_.reset();          break;
         case OperatorId::MassGalerkin:        cacheMassGalerkin_.reset();        break;
+        case OperatorId::Gradient3D:          cacheGradient3D_.reset();          break;
     }
 }
 
@@ -163,6 +165,13 @@ const Eigen::SparseMatrix<double>& Manifold::massGalerkinCached_() {
             std::make_unique<Eigen::SparseMatrix<double>>(geom.vertexGalerkinMassMatrix);
     }
     return *cacheMassGalerkin_;
+}
+
+const Eigen::SparseMatrix<double>& Manifold::gradient3DCached_() {
+    if (!cacheGradient3D_)
+        cacheGradient3D_ = std::make_unique<Eigen::SparseMatrix<double>>(
+            differential::covariantGradient(*this));
+    return *cacheGradient3D_;
 }
 
 // ── C3: Connection / Covariant Laplacian cache-fill helpers ──────────────────
@@ -294,6 +303,7 @@ OperatorsFacet::LaplacianView::covariant(
 
 // dec(): returns the lazily-cached DECOperators bundle via Manifold::decOperators().
 const ops::DECOperators& OperatorsFacet::dec() const { return m_.decOperators(); }
+const Eigen::SparseMatrix<double>& OperatorsFacet::gradient3D() const { return m_.gradient3DCached_(); }
 
 // MassView: each helper calls through to the independent private Manifold cache-fill.
 // Holds Manifold& m (C1 pattern) — never dangles.
