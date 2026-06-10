@@ -98,6 +98,17 @@ Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m) {
 
     auto& mesh = m.mesh();
     auto& geom = m.geometry();
+
+    // Closed-mesh v1 (fail loud, CLAUDE.md §6): a boundary vertex has an OPEN star,
+    // so its cyclic difference (N_{k+1} − N_{k-1}) would wrap incorrectly across the
+    // two boundary ends and silently corrupt the operator. The richer boundary
+    // treatment (Liu's infinite potential well) is deferred. Cortical hemispheres
+    // are closed topological spheres, so this is exact for the intended use.
+    if (mesh.hasBoundary())
+        throw Error(ErrorCode::InvalidInput,
+            "dirac::extrinsicBlockFace: open boundary unsupported (diracFace is closed-mesh v1)",
+            "Vertex stars must be closed; pass a closed mesh (e.g. a FreeSurfer hemisphere).");
+
     geom.requireFaceNormals();        // EXACT per-face normals (the Gauss map at faces)
     geom.requireVertexDualAreas();    // ⋆_V measure
 
@@ -107,14 +118,12 @@ Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m) {
     auto vec3 = [](const Vector3& u) { return Eigen::Vector3d(u.x, u.y, u.z); };
 
     // Rectangular real operator D̃ : ℍ^F → ℍ^V  [4V × 4F].
-    // For each INTERIOR vertex v with cyclically ordered incident faces f_0..f_{d-1}:
-    //   block(v, f_k) = -leftMulImag(N_{f_{k+1}} - N_{f_{k-1}}) / (2 Ã_v).
-    // Boundary vertices (open star) are skipped — exact on closed meshes.
+    // For each vertex v (all interior — closed mesh) with cyclically ordered incident
+    // faces f_0..f_{d-1}:  block(v, f_k) = -leftMulImag(N_{f_{k+1}} - N_{f_{k-1}}) / (2 Ã_v).
     std::vector<Eigen::Triplet<double>> TD;
     TD.reserve(static_cast<size_t>(Fn) * 6 * 16);
 
     for (Vertex v : mesh.vertices()) {
-        if (v.isBoundary()) continue;
         const int vi = static_cast<int>(v.getIndex());
         const double Av = geom.vertexDualAreas[v];
         if (Av <= 0.0)
@@ -146,7 +155,6 @@ Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m) {
     std::vector<Eigen::Triplet<double>> TW;
     TW.reserve(static_cast<size_t>(4) * N);
     for (Vertex v : mesh.vertices()) {
-        if (v.isBoundary()) continue;   // match D̃: boundary stars are skipped (their D̃ rows are empty)
         const int vi = static_cast<int>(v.getIndex());
         const double Av = geom.vertexDualAreas[v];
         for (int a = 0; a < 4; ++a) TW.emplace_back(4 * vi + a, 4 * vi + a, Av);

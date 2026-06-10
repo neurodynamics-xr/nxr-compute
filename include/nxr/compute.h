@@ -424,8 +424,9 @@ Eigen::SparseMatrix<double> extrinsicBlock(Manifold& m);
 // Face-domain (Poincaré dual) extrinsic block: Ẽ = D̃ᵀ ⋆_V D̃, the [4F×4F]
 // real-symmetric PSD operator from EXACT per-face normals aggregated over vertex
 // stars (the dual of extrinsicBlock). Quaternion order [w,x,y,z]; index 4*f+c.
-// Geometry-only (face normals + vertex dual areas). Closed-mesh v1: boundary
-// vertices (open stars) are skipped — exact on closed cortical hemispheres.
+// Geometry-only (face normals + vertex dual areas). Closed-mesh v1: throws
+// Error(InvalidInput) on an open boundary (vertex stars must be closed) —
+// exact on closed cortical hemispheres.
 Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m);
 }  // namespace dirac
 

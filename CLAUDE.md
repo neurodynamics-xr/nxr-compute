@@ -180,8 +180,9 @@ anchor is `kron(Ktilde, speye(4))` and the eigenbasis `eigs(L, kron(diag(Af),
 speye(4)), k, -1e-8)`. Still right-ℍ-equivariant ⇒ multiplicities divisible by 4
 (NOTE: Spectra miscounts the degenerate clusters — use a dense solve to verify
 multiplicities). `diracFace(0)` byte-matches `K̃⊗I₄`. Design:
-`docs/superpowers/specs/2026-06-10-face-domain-dirac-operator-design.md`. Closed
-cortex v1 (boundary vertices / open stars skipped).
+`docs/superpowers/specs/2026-06-10-face-domain-dirac-operator-design.md`. Closed-mesh
+v1: **throws** on an open boundary (open vertex stars; fail-loud) — the
+infinite-potential-well boundary treatment is deferred.
 
 **Mesh quality / PSD note.** All operators use geometry-central's raw signed cotan
 weights (matching GC), so on non-Delaunay meshes (obtuse triangles — common on

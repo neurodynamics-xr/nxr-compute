@@ -59,17 +59,24 @@ static void testExtrinsicBlockFace() {
     EXPECT(coupled, "E~ has genuine quaternionic coupling (non-scalar 4x4 blocks)");
 }
 
-static void flatPatch(std::vector<double>& V, std::vector<int32_t>& F) {
+// A triangle fan in the z=0 plane — an OPEN disk (it has a boundary loop).
+static void borderedPatch(std::vector<double>& V, std::vector<int32_t>& F) {
     V = { 0,0,0,  1,0,0,  0.5,1,0,  -0.5,1,0,  -1,0,0,  -0.5,-1,0,  0.5,-1,0 };
     F = { 0,1,2, 0,2,3, 0,3,4, 0,4,5, 0,5,6, 0,6,1 };
 }
 
-static void testFlatKernelFace() {
-    std::cout << "\n=== diracFace: flat-region kernel ===\n";
-    std::vector<double> V; std::vector<int32_t> F; flatPatch(V, F);
+static void testBoundaryThrows() {
+    std::cout << "\n=== diracFace: open boundary fails loud ===\n";
+    std::vector<double> V; std::vector<int32_t> F; borderedPatch(V, F);
     Manifold m(V.data(), 7, F.data(), 6);
-    Eigen::SparseMatrix<double> E = ops::dirac::extrinsicBlockFace(m);
-    EXPECT(E.norm() < 1e-10, "E~ vanishes on a flat patch (pure kernel)");
+    // diracFace is closed-mesh v1: an open boundary (open vertex stars) must throw,
+    // not silently produce a degraded operator (CLAUDE.md §6 fail-loud).
+    bool threw = false;
+    try { ops::dirac::extrinsicBlockFace(m); } catch (const std::exception&) { threw = true; }
+    EXPECT(threw, "extrinsicBlockFace throws on an open boundary");
+    bool threwFamily = false;
+    try { m.operators().diracFace(1.0); } catch (const std::exception&) { threwFamily = true; }
+    EXPECT(threwFamily, "diracFace(τ>0) throws on an open boundary");
 }
 
 // K̃ = d₁ ⋆₁⁻¹ d₁ᵀ, the DEC 2-form Laplacian (independent oracle for the τ=0 anchor).
@@ -189,7 +196,7 @@ static void testDiracFaceEigenbasis() {
 
 int main() {
     testExtrinsicBlockFace();
-    testFlatKernelFace();
+    testBoundaryThrows();
     testDiracFaceFamily();
     testDiracFaceCache();
     testDiracFaceEigenbasis();
