@@ -398,6 +398,15 @@ const Eigen::VectorXd&             vertexDualAreas(Manifold& m);
 // off-diagonal = −1 for adjacent vertices, 0 otherwise.
 Eigen::SparseMatrix<double> graphLaplacian(Manifold& m);
 
+// Extrinsic block of the relative Dirac family (Liu/Jacobson/Crane, SGP 2017):
+// E = Dᵀ ⋆_F D, the [4V×4V] real-symmetric PSD Galerkin form of the relative
+// Dirac operator D_N (the shape-operator / Gauss-map energy). Quaternion order
+// [w,x,y,z]; index 4*v+c. Geometry-only (vertex normals + face areas) — the one
+// operator assembled directly rather than wrapped from geometry-central.
+namespace dirac {
+Eigen::SparseMatrix<double> extrinsicBlock(Manifold& m);
+}  // namespace dirac
+
 // ── Factor Cache ─────────────────────────────────────────────
 //
 // Pre-factored Cholesky / LU decompositions of mesh-derived

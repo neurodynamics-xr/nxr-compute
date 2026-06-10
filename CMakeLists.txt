@@ -71,6 +71,7 @@ add_library(nxr_compute STATIC
   src/graph_laplacian.cpp
   src/facets.cpp
   src/covariant_differential.cpp
+  src/dirac_operator.cpp
 )
 
 target_include_directories(nxr_compute PUBLIC
@@ -206,4 +207,8 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_covariant_differential test/test_covariant_differential.cpp)
     target_link_libraries(test_covariant_differential PRIVATE nxr_compute)
     add_test(NAME test_covariant_differential COMMAND test_covariant_differential)
+
+    add_executable(test_dirac_operator test/test_dirac_operator.cpp)
+    target_link_libraries(test_dirac_operator PRIVATE nxr_compute)
+    add_test(NAME test_dirac_operator COMMAND test_dirac_operator)
 endif()
