@@ -184,9 +184,14 @@ const Eigen::SparseMatrix<double>& Manifold::diracExtrinsicBlockCached_() {
 }
 
 // L(τ) = (1−τ)(cotanL ⊗ I₄) + τ·E. Builds each term only when its coefficient is
-// nonzero — τ=0 never assembles E; τ=1 never builds the intrinsic block.
+// nonzero — τ=0 never assembles E; τ=1 never builds the intrinsic block. The
+// τ==0.0 / τ==1.0 fast paths use exact equality deliberately: τ arrives unmodified
+// from the binding-layer dispatch (a literal or a single mxGetScalar), never from
+// arithmetic, so the constants are exact and an epsilon test would only blur them.
 Eigen::SparseMatrix<double> Manifold::diracFamily_(double tau) {
-    if (tau < 0.0 || tau > 1.0)
+    // Negated form so NaN is rejected too (NaN fails every ordered comparison, so
+    // `tau < 0 || tau > 1` would let it through into a silent NaN-valued matrix).
+    if (!(tau >= 0.0 && tau <= 1.0))
         throw Error(ErrorCode::InvalidInput, "dirac: tau must be in [0,1]",
                     "Got tau=" + std::to_string(tau) + ".");
     const int N = nV();
@@ -206,7 +211,7 @@ Eigen::SparseMatrix<double> Manifold::diracFamily_(double tau) {
     }
     if (tau == 0.0) { L4.makeCompressed(); return L4; }
     const auto& E = diracExtrinsicBlockCached_();
-    if (tau == 1.0) return E;
+    if (tau == 1.0) { Eigen::SparseMatrix<double> out = E; out.makeCompressed(); return out; }
     Eigen::SparseMatrix<double> L = (1.0 - tau) * L4 + tau * E;
     L.makeCompressed();
     return L;

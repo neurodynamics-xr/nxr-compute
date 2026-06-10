@@ -110,6 +110,9 @@ static void testDiracFamily() {
     bool threw = false;
     try { m.operators().dirac(1.5); } catch (const std::exception&) { threw = true; }
     EXPECT(threw, "dirac(τ>1) throws InvalidInput");
+    bool threwNeg = false;
+    try { m.operators().dirac(-0.1); } catch (const std::exception&) { threwNeg = true; }
+    EXPECT(threwNeg, "dirac(τ<0) throws InvalidInput");
 }
 
 static void testDiracCache() {
