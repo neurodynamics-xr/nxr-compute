@@ -96,7 +96,7 @@ coordinate system for MEG leadfield analysis (design:
 | `nxr_compute('geometry', h)` | light per-element geometry; frames are the complex `grid` (`c = e1+i·e2`, normal = `real×imag`); curvature is the 2-RoSy deviatoric `q` + `meanCurvature` |
 | `nxr_compute('gauge', h, type[, opts])` | gauge as a transform of the Levi-Civita grid: `euclidean`/`levi-civita`/`trivial` (only `trivial` carries `vertex.rotation` + singularities) |
 | `nxr_compute('bundle', h, gaugeType[, opts])` | `{Topology, Geometry, Gauge}` in one call |
-| `nxr_compute('operators', h, family[, subtype])` | a single named operator as native sparse — `laplacian` (`cotan`/`graph`/`connection`/`covariant`), `mass` (`lumped`/`galerkin`), `hodge` (`h0`/`h1`/`h2`/`h1inv`), `dec` (struct `{d0,d1}`), `gradient3D` (the covariant gradient `G`, `[3E×3N]`, cached); `connection` is complex. Same matrix the internal solvers use (single source of truth). |
+| `nxr_compute('operators', h, family[, subtype])` | a single named operator as native sparse — `laplacian` (`cotan`/`graph`/`connection`/`covariant`), `mass` (`lumped`/`galerkin`), `hodge` (`h0`/`h1`/`h2`/`h1inv`), `dec` (struct `{d0,d1}`), `gradient3D` (the covariant gradient `G`, `[3E×3N]`, cached), `dirac` (the relative-Dirac family `L(τ) = (1−τ)·cotan⊗I₄ + τ·D_N`, real `[4V×4V]`, `τ∈[0,1]`; the 4th arg is a numeric `τ`, not a string subtype); `connection` is complex. Same matrix the internal solvers use (single source of truth). |
 | `nxr_compute('frameTransport', h, i, j)` | `3×3` orthogonal `Fⱼᵀ Fᵢ` — flat full-frame transport between any two vertex frames (1-based `i,j`) |
 | `nxr_compute('liftToWorld', h, Lloc)` / `('liftToFrame', h, Lworld)` | `[nV×3]` local↔Cartesian frame lift (inverse of `G·cᵀ`) |
 
@@ -140,6 +140,28 @@ default `ambient` — `ambient`'s world-coords form is `kron(I₃, cotanLaplacia
 design: `docs/superpowers/specs/2026-06-08-vector-laplacian-3d-design.md`). Light
 by default (no flag ⇒ byte-identical, no `.operators` field). `MeshData` and
 `Gauge.face.rotation` remain deferred.
+
+**Extrinsic Dirac operator (`operators … dirac τ`).** A curvature-aware
+*extrinsic* spectral operator: the relative-Dirac family `L(τ) = (1−τ)Δ₄ + τ·D_N`
+of Liu/Jacobson/Crane (SGP 2017), interpolating between intrinsic Laplace–Beltrami
+(`τ=0`) and the purely-extrinsic relative Dirac `D_N` (`τ=1`, depends only on the
+Gauss map / shape operator). Geometry-only — it produces a curvature-aware
+eigenbasis from the cortex; any data (leadfield) expansion onto it is downstream
+and out of scope. Built directly (geometry-central has no Dirac): the extrinsic
+block is `E = Dᵀ⋆_F D` from the per-face quaternionic Dirac matrix
+(`-(N_r−N_q)/2A` blocks, vertex normals + face areas), cached as
+`OperatorId::Dirac`; `Δ₄` is the existing cotan ⊗ I₄. `dirac(τ)` blends them by
+value (`τ=0` skips `E`, `τ=1` skips `Δ₄`). Quaternion storage is
+**vertex-interleaved** `[w,x,y,z]` at index `4v+c` — i.e. `cotanL ⊗ I₄` is
+`kron(cotanL, I₄)` (vertex-major), so in MATLAB the τ=0 anchor is
+`kron(Lc, speye(4))` and the eigenbasis is `eigs(L, kron(Mg, speye(4)))`
+(Galerkin mass, *not* `kron(I₄, ·)`). `L(τ)` commutes with right-ℍ-multiplication,
+so eigenvalues come in exact 4-fold quaternionic multiplets (the constant mode is
+a 4-fold zero for all τ). The `τ=0` discretization byte-matches `cotanL ⊗ I₄`
+(built-in correctness anchor). Designs:
+`docs/superpowers/specs/2026-06-10-extrinsic-dirac-operator-design.md`. Boundary
+conditions (infinite potential well) and the cross-surface canonical
+representative remain deferred (single closed cortex, v1).
 
 **Mesh quality / PSD note.** All operators use geometry-central's raw signed cotan
 weights (matching GC), so on non-Delaunay meshes (obtuse triangles — common on
