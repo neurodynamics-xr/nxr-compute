@@ -106,6 +106,7 @@ bool Manifold::isOperatorCached(OperatorId id) const {
         case OperatorId::MassLumped:          return (bool)cacheMassLumped_;
         case OperatorId::MassGalerkin:        return (bool)cacheMassGalerkin_;
         case OperatorId::Gradient3D:          return (bool)cacheGradient3D_;
+        case OperatorId::Dirac:               return (bool)cacheDirac_;
     }
     return false;
 }
@@ -120,6 +121,7 @@ void Manifold::releaseOperator(OperatorId id) {
         case OperatorId::MassLumped:          cacheMassLumped_.reset();          break;
         case OperatorId::MassGalerkin:        cacheMassGalerkin_.reset();        break;
         case OperatorId::Gradient3D:          cacheGradient3D_.reset();          break;
+        case OperatorId::Dirac:               cacheDirac_.reset();               break;
     }
 }
 
@@ -172,6 +174,42 @@ const Eigen::SparseMatrix<double>& Manifold::gradient3DCached_() {
         cacheGradient3D_ = std::make_unique<Eigen::SparseMatrix<double>>(
             differential::covariantGradient(*this));
     return *cacheGradient3D_;
+}
+
+const Eigen::SparseMatrix<double>& Manifold::diracExtrinsicBlockCached_() {
+    if (!cacheDirac_)
+        cacheDirac_ = std::make_unique<Eigen::SparseMatrix<double>>(
+            ops::dirac::extrinsicBlock(*this));
+    return *cacheDirac_;
+}
+
+// L(τ) = (1−τ)(cotanL ⊗ I₄) + τ·E. Builds each term only when its coefficient is
+// nonzero — τ=0 never assembles E; τ=1 never builds the intrinsic block.
+Eigen::SparseMatrix<double> Manifold::diracFamily_(double tau) {
+    if (tau < 0.0 || tau > 1.0)
+        throw Error(ErrorCode::InvalidInput, "dirac: tau must be in [0,1]",
+                    "Got tau=" + std::to_string(tau) + ".");
+    const int N = nV();
+
+    Eigen::SparseMatrix<double> L4;
+    if (tau < 1.0) {
+        const auto& cotanL = cotanLaplacianCached_();    // sources operatorGeometry()
+        std::vector<Eigen::Triplet<double>> T;
+        T.reserve(static_cast<size_t>(cotanL.nonZeros()) * 4);
+        for (int k = 0; k < cotanL.outerSize(); ++k)
+            for (Eigen::SparseMatrix<double>::InnerIterator it(cotanL, k); it; ++it)
+                for (int c = 0; c < 4; ++c)
+                    T.emplace_back(4 * static_cast<int>(it.row()) + c,
+                                   4 * static_cast<int>(it.col()) + c, it.value());
+        L4.resize(4 * N, 4 * N);
+        L4.setFromTriplets(T.begin(), T.end());
+    }
+    if (tau == 0.0) { L4.makeCompressed(); return L4; }
+    const auto& E = diracExtrinsicBlockCached_();
+    if (tau == 1.0) return E;
+    Eigen::SparseMatrix<double> L = (1.0 - tau) * L4 + tau * E;
+    L.makeCompressed();
+    return L;
 }
 
 // ── C3: Connection / Covariant Laplacian cache-fill helpers ──────────────────
@@ -304,6 +342,7 @@ OperatorsFacet::LaplacianView::covariant(
 // dec(): returns the lazily-cached DECOperators bundle via Manifold::decOperators().
 const ops::DECOperators& OperatorsFacet::dec() const { return m_.decOperators(); }
 const Eigen::SparseMatrix<double>& OperatorsFacet::gradient3D() const { return m_.gradient3DCached_(); }
+Eigen::SparseMatrix<double> OperatorsFacet::dirac(double tau) const { return m_.diracFamily_(tau); }
 
 // MassView: each helper calls through to the independent private Manifold cache-fill.
 // Holds Manifold& m (C1 pattern) — never dangles.
