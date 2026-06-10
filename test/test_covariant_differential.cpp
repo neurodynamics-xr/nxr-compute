@@ -1,4 +1,7 @@
 #include "nxr/compute.h"
+#include "nxr/facets.h"
+#include "geometrycentral/surface/manifold_surface_mesh.h"
+#include "geometrycentral/surface/vertex_position_geometry.h"
 #include <cmath>
 #include <iostream>
 using namespace nxr::manifold;
@@ -67,9 +70,49 @@ static void testLifts() {
            "same Cartesian vector has different local coords (the artifact lifts away)");
 }
 
+static void testCovariantGradient() {
+    std::cout << "\n=== covariant-differential: covariant gradient G ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+    const int N = m.nV(), E = m.nE();   // 12, 30
+
+    Eigen::SparseMatrix<double> G = differential::covariantGradient(m);
+    EXPECT(G.rows() == 3*E && G.cols() == 3*N, "G is [3E, 3N] = [90, 36]");
+
+    // HEADLINE: a Cartesian-constant field has zero covariant gradient.
+    Eigen::MatrixXd Lworld(N, 3);
+    for (int v = 0; v < N; ++v) Lworld.row(v) = Eigen::RowVector3d(0.3, -0.7, 0.2);
+    Eigen::MatrixXd Lloc = differential::liftToFrame(m, Lworld);     // [N,3]
+    // component-major 3N: column-major [N,3] flattens to [a;b;c]
+    Eigen::VectorXd x = Eigen::Map<const Eigen::VectorXd>(Lloc.data(), 3*N);
+    EXPECT((G * x).cwiseAbs().maxCoeff() < 1e-10, "G*(Cartesian-constant) = 0 (artifact removed)");
+    // ...while the naive component-wise difference is NOT zero on this curved mesh:
+    EXPECT((Lloc.row(0) - Lloc.row(2)).cwiseAbs().maxCoeff() > 1e-3, "naive local difference is nonzero");
+
+    // CONSISTENCY: G^T W G == the existing Ambient covariant Laplacian (default LC gauge).
+    // W is the edge cotan weight, replicated across the 3 component blocks.
+    auto& geom = m.operatorGeometry(); geom.requireEdgeCotanWeights();
+    Eigen::VectorXd wEdge(E);
+    for (auto e : m.mesh().edges()) wEdge(e.getIndex()) = geom.edgeCotanWeights[e];
+    Eigen::VectorXd wDiag(3*E);
+    for (int p = 0; p < 3; ++p) wDiag.segment(p*E, E) = wEdge;
+    Eigen::SparseMatrix<double> W(3*E, 3*E);
+    { std::vector<Eigen::Triplet<double>> tw; tw.reserve(3*E);
+      for (int k = 0; k < 3*E; ++k) tw.emplace_back(k, k, wDiag(k));
+      W.setFromTriplets(tw.begin(), tw.end()); }
+    Eigen::SparseMatrix<double> GtWG = G.transpose() * W * G;
+
+    namespace cl = ops::laplacian::connection;
+    Eigen::SparseMatrix<double> Camb =
+        m.operators().laplacian().covariant(cl::CovariantCoupling::Ambient);
+    EXPECT((Eigen::MatrixXd(GtWG) - Eigen::MatrixXd(Camb)).cwiseAbs().maxCoeff() < 1e-9,
+           "G^T W G == Ambient covariant Laplacian (consistency)");
+}
+
 int main() {
     testFrameTransport();
     testLifts();
+    testCovariantGradient();
     std::cout << (g_failures ? "\nFAILURES\n" : "\nALL PASSED\n");
     return g_failures ? 1 : 0;
 }
