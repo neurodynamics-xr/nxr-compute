@@ -96,7 +96,24 @@ coordinate system for MEG leadfield analysis (design:
 | `nxr_compute('geometry', h)` | light per-element geometry; frames are the complex `grid` (`c = e1+i·e2`, normal = `real×imag`); curvature is the 2-RoSy deviatoric `q` + `meanCurvature` |
 | `nxr_compute('gauge', h, type[, opts])` | gauge as a transform of the Levi-Civita grid: `euclidean`/`levi-civita`/`trivial` (only `trivial` carries `vertex.rotation` + singularities) |
 | `nxr_compute('bundle', h, gaugeType[, opts])` | `{Topology, Geometry, Gauge}` in one call |
-| `nxr_compute('operators', h, family[, subtype])` | a single named operator as native sparse — `laplacian` (`cotan`/`graph`/`connection`/`covariant`), `mass` (`lumped`/`galerkin`), `hodge` (`h0`/`h1`/`h2`/`h1inv`), `dec` (struct `{d0,d1}`); `connection` is complex. Same matrix the internal solvers use (single source of truth). |
+| `nxr_compute('operators', h, family[, subtype])` | a single named operator as native sparse — `laplacian` (`cotan`/`graph`/`connection`/`covariant`), `mass` (`lumped`/`galerkin`), `hodge` (`h0`/`h1`/`h2`/`h1inv`), `dec` (struct `{d0,d1}`), `gradient3D` (the covariant gradient `G`, `[3E×3N]`, cached); `connection` is complex. Same matrix the internal solvers use (single source of truth). |
+| `nxr_compute('frameTransport', h, i, j)` | `3×3` orthogonal `Fⱼᵀ Fᵢ` — flat full-frame transport between any two vertex frames (1-based `i,j`) |
+| `nxr_compute('liftToWorld', h, Lloc)` / `('liftToFrame', h, Lworld)` | `[nV×3]` local↔Cartesian frame lift (inverse of `G·cᵀ`) |
+
+**Covariant differential operators (`nxr::manifold::differential`).** Artifact-free
+transport + differentiation of a 3-vector cortical field (e.g. a leadfield) expressed in
+per-vertex frames `Fᵥ = [e1|e2|n]` (from `geometry::vertexFrames`). The connection is the
+flat full-frame transport `P_ij = Fⱼᵀ Fᵢ` — it accounts for the tangent rotation AND the
+normal tilt, is **path-independent** (zero holonomy: `Fᵢᵀ Fₖ·Fₖᵀ Fⱼ·Fⱼᵀ Fᵢ = I`), and so
+removes the frame-rotation artifact (Cartesian-parallel leadfields on opposite sulcal walls
+reading as antiparallel). `differential::covariantGradient` is the sparse `[3E×3N]` covariant
+difference `δ_e = L_j − P_ij L_i` (`+I₃` at `j`, `−P_ij` at `i`, component-major `[a;b;c]`);
+a Cartesian-constant field has `G·L = 0`, and `GᵀWG` (W = edge cotan weights) equals the
+existing Ambient covariant Laplacian (a built-in consistency anchor — verified to <1e-9).
+Use `G` as a **gradient** (first-order); its degenerate Ambient spectrum is irrelevant. The
+curvature-coupled *spectral* operator (α-coupled / shell / Dirac) is a separate, deferred
+question — only transport/gradients are canonical and parameter-free. Design:
+`docs/superpowers/specs/2026-06-10-cortical-covariant-differential-operators-design.md`.
 
 Library backing (all in `nxr::manifold`): `geometry::vertexGrid`/`faceGrid`,
 `geometry::vertexCurvature`, `geometry::meshTopology`, `geometry::meshGeometry`,
