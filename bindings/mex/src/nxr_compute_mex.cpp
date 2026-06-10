@@ -1767,6 +1767,8 @@ void cmdVersion(int /*nlhs*/, mxArray** plhs,
 //   nxr_compute('operators', h, 'gradient3D')         % [3E×3N] covariant gradient
 //   nxr_compute('operators', h, 'dirac', tau)   % [4V×4V] relative-Dirac family,
 //                                               % tau in [0,1] (0=cotan⊗I4, 1=D_N)
+//   nxr_compute('operators', h, 'diracFace', tau)  % [4F×4F] FACE-domain (dual)
+//                                                  % relative-Dirac, tau in [0,1]
 //
 // All sparse outputs are native MATLAB sparse (real or complex).
 // 'covariant' uses the default Ambient coupling (same as the existing
@@ -1837,9 +1839,17 @@ void cmdOperators(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) 
         double tau = getDoubleArg(prhs[3]);   // validates real numeric/logical scalar
         plhs[0] = eigenSparseToMx(m.operators().dirac(tau));   // [4V×4V], caches E on the handle
 
+    } else if (family == "diracFace") {
+        if (nrhs < 4)
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                "operators diracFace: expected a scalar tau, "
+                "nxr_compute('operators', h, 'diracFace', tau).");
+        double tau = getDoubleArg(prhs[3]);
+        plhs[0] = eigenSparseToMx(m.operators().diracFace(tau));   // [4F×4F], caches Ẽ
+
     } else {
         throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
-            "operators: family must be laplacian|mass|hodge|dec|gradient3D|dirac.");
+            "operators: family must be laplacian|mass|hodge|dec|gradient3D|dirac|diracFace.");
     }
 }
 
