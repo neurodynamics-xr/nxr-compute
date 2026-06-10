@@ -1463,6 +1463,38 @@ MeshGeometry meshGeometry(Manifold& m);
 
 } // namespace nxr::manifold::geometry
 
+// ── Covariant differential operators on 3-vector cortical fields ──────────────
+//
+// Artifact-free transport + differentiation of a 3-vector field (e.g. a leadfield)
+// expressed in per-vertex cortical frames Fv = [e1 | e2 | n] (columns), sourced from
+// geometry::vertexFrames. The connection is the flat full-frame transport
+// P_ij = Fj^T Fi — it accounts for the tangent rotation AND the normal tilt, and is
+// path-independent (zero holonomy), which is exactly what removes the frame-rotation
+// artifact (e.g. Cartesian-parallel leadfields on opposite sulcal walls reading as
+// antiparallel in local frames). See the design doc.
+namespace nxr::manifold::differential {
+
+// 3x3 transport of a frame-local vector from vertex i's frame to vertex j's frame,
+// P_ij = Fj^T Fi. Flat => exact for ANY pair (i, j) (adjacent or not). 0-based indices.
+Eigen::Matrix3d frameTransport(Manifold& m, int i, int j);
+
+// Per-vertex frames Fv stacked as [nV, 9], row v = Fv flattened ROW-major
+// (Fv(0,0),Fv(0,1),Fv(0,2), Fv(1,0),...). Columns of Fv are [e1 | e2 | n].
+Eigen::MatrixXd vertexFrameMatrices(Manifold& m);
+
+// Lift a frame-local field to world (Cartesian): world[v] = Fv * Lloc[v]. [nV,3] -> [nV,3].
+Eigen::MatrixXd liftToWorld(Manifold& m, const Eigen::MatrixXd& Lloc);
+
+// Express a world (Cartesian) field in frames: Lloc[v] = Fv^T * Lworld[v]. [nV,3] -> [nV,3].
+Eigen::MatrixXd liftToFrame(Manifold& m, const Eigen::MatrixXd& Lworld);
+
+// Covariant gradient operator G : 3N -> 3E (component-major [a;b;c] blocks). For each
+// oriented edge e: i->j, the covariant difference is delta_e = L_j - P_ij L_i. G has a +I3
+// block at vertex j and a -P_ij block at vertex i. A Cartesian-constant field has G*L = 0.
+Eigen::SparseMatrix<double> covariantGradient(Manifold& m);
+
+} // namespace nxr::manifold::differential
+
 namespace nxr::field::generate {
 
 using nxr::manifold::Manifold;

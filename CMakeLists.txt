@@ -70,6 +70,7 @@ add_library(nxr_compute STATIC
   src/geometry_bundle.cpp
   src/graph_laplacian.cpp
   src/facets.cpp
+  src/covariant_differential.cpp
 )
 
 target_include_directories(nxr_compute PUBLIC
@@ -201,4 +202,8 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_operators_facet test/test_operators_facet.cpp)
     target_link_libraries(test_operators_facet PRIVATE nxr_compute)
     add_test(NAME test_operators_facet COMMAND test_operators_facet)
+
+    add_executable(test_covariant_differential test/test_covariant_differential.cpp)
+    target_link_libraries(test_covariant_differential PRIVATE nxr_compute)
+    add_test(NAME test_covariant_differential COMMAND test_covariant_differential)
 endif()
