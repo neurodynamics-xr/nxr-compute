@@ -21,6 +21,7 @@ assert(max(abs(sqrt(sum(e1.^2,2))-1)) < 1e-6, 'e1 unit');
 assert(max(abs(sqrt(sum(e2.^2,2))-1)) < 1e-6, 'e2 unit');
 assert(max(abs(sum(e1.*e2,2))) < 1e-6, 'e1 perp e2');
 assert(max(abs(E.vertex.normal - cross(e1,e2,2)),[],'all') < 1e-6, 'normal == e1 x e2');
+assert(isequal(size(E.vertex.normal),[nV 3]), 'embedded vertex.normal nV x3');
 assert(isequal(size(E.face.grid),[nF 3]), 'face grid nF x3');
 assert(~isreal(E.face.grid), 'face.grid complex');
 
@@ -32,6 +33,9 @@ assert(all(I.vertex.dualArea > 0), 'dual areas positive');
 assert(isequal(size(I.edge.length),[nE 1]), 'edge.length nE x1');
 assert(isequal(size(I.edge.cotanWeight),[nE 1]), 'edge.cotanWeight nE x1');
 assert(~isreal(I.halfedge.transportAlong), 'transportAlong complex');
+assert(~isreal(I.halfedge.transportAcross), 'transportAcross complex');
+nH = 3*nF;
+assert(isequal(size(I.halfedge.cotanWeight),[nH 1]), 'halfedge cotanWeight nH x1');
 
 % extrinsic
 X = nxr_compute('extrinsic', h);
@@ -40,8 +44,24 @@ assert(isequal(size(X.vertex.principalDir),[nV 3]), 'principalDir nV x3');
 assert(~isreal(X.vertex.curvature2RoSy), 'curvature2RoSy complex');
 assert(isequal(size(X.edge.dihedralAngle),[nE 1]), 'dihedralAngle nE x1');
 
+% ── grouped facets command ──
+opts = struct('singVerts', uint32([1;2]), 'singValues', [1;1], 'source', 'manual');
+Fc = nxr_compute('facets', h, 'trivial', opts);
+assert(isequal(sort(fieldnames(Fc)), ...
+    sort({'Topology';'Embedded';'Intrinsic';'Extrinsic';'Gauge'})), 'five groups');
+assert(strcmp(Fc.Gauge.type,'trivial'), 'gauge type trivial');
+assert(abs(sum(Fc.Gauge.singularity.indices) - 2) < 1e-12, 'Gauss-Bonnet chi==2');
+% grouped sub-structs == standalone
+assert(isequal(Fc.Embedded.vertex.grid, E.vertex.grid), 'facets Embedded == embedded');
+assert(isequal(Fc.Intrinsic.edge.length, I.edge.length), 'facets Intrinsic == intrinsic');
+assert(isequal(Fc.Extrinsic.vertex.meanCurvature, X.vertex.meanCurvature), 'facets Extrinsic == extrinsic');
+T = nxr_compute('topology', h);
+assert(isequal(Fc.Topology.halfedge.twin, T.halfedge.twin), 'facets Topology == topology');
+Ga = nxr_compute('gauge', h, 'trivial', opts);
+assert(isequal(Fc.Gauge.vertex.rotation, Ga.vertex.rotation), 'facets Gauge == gauge');
+
 nxr_compute('destroy', h);
-fprintf('ALL TESTS PASSED: test_facets (standalone)\n');
+fprintf('ALL TESTS PASSED: test_facets\n');
 end
 
 function [V, F] = local_icosahedron()

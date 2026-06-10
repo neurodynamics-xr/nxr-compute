@@ -1680,6 +1680,40 @@ void cmdExtrinsic(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) 
     plhs[0] = buildExtrinsicStruct(h);
 }
 
+// ── facets(handle, gaugeType[, opts]) → struct ───────────────
+//
+// Grouped command returning a single struct with five representation-
+// grouped sub-structs (data only; no operators path):
+//   Fc.Topology   — halfedge combinatorics (same as 'topology' command)
+//   Fc.Embedded   — vertex/face positions, normals, grids (same as 'embedded')
+//   Fc.Intrinsic  — dual areas, edge lengths, cotan weights, transport (same as 'intrinsic')
+//   Fc.Extrinsic  — curvature, principal directions, dihedral angles (same as 'extrinsic')
+//   Fc.Gauge      — connection gauge (rotation per vertex) (same as 'gauge' command)
+//
+// gaugeType in {euclidean, levi-civita, trivial}. For 'trivial', opts must
+// carry singVerts (1-based) and singValues (sum == Euler characteristic).
+//
+// Usage:
+//   Fc = nxr_compute('facets', h, 'levi-civita')
+//   Fc = nxr_compute('facets', h, 'trivial', struct('singVerts',[1;2],'singValues',[1;1]))
+
+void cmdFacets(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs < 3) throw std::invalid_argument(
+        "nxr_compute('facets', handle, gaugeType[, opts]) — gaugeType in {euclidean,levi-civita,trivial}");
+    ContextHolder& h = getHolder(prhs[1]);
+    std::string type = getStringArg(prhs[2]);
+    const mxArray* opts = (nrhs >= 4) ? prhs[3] : nullptr;
+
+    const char* f[] = {"Topology","Embedded","Intrinsic","Extrinsic","Gauge"};
+    mxArray* s = mxCreateStructMatrix(1,1,5,f);
+    mxSetField(s,0,"Topology",  buildTopologyStruct(h, false));
+    mxSetField(s,0,"Embedded",  buildEmbeddedStruct(h));
+    mxSetField(s,0,"Intrinsic", buildIntrinsicStruct(h));
+    mxSetField(s,0,"Extrinsic", buildExtrinsicStruct(h));
+    mxSetField(s,0,"Gauge",     buildGaugeStruct(h, type, opts, false));
+    plhs[0] = s;
+}
+
 // ── version() → string ───────────────────────────────────────
 
 void cmdVersion(int /*nlhs*/, mxArray** plhs,
@@ -1831,6 +1865,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "embedded")                    cmdEmbedded(nlhs, plhs, nrhs, prhs);
         else if (cmd == "intrinsic")                   cmdIntrinsic(nlhs, plhs, nrhs, prhs);
         else if (cmd == "extrinsic")                   cmdExtrinsic(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "facets")                      cmdFacets(nlhs, plhs, nrhs, prhs);
         else if (cmd == "version")                 cmdVersion(nlhs, plhs, nrhs, prhs);
         else {
             mexErrMsgIdAndTxt("nxr:unknownCommand",
@@ -1841,7 +1876,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
                 "findCenter, signedHeat, smoothFace, "
                 "smoothVertex, compute, computeFreq, "
                 "topology, geometry, gauge, bundle, operators, "
-                "embedded, intrinsic, extrinsic, version.",
+                "embedded, intrinsic, extrinsic, facets, version.",
                 cmd.c_str());
         }
     } catch (const nxr::core::Error& e) {
