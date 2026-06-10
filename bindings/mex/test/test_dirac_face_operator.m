@@ -20,15 +20,17 @@ assert(isequal(size(L0), [4*nF, 4*nF]), 'diracFace size wrong');
 assert(norm(L0 - anchor, 'fro') < 1e-9, 'diracFace(0) != kron(K~, I4)');
 
 % tau=0.5 symmetric; real eigenvalues; 4-fold multiplets. Generalized problem against
-% the face-area mass B~ = diag(A_f)xI4 (L~(0.5) has an exact 4-fold zero, so plain
-% eigs(L,'smallestabs') shift-inverts a singular matrix; the mass-paired solve is robust).
+% the face-area mass B~ = diag(A_f)xI4. L~(0.5) has an exact 4-fold zero, so we
+% shift-invert at a small sigma (sigma=-1e-8, matching the native solver) rather
+% than 'smallestabs' on the singular matrix — finds the same low modes, no warning.
 L = nxr_compute('operators', h, 'diracFace', 0.5);
 assert(norm(L - L', 'fro') < 1e-9, 'diracFace(0.5) not symmetric');
 v1 = V(F(:,1),:); v2 = V(F(:,2),:); v3 = V(F(:,3),:);
 Af = 0.5 * sqrt(sum(cross(v2-v1, v3-v1, 2).^2, 2));        % per-face areas from coords
 B  = kron(spdiags(Af, 0, nF, nF), speye(4));
-d  = sort(real(eigs(L, B, 8, 'smallestabs')));
-assert(all(abs(imag(eigs(L, B, 8, 'smallestabs'))) < 1e-8), 'eigenvalues not real');
+ev = eigs(L, B, 8, -1e-8);                                 % single solve, shifted off the zero
+assert(all(abs(imag(ev)) < 1e-8), 'eigenvalues not real');
+d  = sort(real(ev));
 assert(d(4) - d(1) < 1e-4*(1+abs(d(4))), 'first multiplet not >=4-fold');
 assert(d(8) - d(5) < 1e-4*(1+abs(d(8))), 'second multiplet not >=4-fold');
 
