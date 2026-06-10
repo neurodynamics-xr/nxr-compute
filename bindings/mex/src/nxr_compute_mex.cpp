@@ -1141,6 +1141,40 @@ void cmdRandomDecomposed1Form(int /*nlhs*/, mxArray** plhs, int nrhs, const mxAr
     plhs[0] = eigenVectorToMx(omega);
 }
 
+// ── Covariant differential: frameTransport / liftToWorld / liftToFrame ──
+//
+// Thin wrappers around nxr::manifold::differential::* that handle 1-based
+// MATLAB index conversion and [nV×3] matrix marshalling via the existing
+// mxToEigenMatrix / eigenMatrixToMx helpers from marshal.h.
+
+// nxr_compute('frameTransport', h, i, j) -> [3×3]   (i,j are 1-based)
+void cmdFrameTransport(int, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs < 4) throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+        "frameTransport: expected nxr_compute('frameTransport', handle, i, j).");
+    ContextHolder& h = getHolder(prhs[1]);
+    int i = static_cast<int>(mxGetScalar(prhs[2])) - 1;   // 1-based -> 0-based
+    int j = static_cast<int>(mxGetScalar(prhs[3])) - 1;
+    plhs[0] = eigenMatrixToMx(nxr::manifold::differential::frameTransport(*h.ctx, i, j));
+}
+
+// nxr_compute('liftToWorld', h, Lloc[nV×3]) -> [nV×3]
+void cmdLiftToWorld(int, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs < 3) throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+        "liftToWorld: expected nxr_compute('liftToWorld', handle, field[nV x 3]).");
+    ContextHolder& h = getHolder(prhs[1]);
+    plhs[0] = eigenMatrixToMx(
+        nxr::manifold::differential::liftToWorld(*h.ctx, mxToEigenMatrix(prhs[2])));
+}
+
+// nxr_compute('liftToFrame', h, Lworld[nV×3]) -> [nV×3]
+void cmdLiftToFrame(int, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs < 3) throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+        "liftToFrame: expected nxr_compute('liftToFrame', handle, field[nV x 3]).");
+    ContextHolder& h = getHolder(prhs[1]);
+    plhs[0] = eigenMatrixToMx(
+        nxr::manifold::differential::liftToFrame(*h.ctx, mxToEigenMatrix(prhs[2])));
+}
+
 // ── operator sub-struct builders ─────────────────────────────
 //
 // Called when the caller passes opts.operators = true.
@@ -1786,9 +1820,12 @@ void cmdOperators(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) 
         mxSetField(s, 0, "d1", eigenSparseToMx(dec.d1));
         plhs[0] = s;
 
+    } else if (family == "gradient3D") {
+        plhs[0] = eigenSparseToMx(nxr::manifold::differential::covariantGradient(m));
+
     } else {
         throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
-            "operators: family must be laplacian|mass|hodge|dec.");
+            "operators: family must be laplacian|mass|hodge|dec|gradient3D.");
     }
 }
 
@@ -1862,6 +1899,9 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "gauge")                       cmdGauge(nlhs, plhs, nrhs, prhs);
         else if (cmd == "bundle")                      cmdBundle(nlhs, plhs, nrhs, prhs);
         else if (cmd == "operators")                   cmdOperators(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "frameTransport")              cmdFrameTransport(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "liftToWorld")                 cmdLiftToWorld(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "liftToFrame")                 cmdLiftToFrame(nlhs, plhs, nrhs, prhs);
         else if (cmd == "embedded")                    cmdEmbedded(nlhs, plhs, nrhs, prhs);
         else if (cmd == "intrinsic")                   cmdIntrinsic(nlhs, plhs, nrhs, prhs);
         else if (cmd == "extrinsic")                   cmdExtrinsic(nlhs, plhs, nrhs, prhs);
@@ -1876,6 +1916,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
                 "findCenter, signedHeat, smoothFace, "
                 "smoothVertex, compute, computeFreq, "
                 "topology, geometry, gauge, bundle, operators, "
+                "frameTransport, liftToWorld, liftToFrame, "
                 "embedded, intrinsic, extrinsic, facets, version.",
                 cmd.c_str());
         }
