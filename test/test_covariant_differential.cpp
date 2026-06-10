@@ -45,8 +45,31 @@ static void testFrameTransport() {
     EXPECT((F0.transpose()*F0 - Eigen::Matrix3d::Identity()).norm() < 1e-12, "Fv orthonormal");
 }
 
+static void testLifts() {
+    std::cout << "\n=== covariant-differential: lifts ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+
+    // round-trip: liftToFrame(liftToWorld(L)) == L
+    Eigen::MatrixXd Lloc = Eigen::MatrixXd::Random(12, 3);
+    Eigen::MatrixXd back = differential::liftToFrame(m, differential::liftToWorld(m, Lloc));
+    EXPECT((back - Lloc).cwiseAbs().maxCoeff() < 1e-12, "liftToFrame∘liftToWorld == identity");
+
+    // artifact removal end-to-end: a Cartesian-CONSTANT field lifted to frames has
+    // DIFFERENT local coords at different vertices, but the SAME world vector everywhere.
+    Eigen::MatrixXd Lworld(12, 3);
+    for (int v = 0; v < 12; ++v) Lworld.row(v) = Eigen::RowVector3d(1.0, 0.0, 0.0);
+    Eigen::MatrixXd locC = differential::liftToFrame(m, Lworld);
+    Eigen::MatrixXd worldBack = differential::liftToWorld(m, locC);
+    EXPECT((worldBack - Lworld).cwiseAbs().maxCoeff() < 1e-12, "lift recovers constant world field");
+    // local coords genuinely differ between two vertices on the curved surface
+    EXPECT((locC.row(0) - locC.row(6)).cwiseAbs().maxCoeff() > 1e-3,
+           "same Cartesian vector has different local coords (the artifact lifts away)");
+}
+
 int main() {
     testFrameTransport();
+    testLifts();
     std::cout << (g_failures ? "\nFAILURES\n" : "\nALL PASSED\n");
     return g_failures ? 1 : 0;
 }
