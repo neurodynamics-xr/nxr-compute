@@ -160,6 +160,7 @@ static void testDiracFaceEigenbasis() {
                             4*static_cast<int>(f.getIndex())+c, geom.faceAreas[f]);
     Eigen::SparseMatrix<double> B(4*Fn, 4*Fn); B.setFromTriplets(TB.begin(), TB.end());
 
+    // B-orthonormal face eigenbasis via the production solver (Spectra path).
     const int k = 8;
     solve::EigenResult er = solve::eigen(L, B, k);
     Eigen::MatrixXd Phi = solve::normalize(er.eigenvectors, B);
@@ -168,15 +169,22 @@ static void testDiracFaceEigenbasis() {
            "Phi^T B Phi ~ I (B-orthonormal face eigenbasis)");
     EXPECT(er.eigenvalues.allFinite() && er.eigenvalues(0) <= er.eigenvalues(k-1),
            "eigenvalues finite & ascending");
-    // L̃(τ) has a 4-fold null space (from K̃ ⊗ I₄ having nullity = 4 × nullity(K̃);
-    // K̃ = d₁ ⋆₁⁻¹ d₁ᵀ has a 1-dim null from the constant 1-form; tensored with I₄ → 4-dim).
-    // Unlike the vertex-domain operator, non-null eigenvalues follow icosahedral face symmetry
-    // (multiplets of 3, 4, or 5), not necessarily 4-fold. The quaternionic block structure of
-    // the operator is verified by the symmetry test in testExtrinsicBlockFace. Here we verify
-    // the null space is at least 4-dimensional.
-    int nullDim = 0;
-    for (int i = 0; i < k; ++i) if (std::abs(er.eigenvalues(i)) < 1e-8) ++nullDim;
-    EXPECT(nullDim >= 4, "L~(τ) has at least 4-dimensional null space (K~ tensor I4)");
+
+    // Quaternionic structure: L̃(τ) is built from left-quaternion-mult blocks (Ẽ) plus the
+    // block-scalar K̃⊗I₄ and is solved against B = (face areas)⊗I₄, so it commutes with
+    // right-ℍ-multiplication ⇒ EVERY eigenvalue multiplicity is divisible by 4. Verify on the
+    // EXACT dense generalized spectrum: Spectra miscounts tightly-degenerate clusters (it
+    // returns e.g. 5 for an 8-fold on this icosphere), so it cannot be used for multiplicities.
+    Eigen::MatrixXd Ld(L), Bd(B);
+    Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> ges(Ld, Bd);
+    Eigen::VectorXd ev = ges.eigenvalues();
+    bool allDiv4 = true;
+    for (int i = 0; i < ev.size(); ) {
+        int j = i; while (j < ev.size() && std::abs(ev(j) - ev(i)) < 1e-6) ++j;
+        if ((j - i) % 4 != 0) allDiv4 = false;
+        i = j;
+    }
+    EXPECT(allDiv4, "all eigenvalue multiplicities divisible by 4 (right-ℍ quaternionic structure)");
 }
 
 int main() {
