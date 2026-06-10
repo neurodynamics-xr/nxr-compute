@@ -17,7 +17,17 @@ quaternion per triangle / centroid), built so the Gauss map is sampled as the
 **exact per-face normal** (a face normal is well-defined and constant on a flat
 triangle — no angle/area-weighted averaging, unlike a vertex normal). Geometry-
 only: it produces a face-based curvature-aware eigenbasis from the cortex; any
-data (leadfield) expansion onto it is downstream and out of scope.
+data expansion onto it is downstream and out of scope.
+
+**Motivating use case (why a *face*-supported basis, not vertex).** The intended
+downstream field is a leadfield defined on **triangle faces** — integrating the
+current **flux through each triangle** (`∫ J·n dA`, a flux / 2-form quantity)
+rather than a point-source current at a vertex. A face-integrated flux genuinely
+*lives* on faces, so a face-supported eigenbasis is the natural expansion basis:
+no vertex↔face interpolation is needed to project onto it, and none of the
+vertex-normal averaging is reintroduced. This is the "field is genuinely
+face-defined" case where the face operator is unambiguously the right tool (as
+opposed to merely wanting sharper curvature on a vertex-defined field).
 
 It is the `V ↔ F` dual of the vertex-domain `dirac(τ)`:
 
@@ -186,17 +196,23 @@ the DEC 2-form Laplacian kron; `eigs` returns real eigenvalues in 4-fold multipl
 
 ---
 
-## Open question (one) — confirm before planning
+## Resolved decision (was the open question)
 
-**`Ẽ` vs `dirac(τ)` co-spectrality is NOT expected and not the goal.** Worth
-confirming the intent: this operator genuinely *re-samples* the Gauss map at face
-normals (exact, dihedral-curvature-based), so its spectrum differs from the
-vertex operator's — it is a new operator, not a face-located view of the same one.
-(The cheap "face-located, same spectrum" alternative — `D · M · Dᵀ` reusing the
-vertex `D` — is explicitly NOT this; it keeps vertex normals. Flagging so the
-choice is conscious.)
+**This is a genuinely new operator with a face-supported eigenbasis — confirmed.**
+It *re-samples* the Gauss map at exact face normals (dihedral-curvature-based), so
+its spectrum legitimately differs from the vertex `dirac(τ)`'s. The cheap
+"face-located, same spectrum" alternative (`D · M · Dᵀ` reusing the vertex `D`,
+which keeps vertex normals) is explicitly **rejected** — it would not serve a
+face-defined field. The decision is driven by the motivating use case above: a
+face-integrated flux leadfield is genuinely face-defined, so a face-supported,
+exact-face-normal basis is required, not a relabeled vertex basis.
 
-Everything else (the vertex-star aggregation, the `K̃` anchor, the face-area mass,
+The construction choice is also settled: the **vertex-star (Poincaré dual)**
+aggregation, not the combinatorially simpler face-adjacency (3-regular) variant.
+The vertex-star form is the faithful discretization of the shape-operator energy
+(the `d` face-normals around a vertex trace its discrete Gauss image), defensible
+by construction; the face-adjacency stencil is wider/skewed and would need a
+separate convergence check. Everything else (the `K̃` anchor, the face-area mass,
 face-interleaved storage, caching model, MEX surface) follows the vertex-domain
 operator's settled design.
 
