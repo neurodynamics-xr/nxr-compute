@@ -181,6 +181,7 @@ private:
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheGradient3D_;
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDirac_;      // extrinsic block E
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracFace_;  // face extrinsic block Ẽ
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheTwoFormLaplacian_;  // K̃ = d₁⋆₁⁻¹d₁ᵀ (diracFace intrinsic anchor)
 
     // Private cache-fill helpers called by OperatorsFacet::LaplacianView.
     // These source DIRECTLY from operatorGeometry()'s GC cache without
@@ -212,6 +213,9 @@ private:
 
     // Face-domain relative-Dirac extrinsic block Ẽ (4F×4F), cached (OperatorId::DiracFace).
     const Eigen::SparseMatrix<double>& diracFaceExtrinsicBlockCached_();
+    // DEC 2-form Laplacian K̃ = d₁⋆₁⁻¹d₁ᵀ ([F×F]) — the diracFace intrinsic anchor.
+    // Cached (mesh-fixed; not user-facing, so no OperatorId) so a τ-sweep reuses it.
+    const Eigen::SparseMatrix<double>& twoFormLaplacianCached_();
     // Assemble L̃(τ) = (1−τ)(K̃⊗I₄) + τ·Ẽ by value, K̃ = d₁⋆₁⁻¹d₁ᵀ. τ ∈ [0,1].
     Eigen::SparseMatrix<double> diracFaceFamily_(double tau);
 

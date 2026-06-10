@@ -226,9 +226,24 @@ const Eigen::SparseMatrix<double>& Manifold::diracFaceExtrinsicBlockCached_() {
     return *cacheDiracFace_;
 }
 
+// K̃ = d₁⋆₁⁻¹d₁ᵀ, the DEC 2-form Laplacian ([F×F]). Cached: depends only on the
+// (mesh-fixed) cached DEC operators, so a diracFace(τ) sweep reuses it instead of
+// re-running the sparse triple product each call. d1t is an explicit temporary
+// (different object from dec.d1) so the d1·⋆₁⁻¹·d1ᵀ chain has no Eigen aliasing.
+const Eigen::SparseMatrix<double>& Manifold::twoFormLaplacianCached_() {
+    if (!cacheTwoFormLaplacian_) {
+        const ops::DECOperators& dec = decOperators();
+        Eigen::SparseMatrix<double> d1t = dec.d1.transpose();
+        cacheTwoFormLaplacian_ = std::make_unique<Eigen::SparseMatrix<double>>(
+            dec.d1 * dec.hodge1Inverse * d1t);
+    }
+    return *cacheTwoFormLaplacian_;
+}
+
 // L̃(τ) = (1−τ)(K̃ ⊗ I₄) + τ·Ẽ, K̃ = d₁⋆₁⁻¹d₁ᵀ (DEC 2-form Laplacian). Builds each
 // term only when its coefficient is nonzero — τ=0 never assembles Ẽ; τ=1 never
-// builds K̃. NaN-safe guard + exact-fast-path reasoning as diracFamily_.
+// builds K̃. NaN-safe guard + exact-fast-path reasoning as diracFamily_. K̃ is read
+// from its cache (mirrors the vertex diracFamily_ reading cotanLaplacianCached_).
 Eigen::SparseMatrix<double> Manifold::diracFaceFamily_(double tau) {
     if (!(tau >= 0.0 && tau <= 1.0))
         throw Error(ErrorCode::InvalidInput, "diracFace: tau must be in [0,1]",
@@ -237,9 +252,7 @@ Eigen::SparseMatrix<double> Manifold::diracFaceFamily_(double tau) {
 
     Eigen::SparseMatrix<double> K4;
     if (tau < 1.0) {
-        const ops::DECOperators& dec = decOperators();
-        Eigen::SparseMatrix<double> d1t = dec.d1.transpose();
-        Eigen::SparseMatrix<double> Ktilde = dec.d1 * dec.hodge1Inverse * d1t;  // [F×F]
+        const Eigen::SparseMatrix<double>& Ktilde = twoFormLaplacianCached_();  // [F×F], cached
         std::vector<Eigen::Triplet<double>> T;
         T.reserve(static_cast<size_t>(Ktilde.nonZeros()) * 4);
         for (int k = 0; k < Ktilde.outerSize(); ++k)
