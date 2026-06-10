@@ -82,7 +82,7 @@ enum class GaugeType { Euclidean, LeviCivita, Trivial };
 
 enum class OperatorId {
     LaplacianCotan, LaplacianGraph, LaplacianConnection, LaplacianCovariant,
-    Dec, MassLumped, MassGalerkin, Gradient3D, Dirac
+    Dec, MassLumped, MassGalerkin, Gradient3D, Dirac, DiracFace
 };
 
 // ── Compute Context ──────────────────────────────────────────
@@ -179,7 +179,8 @@ private:
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheMassLumped_;
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheMassGalerkin_;
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheGradient3D_;
-    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDirac_;  // extrinsic block E
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDirac_;      // extrinsic block E
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracFace_;  // face extrinsic block Ẽ
 
     // Private cache-fill helpers called by OperatorsFacet::LaplacianView.
     // These source DIRECTLY from operatorGeometry()'s GC cache without
@@ -208,6 +209,11 @@ private:
     const Eigen::SparseMatrix<double>& diracExtrinsicBlockCached_();
     // Assemble L(τ) = (1−τ)(cotanL⊗I₄) + τ·E by value. τ ∈ [0,1] (validated).
     Eigen::SparseMatrix<double> diracFamily_(double tau);
+
+    // Face-domain relative-Dirac extrinsic block Ẽ (4F×4F), cached (OperatorId::DiracFace).
+    const Eigen::SparseMatrix<double>& diracFaceExtrinsicBlockCached_();
+    // Assemble L̃(τ) = (1−τ)(K̃⊗I₄) + τ·Ẽ by value, K̃ = d₁⋆₁⁻¹d₁ᵀ. τ ∈ [0,1].
+    Eigen::SparseMatrix<double> diracFaceFamily_(double tau);
 
     friend class facet::OperatorsFacet;
     std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh>             mesh_;

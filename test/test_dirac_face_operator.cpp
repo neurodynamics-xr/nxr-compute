@@ -72,9 +72,119 @@ static void testFlatKernelFace() {
     EXPECT(E.norm() < 1e-10, "E~ vanishes on a flat patch (pure kernel)");
 }
 
+// K̃ = d₁ ⋆₁⁻¹ d₁ᵀ, the DEC 2-form Laplacian (independent oracle for the τ=0 anchor).
+static Eigen::SparseMatrix<double> twoFormLaplacian(Manifold& m) {
+    const ops::DECOperators& dec = m.operators().dec();
+    Eigen::SparseMatrix<double> d1t = dec.d1.transpose();
+    return dec.d1 * dec.hodge1Inverse * d1t;     // [F×E][E×E][E×F] = [F×F]
+}
+
+// K ⊗ I₄ in the face-interleaved 4f+c layout (= kron(K, I₄)).
+static Eigen::SparseMatrix<double> kron4(const Eigen::SparseMatrix<double>& K) {
+    std::vector<Eigen::Triplet<double>> T;
+    T.reserve(static_cast<size_t>(K.nonZeros()) * 4);
+    for (int k = 0; k < K.outerSize(); ++k)
+        for (Eigen::SparseMatrix<double>::InnerIterator it(K, k); it; ++it)
+            for (int c = 0; c < 4; ++c)
+                T.emplace_back(4 * static_cast<int>(it.row()) + c,
+                               4 * static_cast<int>(it.col()) + c, it.value());
+    Eigen::SparseMatrix<double> out(4 * K.rows(), 4 * K.cols());
+    out.setFromTriplets(T.begin(), T.end());
+    return out;
+}
+
+static void testDiracFaceFamily() {
+    std::cout << "\n=== diracFace: family L~(τ) ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+    const int Fn = m.nF();
+
+    Eigen::SparseMatrix<double> L0 = m.operators().diracFace(0.0);
+    Eigen::SparseMatrix<double> anchor = kron4(twoFormLaplacian(m));
+    EXPECT((L0 - anchor).norm() < 1e-12, "diracFace(0) == K~ kron I4 (intrinsic anchor)");
+
+    for (double tau : {0.0, 0.25, 0.5, 0.75, 1.0}) {
+        Eigen::SparseMatrix<double> L = m.operators().diracFace(tau);
+        bool shape = (L.rows() == 4*Fn && L.cols() == 4*Fn);
+        Eigen::SparseMatrix<double> asym = L - Eigen::SparseMatrix<double>(L.transpose());
+        EXPECT(shape && asym.norm() < 1e-10,
+               std::string("diracFace(") + std::to_string(tau) + ") is [4F x 4F] symmetric");
+    }
+
+    EXPECT((m.operators().diracFace(1.0) - ops::dirac::extrinsicBlockFace(m)).norm() < 1e-12,
+           "diracFace(1) == extrinsicBlockFace");
+
+    double tau = 0.4;
+    Eigen::SparseMatrix<double> blend =
+        (1.0 - tau) * m.operators().diracFace(0.0) + tau * m.operators().diracFace(1.0);
+    EXPECT((m.operators().diracFace(tau) - blend).norm() < 1e-12, "diracFace(τ) is the convex blend");
+
+    Eigen::MatrixXd dense(m.operators().diracFace(0.5));
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(dense);
+    EXPECT(es.eigenvalues().minCoeff() > -1e-9, "diracFace(0.5) is PSD");
+
+    bool threw = false;
+    try { m.operators().diracFace(1.5); } catch (const std::exception&) { threw = true; }
+    EXPECT(threw, "diracFace(τ>1) throws");
+    bool threwNeg = false;
+    try { m.operators().diracFace(-0.1); } catch (const std::exception&) { threwNeg = true; }
+    EXPECT(threwNeg, "diracFace(τ<0) throws");
+}
+
+static void testDiracFaceCache() {
+    std::cout << "\n=== diracFace: cache lifecycle ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+
+    EXPECT(!m.isOperatorCached(OperatorId::DiracFace), "DiracFace not cached initially");
+    m.operators().diracFace(0.5);
+    EXPECT(m.isOperatorCached(OperatorId::DiracFace), "diracFace(τ>0) caches Ẽ");
+    m.releaseOperator(OperatorId::DiracFace);
+    EXPECT(!m.isOperatorCached(OperatorId::DiracFace), "releaseOperator(DiracFace) clears Ẽ");
+    m.operators().diracFace(0.0);
+    EXPECT(!m.isOperatorCached(OperatorId::DiracFace), "diracFace(0) does not build Ẽ");
+}
+
+static void testDiracFaceEigenbasis() {
+    std::cout << "\n=== diracFace: eigenbasis ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+    auto& geom = m.geometry(); geom.requireFaceAreas();
+    const int Fn = m.nF();
+
+    Eigen::SparseMatrix<double> L = m.operators().diracFace(0.5);
+    std::vector<Eigen::Triplet<double>> TB; TB.reserve(4*Fn);
+    for (auto f : m.mesh().faces())
+        for (int c = 0; c < 4; ++c)
+            TB.emplace_back(4*static_cast<int>(f.getIndex())+c,
+                            4*static_cast<int>(f.getIndex())+c, geom.faceAreas[f]);
+    Eigen::SparseMatrix<double> B(4*Fn, 4*Fn); B.setFromTriplets(TB.begin(), TB.end());
+
+    const int k = 8;
+    solve::EigenResult er = solve::eigen(L, B, k);
+    Eigen::MatrixXd Phi = solve::normalize(er.eigenvectors, B);
+    Eigen::MatrixXd gram = Phi.transpose() * (B * Phi);
+    EXPECT((gram - Eigen::MatrixXd::Identity(gram.rows(), gram.cols())).cwiseAbs().maxCoeff() < 1e-9,
+           "Phi^T B Phi ~ I (B-orthonormal face eigenbasis)");
+    EXPECT(er.eigenvalues.allFinite() && er.eigenvalues(0) <= er.eigenvalues(k-1),
+           "eigenvalues finite & ascending");
+    // L̃(τ) has a 4-fold null space (from K̃ ⊗ I₄ having nullity = 4 × nullity(K̃);
+    // K̃ = d₁ ⋆₁⁻¹ d₁ᵀ has a 1-dim null from the constant 1-form; tensored with I₄ → 4-dim).
+    // Unlike the vertex-domain operator, non-null eigenvalues follow icosahedral face symmetry
+    // (multiplets of 3, 4, or 5), not necessarily 4-fold. The quaternionic block structure of
+    // the operator is verified by the symmetry test in testExtrinsicBlockFace. Here we verify
+    // the null space is at least 4-dimensional.
+    int nullDim = 0;
+    for (int i = 0; i < k; ++i) if (std::abs(er.eigenvalues(i)) < 1e-8) ++nullDim;
+    EXPECT(nullDim >= 4, "L~(τ) has at least 4-dimensional null space (K~ tensor I4)");
+}
+
 int main() {
     testExtrinsicBlockFace();
     testFlatKernelFace();
+    testDiracFaceFamily();
+    testDiracFaceCache();
+    testDiracFaceEigenbasis();
     std::cout << (g_failures ? "\nFAILURES\n" : "\nALL PASSED\n");
     return g_failures ? 1 : 0;
 }

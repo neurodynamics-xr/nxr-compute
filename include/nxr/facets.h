@@ -153,6 +153,11 @@ public:
     // τ=0 ⇒ block cotan-Laplacian; τ=1 ⇒ pure relative Dirac E. τ ∈ [0,1].
     Eigen::SparseMatrix<double> dirac(double tau) const;
 
+    // diracFace(tau): the FACE-domain (dual) relative-Dirac family
+    // L̃(τ) = (1−τ)(K̃⊗I₄) + τ·Ẽ, a [4F×4F] real symmetric sparse matrix, by value.
+    // τ=0 ⇒ DEC 2-form Laplacian ⊗ I₄; τ=1 ⇒ pure extrinsic face Dirac Ẽ. τ ∈ [0,1].
+    Eigen::SparseMatrix<double> diracFace(double tau) const;
+
 private:
     Manifold& m_;
 };

@@ -107,6 +107,7 @@ bool Manifold::isOperatorCached(OperatorId id) const {
         case OperatorId::MassGalerkin:        return (bool)cacheMassGalerkin_;
         case OperatorId::Gradient3D:          return (bool)cacheGradient3D_;
         case OperatorId::Dirac:               return (bool)cacheDirac_;
+        case OperatorId::DiracFace:           return (bool)cacheDiracFace_;
     }
     return false;
 }
@@ -122,6 +123,7 @@ void Manifold::releaseOperator(OperatorId id) {
         case OperatorId::MassGalerkin:        cacheMassGalerkin_.reset();        break;
         case OperatorId::Gradient3D:          cacheGradient3D_.reset();          break;
         case OperatorId::Dirac:               cacheDirac_.reset();               break;
+        case OperatorId::DiracFace:           cacheDiracFace_.reset();           break;
     }
 }
 
@@ -213,6 +215,45 @@ Eigen::SparseMatrix<double> Manifold::diracFamily_(double tau) {
     const auto& E = diracExtrinsicBlockCached_();
     if (tau == 1.0) { Eigen::SparseMatrix<double> out = E; out.makeCompressed(); return out; }
     Eigen::SparseMatrix<double> L = (1.0 - tau) * L4 + tau * E;
+    L.makeCompressed();
+    return L;
+}
+
+const Eigen::SparseMatrix<double>& Manifold::diracFaceExtrinsicBlockCached_() {
+    if (!cacheDiracFace_)
+        cacheDiracFace_ = std::make_unique<Eigen::SparseMatrix<double>>(
+            ops::dirac::extrinsicBlockFace(*this));
+    return *cacheDiracFace_;
+}
+
+// L̃(τ) = (1−τ)(K̃ ⊗ I₄) + τ·Ẽ, K̃ = d₁⋆₁⁻¹d₁ᵀ (DEC 2-form Laplacian). Builds each
+// term only when its coefficient is nonzero — τ=0 never assembles Ẽ; τ=1 never
+// builds K̃. NaN-safe guard + exact-fast-path reasoning as diracFamily_.
+Eigen::SparseMatrix<double> Manifold::diracFaceFamily_(double tau) {
+    if (!(tau >= 0.0 && tau <= 1.0))
+        throw Error(ErrorCode::InvalidInput, "diracFace: tau must be in [0,1]",
+                    "Got tau=" + std::to_string(tau) + ".");
+    const int Fn = nF();
+
+    Eigen::SparseMatrix<double> K4;
+    if (tau < 1.0) {
+        const ops::DECOperators& dec = decOperators();
+        Eigen::SparseMatrix<double> d1t = dec.d1.transpose();
+        Eigen::SparseMatrix<double> Ktilde = dec.d1 * dec.hodge1Inverse * d1t;  // [F×F]
+        std::vector<Eigen::Triplet<double>> T;
+        T.reserve(static_cast<size_t>(Ktilde.nonZeros()) * 4);
+        for (int k = 0; k < Ktilde.outerSize(); ++k)
+            for (Eigen::SparseMatrix<double>::InnerIterator it(Ktilde, k); it; ++it)
+                for (int c = 0; c < 4; ++c)
+                    T.emplace_back(4 * static_cast<int>(it.row()) + c,
+                                   4 * static_cast<int>(it.col()) + c, it.value());
+        K4.resize(4 * Fn, 4 * Fn);
+        K4.setFromTriplets(T.begin(), T.end());
+    }
+    if (tau == 0.0) { K4.makeCompressed(); return K4; }
+    const auto& E = diracFaceExtrinsicBlockCached_();
+    if (tau == 1.0) { Eigen::SparseMatrix<double> out = E; out.makeCompressed(); return out; }
+    Eigen::SparseMatrix<double> L = (1.0 - tau) * K4 + tau * E;
     L.makeCompressed();
     return L;
 }
@@ -348,6 +389,7 @@ OperatorsFacet::LaplacianView::covariant(
 const ops::DECOperators& OperatorsFacet::dec() const { return m_.decOperators(); }
 const Eigen::SparseMatrix<double>& OperatorsFacet::gradient3D() const { return m_.gradient3DCached_(); }
 Eigen::SparseMatrix<double> OperatorsFacet::dirac(double tau) const { return m_.diracFamily_(tau); }
+Eigen::SparseMatrix<double> OperatorsFacet::diracFace(double tau) const { return m_.diracFaceFamily_(tau); }
 
 // MassView: each helper calls through to the independent private Manifold cache-fill.
 // Holds Manifold& m (C1 pattern) — never dangles.
