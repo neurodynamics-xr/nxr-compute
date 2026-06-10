@@ -111,8 +111,10 @@ difference `δ_e = L_j − P_ij L_i` (`+I₃` at `j`, `−P_ij` at `i`, componen
 a Cartesian-constant field has `G·L = 0`, and `GᵀWG` (W = edge cotan weights) equals the
 existing Ambient covariant Laplacian (a built-in consistency anchor — verified to <1e-9).
 Use `G` as a **gradient** (first-order); its degenerate Ambient spectrum is irrelevant. The
-curvature-coupled *spectral* operator (α-coupled / shell / Dirac) is a separate, deferred
-question — only transport/gradients are canonical and parameter-free. Design:
+*frame*-coupled curvature-spectral operator (α-coupled / shell) remains a separate, deferred
+question — only transport/gradients are canonical and parameter-free here. (The *extrinsic*
+relative-Dirac spectral family — a different, Gauss-map-based construction — IS implemented;
+see "Extrinsic Dirac operator" below.) Design:
 `docs/superpowers/specs/2026-06-10-cortical-covariant-differential-operators-design.md`.
 
 Library backing (all in `nxr::manifold`): `geometry::vertexGrid`/`faceGrid`,
