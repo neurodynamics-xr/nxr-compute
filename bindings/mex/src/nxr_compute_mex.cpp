@@ -1781,9 +1781,9 @@ void cmdOperators(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) 
     ContextHolder& h = getHolder(prhs[1]);
     auto& m = *h.ctx;                             // Manifold&
     std::string family = getStringArg(prhs[2]);
-    // Only parse prhs[3] as a string when it is actually a char array —
-    // the 'dirac' family takes a numeric tau there instead and reads prhs[3]
-    // directly (it does not use `sub`).
+    // Only parse prhs[3] as a string when it is actually a char array — the
+    // 'dirac' and 'diracFace' families take a numeric tau there instead and read
+    // prhs[3] directly (they do not use `sub`).
     std::string sub    = (nrhs >= 4 && mxIsChar(prhs[3])) ? getStringArg(prhs[3]) : "";
     auto ops = m.operators();
     namespace cl = nxr::manifold::ops::laplacian::connection;
