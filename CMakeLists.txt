@@ -211,4 +211,8 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_dirac_operator test/test_dirac_operator.cpp)
     target_link_libraries(test_dirac_operator PRIVATE nxr_compute)
     add_test(NAME test_dirac_operator COMMAND test_dirac_operator)
+
+    add_executable(test_dirac_face_operator test/test_dirac_face_operator.cpp)
+    target_link_libraries(test_dirac_face_operator PRIVATE nxr_compute)
+    add_test(NAME test_dirac_face_operator COMMAND test_dirac_face_operator)
 endif()

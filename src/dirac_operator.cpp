@@ -92,4 +92,73 @@ Eigen::SparseMatrix<double> extrinsicBlock(Manifold& m) {
     return E;
 }
 
+Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m) {
+    using namespace geometrycentral;
+    using namespace geometrycentral::surface;
+
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
+    geom.requireFaceNormals();        // EXACT per-face normals (the Gauss map at faces)
+    geom.requireVertexDualAreas();    // ⋆_V measure
+
+    const int N  = m.nV();
+    const int Fn = m.nF();
+
+    auto vec3 = [](const Vector3& u) { return Eigen::Vector3d(u.x, u.y, u.z); };
+
+    // Rectangular real operator D̃ : ℍ^F → ℍ^V  [4V × 4F].
+    // For each INTERIOR vertex v with cyclically ordered incident faces f_0..f_{d-1}:
+    //   block(v, f_k) = -leftMulImag(N_{f_{k+1}} - N_{f_{k-1}}) / (2 Ã_v).
+    // Boundary vertices (open star) are skipped — exact on closed meshes.
+    std::vector<Eigen::Triplet<double>> TD;
+    TD.reserve(static_cast<size_t>(Fn) * 6 * 16);
+
+    for (Vertex v : mesh.vertices()) {
+        if (v.isBoundary()) continue;
+        const int vi = static_cast<int>(v.getIndex());
+        const double Av = geom.vertexDualAreas[v];
+        if (Av <= 0.0)
+            throw Error(ErrorCode::InvalidInput,
+                "dirac::extrinsicBlockFace: degenerate (zero-area) vertex dual cell",
+                "Vertex index " + std::to_string(vi) + "; fix mesh quality first.");
+
+        std::vector<int> fid;
+        std::vector<Eigen::Vector3d> nrm;
+        for (Halfedge he : v.outgoingHalfedges()) {
+            Face f = he.face();
+            fid.push_back(static_cast<int>(f.getIndex()));
+            nrm.push_back(vec3(geom.faceNormals[f]));
+        }
+        const int d = static_cast<int>(fid.size());
+        const double s = -1.0 / (2.0 * Av);
+        for (int k = 0; k < d; ++k) {
+            Eigen::Vector3d dN = nrm[(k + 1) % d] - nrm[(k - 1 + d) % d];
+            Eigen::Matrix4d B = s * leftMulImag(dN);
+            for (int a = 0; a < 4; ++a)
+                for (int b = 0; b < 4; ++b)
+                    if (B(a, b) != 0.0)
+                        TD.emplace_back(4 * vi + a, 4 * fid[k] + b, B(a, b));
+        }
+    }
+    Eigen::SparseMatrix<double> D(4 * N, 4 * Fn);
+    D.setFromTriplets(TD.begin(), TD.end());
+
+    std::vector<Eigen::Triplet<double>> TW;
+    TW.reserve(static_cast<size_t>(4) * N);
+    for (Vertex v : mesh.vertices()) {
+        const int vi = static_cast<int>(v.getIndex());
+        const double Av = geom.vertexDualAreas[v];
+        for (int a = 0; a < 4; ++a) TW.emplace_back(4 * vi + a, 4 * vi + a, Av);
+    }
+    Eigen::SparseMatrix<double> WV(4 * N, 4 * N);
+    WV.setFromTriplets(TW.begin(), TW.end());
+
+    // Materialise D.transpose() into its own matrix before the multiply chain:
+    // the lazy Transpose proxy shares D's storage, and chaining * WV * D on it
+    // would alias. The explicit temporary forces evaluation first.
+    Eigen::SparseMatrix<double> E = (Eigen::SparseMatrix<double>(D.transpose()) * WV * D).pruned();
+    E.makeCompressed();
+    return E;
+}
+
 }  // namespace nxr::manifold::ops::dirac
