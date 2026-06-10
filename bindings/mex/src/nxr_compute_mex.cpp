@@ -1431,6 +1431,123 @@ mxArray* buildGeometryStruct(ContextHolder& h, bool withOps = false) {
     return s;
 }
 
+// ── facet builders (representation-grouped data; mirror buildGeometryStruct) ──
+// NOTE: field names here are the SINGULAR names of the C++ facet view API
+// (embedded()/intrinsic()/extrinsic()), e.g. dualArea/angleSum/cotanWeight/
+// dihedralAngle. They intentionally differ from buildGeometryStruct's PLURAL
+// names (dualAreas/angleSums/cotanWeights/dihedralAngles) — do NOT align them;
+// callers depend on both shapes.
+
+// ── embedded(handle) → struct ─────────────────────────────────
+//
+// Schema (schemaVersion == 1):
+//   E.vertex.position   [nV x 3]  double
+//   E.vertex.normal     [nV x 3]  double
+//   E.vertex.grid       [nV x 3]  complex double (c = e1+i*e2)
+//   E.face.normal       [nF x 3]  double
+//   E.face.grid         [nF x 3]  complex double
+//   E.face.centroid     [nF x 3]  double
+
+mxArray* buildEmbeddedStruct(ContextHolder& h) {
+    nxr::manifold::Manifold& m = *h.ctx;
+    auto emb = m.embedded();
+    auto vv = emb.vertex();
+    auto fv = emb.face();
+
+    const char* topF[] = {"schemaVersion","vertex","face"};
+    mxArray* s = mxCreateStructMatrix(1,1,3,topF);
+    mxSetField(s,0,"schemaVersion",scalarToMx(1));
+
+    { const char* f[] = {"position","normal","grid"};
+      mxArray* g = mxCreateStructMatrix(1,1,3,f);
+      mxSetField(g,0,"position", eigenMatrixToMx(vv.position()));
+      mxSetField(g,0,"normal",   eigenMatrixToMx(vv.normal()));
+      mxSetField(g,0,"grid",     eigenComplexMatrixToMx(vv.grid()));
+      mxSetField(s,0,"vertex",g); }
+    { const char* f[] = {"normal","grid","centroid"};
+      mxArray* g = mxCreateStructMatrix(1,1,3,f);
+      mxSetField(g,0,"normal",   eigenMatrixToMx(fv.normal()));
+      mxSetField(g,0,"grid",     eigenComplexMatrixToMx(fv.grid()));
+      mxSetField(g,0,"centroid", eigenMatrixToMx(fv.centroid()));
+      mxSetField(s,0,"face",g); }
+
+    return s;
+}
+
+// ── intrinsic(handle) → struct ────────────────────────────────
+//
+// Schema (schemaVersion == 1):
+//   I.vertex.dualArea         [nV x 1]  double
+//   I.vertex.angleSum         [nV x 1]  double
+//   I.edge.length             [nE x 1]  double
+//   I.edge.cotanWeight        [nE x 1]  double
+//   I.halfedge.cotanWeight    [nH x 1]  double (real)
+//   I.halfedge.transportAlong [nH x 1]  complex double
+//   I.halfedge.transportAcross[nH x 1]  complex double
+
+mxArray* buildIntrinsicStruct(ContextHolder& h) {
+    nxr::manifold::Manifold& m = *h.ctx;
+    auto intr = m.intrinsic();
+    auto vv = intr.vertex();
+    auto ev = intr.edge();
+    auto hv = intr.halfedge();
+
+    const char* topF[] = {"schemaVersion","vertex","edge","halfedge"};
+    mxArray* s = mxCreateStructMatrix(1,1,4,topF);
+    mxSetField(s,0,"schemaVersion",scalarToMx(1));
+
+    { const char* f[] = {"dualArea","angleSum"};
+      mxArray* g = mxCreateStructMatrix(1,1,2,f);
+      mxSetField(g,0,"dualArea", eigenVectorToMx(vv.dualArea()));
+      mxSetField(g,0,"angleSum", eigenVectorToMx(vv.angleSum()));
+      mxSetField(s,0,"vertex",g); }
+    { const char* f[] = {"length","cotanWeight"};
+      mxArray* g = mxCreateStructMatrix(1,1,2,f);
+      mxSetField(g,0,"length",      eigenVectorToMx(ev.length()));
+      mxSetField(g,0,"cotanWeight", eigenVectorToMx(ev.cotanWeight()));
+      mxSetField(s,0,"edge",g); }
+    { const char* f[] = {"cotanWeight","transportAlong","transportAcross"};
+      mxArray* g = mxCreateStructMatrix(1,1,3,f);
+      mxSetField(g,0,"cotanWeight",     eigenVectorToMx(hv.cotanWeight()));
+      mxSetField(g,0,"transportAlong",  eigenComplexVectorToMx(hv.transportAlong()));
+      mxSetField(g,0,"transportAcross", eigenComplexVectorToMx(hv.transportAcross()));
+      mxSetField(s,0,"halfedge",g); }
+
+    return s;
+}
+
+// ── extrinsic(handle) → struct ────────────────────────────────
+//
+// Schema (schemaVersion == 1):
+//   X.vertex.curvature2RoSy  [nV x 1]  complex double (2-RoSy deviatoric)
+//   X.vertex.meanCurvature   [nV x 1]  double
+//   X.vertex.principalDir    [nV x 3]  double
+//   X.edge.dihedralAngle     [nE x 1]  double
+
+mxArray* buildExtrinsicStruct(ContextHolder& h) {
+    nxr::manifold::Manifold& m = *h.ctx;
+    auto ext = m.extrinsic();
+    auto vv = ext.vertex();
+    auto ev = ext.edge();
+
+    const char* topF[] = {"schemaVersion","vertex","edge"};
+    mxArray* s = mxCreateStructMatrix(1,1,3,topF);
+    mxSetField(s,0,"schemaVersion",scalarToMx(1));
+
+    { const char* f[] = {"curvature2RoSy","meanCurvature","principalDir"};
+      mxArray* g = mxCreateStructMatrix(1,1,3,f);
+      mxSetField(g,0,"curvature2RoSy", eigenComplexVectorToMx(vv.curvature2RoSy()));
+      mxSetField(g,0,"meanCurvature",  eigenVectorToMx(vv.meanCurvature()));
+      mxSetField(g,0,"principalDir",   eigenMatrixToMx(vv.principalDir()));
+      mxSetField(s,0,"vertex",g); }
+    { const char* f[] = {"dihedralAngle"};
+      mxArray* g = mxCreateStructMatrix(1,1,1,f);
+      mxSetField(g,0,"dihedralAngle", eigenVectorToMx(ev.dihedralAngle()));
+      mxSetField(s,0,"edge",g); }
+
+    return s;
+}
+
 void cmdGeometry(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
     if (nrhs < 2 || nrhs > 3) {
         throw std::invalid_argument(
@@ -1540,6 +1657,27 @@ void cmdBundle(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
     mxSetField(s,0,"Geometry", buildGeometryStruct(h, withOps));
     mxSetField(s,0,"Gauge",    buildGaugeStruct(h, type, opts, withOps));
     plhs[0] = s;
+}
+
+void cmdEmbedded(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 2) throw std::invalid_argument(
+        "nxr_compute('embedded', handle) takes 1 argument");
+    ContextHolder& h = getHolder(prhs[1]);
+    plhs[0] = buildEmbeddedStruct(h);
+}
+
+void cmdIntrinsic(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 2) throw std::invalid_argument(
+        "nxr_compute('intrinsic', handle) takes 1 argument");
+    ContextHolder& h = getHolder(prhs[1]);
+    plhs[0] = buildIntrinsicStruct(h);
+}
+
+void cmdExtrinsic(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    if (nrhs != 2) throw std::invalid_argument(
+        "nxr_compute('extrinsic', handle) takes 1 argument");
+    ContextHolder& h = getHolder(prhs[1]);
+    plhs[0] = buildExtrinsicStruct(h);
 }
 
 // ── version() → string ───────────────────────────────────────
@@ -1690,6 +1828,9 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "gauge")                       cmdGauge(nlhs, plhs, nrhs, prhs);
         else if (cmd == "bundle")                      cmdBundle(nlhs, plhs, nrhs, prhs);
         else if (cmd == "operators")                   cmdOperators(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "embedded")                    cmdEmbedded(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "intrinsic")                   cmdIntrinsic(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "extrinsic")                   cmdExtrinsic(nlhs, plhs, nrhs, prhs);
         else if (cmd == "version")                 cmdVersion(nlhs, plhs, nrhs, prhs);
         else {
             mexErrMsgIdAndTxt("nxr:unknownCommand",
@@ -1699,7 +1840,8 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
                 "parallel, extendScalar, logMap, "
                 "findCenter, signedHeat, smoothFace, "
                 "smoothVertex, compute, computeFreq, "
-                "topology, geometry, gauge, bundle, operators, version.",
+                "topology, geometry, gauge, bundle, operators, "
+                "embedded, intrinsic, extrinsic, version.",
                 cmd.c_str());
         }
     } catch (const nxr::core::Error& e) {
