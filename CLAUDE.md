@@ -96,7 +96,7 @@ coordinate system for MEG leadfield analysis (design:
 | `nxr_compute('geometry', h)` | light per-element geometry; frames are the complex `grid` (`c = e1+i·e2`, normal = `real×imag`); curvature is the 2-RoSy deviatoric `q` + `meanCurvature` |
 | `nxr_compute('gauge', h, type[, opts])` | gauge as a transform of the Levi-Civita grid: `euclidean`/`levi-civita`/`trivial` (only `trivial` carries `vertex.rotation` + singularities) |
 | `nxr_compute('bundle', h, gaugeType[, opts])` | `{Topology, Geometry, Gauge}` in one call |
-| `nxr_compute('operators', h, family[, subtype])` | a single named operator as native sparse — `laplacian` (`cotan`/`graph`/`connection`/`covariant`), `mass` (`lumped`/`galerkin`), `hodge` (`h0`/`h1`/`h2`/`h1inv`), `dec` (struct `{d0,d1}`), `gradient3D` (the covariant gradient `G`, `[3E×3N]`, cached), `dirac` (the relative-Dirac family `L(τ) = (1−τ)·cotan⊗I₄ + τ·D_N`, real `[4V×4V]`, `τ∈[0,1]`; the 4th arg is a numeric `τ`, not a string subtype); `connection` is complex. Same matrix the internal solvers use (single source of truth). |
+| `nxr_compute('operators', h, family[, subtype])` | a single named operator as native sparse — `laplacian` (`cotan`/`graph`/`connection`/`covariant`), `mass` (`lumped`/`galerkin`), `hodge` (`h0`/`h1`/`h2`/`h1inv`), `dec` (struct `{d0,d1}`), `gradient3D` (the covariant gradient `G`, `[3E×3N]`, cached), `dirac` (the relative-Dirac family `L(τ) = (1−τ)·cotan⊗I₄ + τ·D_N`, real `[4V×4V]`, `τ∈[0,1]`; the 4th arg is a numeric `τ`, not a string subtype), `diracFace` (the FACE-domain dual relative-Dirac family `L̃(τ) = (1−τ)·K̃⊗I₄ + τ·Ẽ`, real `[4F×4F]`, `τ∈[0,1]` numeric; exact face normals, face-supported eigenbasis); `connection` is complex. Same matrix the internal solvers use (single source of truth). |
 | `nxr_compute('frameTransport', h, i, j)` | `3×3` orthogonal `Fⱼᵀ Fᵢ` — flat full-frame transport between any two vertex frames (1-based `i,j`) |
 | `nxr_compute('liftToWorld', h, Lloc)` / `('liftToFrame', h, Lworld)` | `[nV×3]` local↔Cartesian frame lift (inverse of `G·cᵀ`) |
 
@@ -164,6 +164,24 @@ a 4-fold zero for all τ). The `τ=0` discretization byte-matches `cotanL ⊗ I�
 `docs/superpowers/specs/2026-06-10-extrinsic-dirac-operator-design.md`. Boundary
 conditions (infinite potential well) and the cross-surface canonical
 representative remain deferred (single closed cortex, v1).
+
+**Face-domain (dual) Dirac (`operators … diracFace τ`).** The `V↔F` Poincaré dual
+of the above: the quaternionic field lives on **faces** (`[4F×4F]`, eigenbasis on
+faces), and the Gauss map is sampled at the **exact per-face normal** (`e₁×e₂`, no
+vertex-normal averaging). Motivating use: expanding a **face-integrated current-flux
+leadfield** (a 2-form genuinely defined on faces). The extrinsic block `Ẽ = D̃ᵀ⋆_V D̃`
+aggregates each vertex star's fan of face normals (`-(N_{f_{k+1}}−N_{f_{k−1}})/2Ã_v`,
+cyclic one-ring), cached `OperatorId::DiracFace` (gauge-independent); the intrinsic
+anchor `K̃ = d₁⋆₁⁻¹d₁ᵀ` (DEC 2-form Laplacian, cached). **The vertex-star aggregation
+is REQUIRED**: an edge-only (2-face) assembly is norm-multiplicatively degenerate
+(`|L_v u|²=|v|²|u|²` collapses it to a scalar curvature²-Laplacian ⊗ I₄, not a
+Dirac). Storage is **face-interleaved** `4f+c` (`kron(K̃,I₄)`), so in MATLAB the τ=0
+anchor is `kron(Ktilde, speye(4))` and the eigenbasis `eigs(L, kron(diag(Af),
+speye(4)), k, -1e-8)`. Still right-ℍ-equivariant ⇒ multiplicities divisible by 4
+(NOTE: Spectra miscounts the degenerate clusters — use a dense solve to verify
+multiplicities). `diracFace(0)` byte-matches `K̃⊗I₄`. Design:
+`docs/superpowers/specs/2026-06-10-face-domain-dirac-operator-design.md`. Closed
+cortex v1 (boundary vertices / open stars skipped).
 
 **Mesh quality / PSD note.** All operators use geometry-central's raw signed cotan
 weights (matching GC), so on non-Delaunay meshes (obtuse triangles — common on
