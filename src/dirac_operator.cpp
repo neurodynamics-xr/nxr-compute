@@ -146,6 +146,7 @@ Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m) {
     std::vector<Eigen::Triplet<double>> TW;
     TW.reserve(static_cast<size_t>(4) * N);
     for (Vertex v : mesh.vertices()) {
+        if (v.isBoundary()) continue;   // match D̃: boundary stars are skipped (their D̃ rows are empty)
         const int vi = static_cast<int>(v.getIndex());
         const double Av = geom.vertexDualAreas[v];
         for (int a = 0; a < 4; ++a) TW.emplace_back(4 * vi + a, 4 * vi + a, Av);

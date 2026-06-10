@@ -42,6 +42,21 @@ static void testExtrinsicBlockFace() {
     Eigen::VectorXd x(4*Fn);
     for (int f = 0; f < Fn; ++f) { x(4*f+0)=0.3; x(4*f+1)=-0.7; x(4*f+2)=0.2; x(4*f+3)=0.5; }
     EXPECT((E * x).cwiseAbs().maxCoeff() < 1e-10, "E~*(face-constant) = 0 (telescoping kernel)");
+
+    // GENUINE quaternionic coupling: at least one 4×4 face-face block must be a
+    // NON-scalar matrix (off-diagonal within the block). This is the headline
+    // property the vertex-star aggregation buys — a degenerate edge/scalar-Laplacian
+    // assembly would give every block ∝ I₄ and still pass all checks above.
+    Eigen::MatrixXd densE(E);
+    bool coupled = false;
+    for (int fi = 0; fi < Fn && !coupled; ++fi)
+        for (int fj = 0; fj < Fn && !coupled; ++fj) {
+            if (fi == fj) continue;
+            Eigen::Matrix4d blk = densE.block(4*fi, 4*fj, 4, 4);
+            if (blk.norm() < 1e-12) continue;
+            coupled = (blk - (blk.trace()/4.0) * Eigen::Matrix4d::Identity()).norm() > 1e-10;
+        }
+    EXPECT(coupled, "E~ has genuine quaternionic coupling (non-scalar 4x4 blocks)");
 }
 
 static void flatPatch(std::vector<double>& V, std::vector<int32_t>& F) {
