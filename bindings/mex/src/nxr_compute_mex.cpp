@@ -1764,6 +1764,9 @@ void cmdVersion(int /*nlhs*/, mxArray** plhs,
 //   nxr_compute('operators', h, 'mass',      'lumped'|'galerkin')
 //   nxr_compute('operators', h, 'hodge',     'h0'|'h1'|'h2'|'h1inv')
 //   nxr_compute('operators', h, 'dec')       → struct {d0, d1}
+//   nxr_compute('operators', h, 'gradient3D')         % [3E×3N] covariant gradient
+//   nxr_compute('operators', h, 'dirac', tau)   % [4V×4V] relative-Dirac family,
+//                                               % tau in [0,1] (0=cotan⊗I4, 1=D_N)
 //
 // All sparse outputs are native MATLAB sparse (real or complex).
 // 'covariant' uses the default Ambient coupling (same as the existing
@@ -1776,7 +1779,9 @@ void cmdOperators(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) 
     ContextHolder& h = getHolder(prhs[1]);
     auto& m = *h.ctx;                             // Manifold&
     std::string family = getStringArg(prhs[2]);
-    std::string sub    = (nrhs >= 4) ? getStringArg(prhs[3]) : "";
+    // Only parse prhs[3] as a string when it is actually a char array —
+    // the 'dirac' family takes a numeric tau there instead.
+    std::string sub    = (nrhs >= 4 && mxIsChar(prhs[3])) ? getStringArg(prhs[3]) : "";
     auto ops = m.operators();
     namespace cl = nxr::manifold::ops::laplacian::connection;
 
@@ -1823,9 +1828,17 @@ void cmdOperators(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) 
     } else if (family == "gradient3D") {
         plhs[0] = eigenSparseToMx(m.operators().gradient3D());   // cached on the handle
 
+    } else if (family == "dirac") {
+        if (nrhs < 4 || !mxIsNumeric(prhs[3]) || mxGetNumberOfElements(prhs[3]) != 1)
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                "operators dirac: expected a scalar tau, "
+                "nxr_compute('operators', h, 'dirac', tau).");
+        double tau = mxGetScalar(prhs[3]);
+        plhs[0] = eigenSparseToMx(m.operators().dirac(tau));   // [4V×4V], caches E on the handle
+
     } else {
         throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
-            "operators: family must be laplacian|mass|hodge|dec|gradient3D.");
+            "operators: family must be laplacian|mass|hodge|dec|gradient3D|dirac.");
     }
 }
 
