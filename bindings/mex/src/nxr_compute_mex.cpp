@@ -1780,7 +1780,8 @@ void cmdOperators(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) 
     auto& m = *h.ctx;                             // Manifold&
     std::string family = getStringArg(prhs[2]);
     // Only parse prhs[3] as a string when it is actually a char array —
-    // the 'dirac' family takes a numeric tau there instead.
+    // the 'dirac' family takes a numeric tau there instead and reads prhs[3]
+    // directly (it does not use `sub`).
     std::string sub    = (nrhs >= 4 && mxIsChar(prhs[3])) ? getStringArg(prhs[3]) : "";
     auto ops = m.operators();
     namespace cl = nxr::manifold::ops::laplacian::connection;
@@ -1829,11 +1830,11 @@ void cmdOperators(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) 
         plhs[0] = eigenSparseToMx(m.operators().gradient3D());   // cached on the handle
 
     } else if (family == "dirac") {
-        if (nrhs < 4 || !mxIsNumeric(prhs[3]) || mxGetNumberOfElements(prhs[3]) != 1)
+        if (nrhs < 4)
             throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
                 "operators dirac: expected a scalar tau, "
                 "nxr_compute('operators', h, 'dirac', tau).");
-        double tau = mxGetScalar(prhs[3]);
+        double tau = getDoubleArg(prhs[3]);   // validates real numeric/logical scalar
         plhs[0] = eigenSparseToMx(m.operators().dirac(tau));   // [4V×4V], caches E on the handle
 
     } else {

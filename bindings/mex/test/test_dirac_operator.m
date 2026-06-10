@@ -12,7 +12,8 @@ h = nxr_compute('create', V, F);
 
 % τ=0 anchor: dirac(0) == kron(cotanL, I4).
 % The C++ builds the 4V×4V block via 4*row+c, 4*col+c — each scalar weight
-% becomes a 4×4 identity block, i.e. kron(cotanL, speye(4)).
+% becomes a 4×4 identity block, i.e. kron(cotanL, speye(4)), NOT
+% kron(speye(4), cotanL) (which would be quaternion-major).
 L0 = nxr_compute('operators', h, 'dirac', 0);
 Lc = nxr_compute('operators', h, 'laplacian', 'cotan');
 anchor = kron(Lc, speye(4));
