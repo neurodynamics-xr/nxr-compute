@@ -363,7 +363,16 @@ Eigen::MatrixXcd GaugeFacet::grid() const {
     if (type_ != GaugeType::Trivial) return g;
     connection::GaugeRotations gr = connection::integrateTrivialGaugeRotations(
         m_, m_.decOperators(), m_.choleskyCache(), sing_);
-    for (int v = 0; v < g.rows(); ++v) g.row(v) *= gr.vertex(v);  // exp(i phi_v) .* grid
+    for (int v = 0; v < g.rows(); ++v) g.row(v) *= gr.vertex(v);  // combing rotation .* grid
+    return g;
+}
+
+Eigen::MatrixXcd GaugeFacet::faceGrid() const {
+    Eigen::MatrixXcd g = geometry::faceGrid(m_);              // LC / euclidean base frame
+    if (type_ != GaugeType::Trivial) return g;
+    connection::GaugeRotations gr = connection::integrateTrivialGaugeRotations(
+        m_, m_.decOperators(), m_.choleskyCache(), sing_);
+    for (int f = 0; f < g.rows(); ++f) g.row(f) *= gr.face(f);    // combing rotation .* grid
     return g;
 }
 

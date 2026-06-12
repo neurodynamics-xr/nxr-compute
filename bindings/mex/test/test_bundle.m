@@ -48,11 +48,16 @@ z  = sum(c .* J, 2);  jn = sum(n .* J, 2);
 Jr = real(conj(z) .* c) + jn .* n;
 assert(max(abs(Jr(:) - J(:))) < 1e-9, 'Cartesian -> intrinsic -> Cartesian is identity');
 
-% ── trivial bundle: Gauss-Bonnet input valid, realized frame orthonormal ──
+% ── trivial bundle: Gauss-Bonnet input valid, realized frame combs ──
 Bt = nxr_compute('bundle', h, 'trivial', opts);
 assert(abs(sum(Bt.Gauge.singularity.indices) - 2) < 1e-12, 'sum indices == chi == 2');
 ct = Bt.Gauge.vertex.rotation .* Bt.Geometry.vertex.grid;
 assert(max(abs(sqrt(sum(real(ct).^2,2)) - 1)) < 1e-9, 'trivial realized frame unit');
+% rotation .* grid is the COMBED frame: its real part is the trivial
+% parallel direction field (same phi as directionField).
+Dt = nxr_compute('directionField', h, opts.singVerts, opts.singValues);
+assert(max(vecnorm(real(ct) - Dt.vertexVectors, 2, 2)) < 1e-9, ...
+       'trivial realized frame is the combed parallel field');
 
 nxr_compute('destroy', h);
 fprintf('PASSED leadfield round-trip, err=%.2e\n', maxErr);

@@ -1149,24 +1149,40 @@ Eigen::VectorXd computeTrivialConnection(
     const std::map<int, double>& singularityMap
 );
 
-// ── Trivial-gauge per-vertex rotation ────────────────────────
+// ── Trivial-gauge rotations (vertex + face) ──────────────────
 //
 // Integrates the trivial-connection 1-form φ (from computeTrivialConnection)
-// into a per-vertex unit-complex rotation r_v = exp(iθ_v) relative to the
-// Levi-Civita vertex frame, by BFS over the vertex graph from a root,
-// accumulating the Levi-Civita transport modulated by exp(i·sign·φ[edge]).
-// The realized trivial gauge frame is r .* vertexGrid (broadcast over the
-// 3 complex columns). See bundle design spec §6.
+// into unit-complex gauge rotations relative to the Levi-Civita frames:
+//   vertex — BFS over the primal vertex graph (transportVectorsAlongHalfedge)
+//   face   — BFS over the dual face graph (same transport + sign conventions
+//            as propagateAngles in direction_field.cpp)
+//
+// Convention (the COMBING multiplier): the stored rotation is the gauge
+// transform that realizes the combed (trivially-parallel) frame by complex
+// multiplication —
+//   combed vertex frame = vertex(v) .* vertexGrid.row(v)
+//   combed face frame   = face(f)   .* faceGrid.row(f)
+// Equivalently real(vertex .* vertexGrid) IS the trivial-connection parallel
+// field (DirectionFieldResult::vertexVectors), and likewise on faces
+// (directionVectors). Note this is the CONJUGATE of the accumulated transport
+// coefficient e^{iα}: actively rotating a frame by α multiplies the complex
+// grid c = e1 + i·e2 by e^{-iα}. Verified numerically against the trivial
+// direction field (test_geometry_bundle.cpp).
+//
+// Anchors: vertex 0 and face 0 carry the identity rotation. The two combs are
+// each globally parallel, but their relative phase (vertex comb vs face comb)
+// is anchor-dependent and carries no meaning.
 //
 // Gauss-Bonnet: Σ singularityMap values must equal χ(mesh) (the caller's
 // responsibility — not checked here).
 //
-// Connectivity contract: BFS starts at vertex 0 and visits only its
+// Connectivity contract: BFS starts at vertex 0 / face 0 and visits only that
 // connected component; on a disconnected mesh other components receive
 // 0+0i. Intended usage is one connected component (e.g. a single
 // cortical hemisphere) at a time.
 struct GaugeRotations {
-    Eigen::VectorXcd vertex;   // [nV] r_v = exp(iθ_v), |r_v| = 1
+    Eigen::VectorXcd vertex;   // [nV] combing rotation, |r_v| = 1
+    Eigen::VectorXcd face;     // [nF] combing rotation, |r_f| = 1
 };
 GaugeRotations integrateTrivialGaugeRotations(
     Manifold& m,

@@ -1293,14 +1293,18 @@ mxArray* buildGaugeOperators(ContextHolder& h, const std::string& type, const mx
 // ── gauge(handle, type[, opts]) → struct ─────────────────────
 //
 // Returns the Gauge struct for the requested connection type.
-//   type == "euclidean" or "levi-civita":  vertex.rotation = ones(nV,1) (identity)
-//   type == "trivial":                     vertex.rotation = integrateTrivialGaugeRotations(...)
+//   type == "euclidean" or "levi-civita":  vertex/face rotation = ones (identity)
+//   type == "trivial":                     rotations = integrateTrivialGaugeRotations(...)
 //                                          opts struct requires singVerts (1-based) + singValues
+//
+// Rotations are COMBING multipliers: rotation .* grid is the combed
+// (trivially-parallel) frame, and real(rotation .* grid) is the trivial
+// parallel direction field. See GaugeRotations in nxr/compute.h.
 //
 // Schema (schemaVersion == 1):
 //   G.type                  string
 //   G.vertex.rotation       [nV x 1]  complex double  (unit modulus)
-//   G.face.rotation         [0 x 0]   complex double  (empty in v1)
+//   G.face.rotation         [nF x 1]  complex double  (unit modulus)
 //   G.singularity.vertices  [k x 1]   uint32  1-based
 //   G.singularity.indices   [k x 1]   double
 //   G.singularity.source    string
@@ -1311,7 +1315,9 @@ mxArray* buildGaugeStruct(ContextHolder& h, const std::string& type, const mxArr
     nxr::manifold::Manifold& m = *h.ctx;
 
     const int nV = m.nV();
-    Eigen::VectorXcd rot = Eigen::VectorXcd::Ones(nV);   // identity by default
+    const int nF = m.nF();
+    Eigen::VectorXcd rot  = Eigen::VectorXcd::Ones(nV);  // identity by default
+    Eigen::VectorXcd rotF = Eigen::VectorXcd::Ones(nF);  // identity by default
     std::vector<long> singVerts;
     Eigen::VectorXd   singIdx;
     std::string singSource = "none";
@@ -1334,7 +1340,8 @@ mxArray* buildGaugeStruct(ContextHolder& h, const std::string& type, const mxArr
 
         conn::GaugeRotations gr =
             conn::integrateTrivialGaugeRotations(m, ensureDec(h), *h.cache, sing);
-        rot = gr.vertex;
+        rot  = gr.vertex;
+        rotF = gr.face;
 
         singVerts.assign(verts.begin(), verts.end());       // 0-based; marshal converts to 1-based
         singIdx = vals;
@@ -1355,7 +1362,7 @@ mxArray* buildGaugeStruct(ContextHolder& h, const std::string& type, const mxArr
       mxSetField(g,0,"rotation",eigenComplexVectorToMx(rot));
       mxSetField(s,0,"vertex",g); }
     { const char* f[] = {"rotation"}; mxArray* g = mxCreateStructMatrix(1,1,1,f);
-      mxSetField(g,0,"rotation",eigenComplexVectorToMx(Eigen::VectorXcd(0)));  // empty in v1
+      mxSetField(g,0,"rotation",eigenComplexVectorToMx(rotF));
       mxSetField(s,0,"face",g); }
     { const char* f[] = {"vertices","indices","source"};
       mxArray* g = mxCreateStructMatrix(1,1,3,f);

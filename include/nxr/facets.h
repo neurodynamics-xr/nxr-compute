@@ -88,8 +88,13 @@ public:
     GaugeType type() const { return type_; }
     const std::map<int,double>& singularities() const { return sing_; }
     // Realized per-vertex frame in this gauge: [nV,3] complex c = e1 + i e2.
-    // Levi-Civita/Euclidean: the raw vertex grid. Trivial: exp(i phi_v) .* grid.
+    // Levi-Civita/Euclidean: the raw vertex grid. Trivial: rotation .* grid —
+    // the combed frame (real part == the trivial parallel field). See
+    // GaugeRotations in compute.h for the convention.
     Eigen::MatrixXcd grid() const;
+    // Realized per-face frame in this gauge: [nF,3] complex. Same combing
+    // convention as grid(), via the dual-graph face rotations.
+    Eigen::MatrixXcd faceGrid() const;
 private:
     Manifold& m_;
     GaugeType type_;

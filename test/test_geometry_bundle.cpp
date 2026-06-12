@@ -125,20 +125,49 @@ static void testTrivialGaugeRotations() {
     std::map<int, double> sing = {{0, 1.0}, {1, 1.0}};
 
     auto g = nxr::manifold::connection::integrateTrivialGaugeRotations(m, dec, cache, sing);
-    EXPECT(g.vertex.size() == 12, "rotation length == nV");
+    EXPECT(g.vertex.size() == 12, "vertex rotation length == nV");
+    EXPECT(g.face.size() == 20, "face rotation length == nF");
 
     double maxModErr = (g.vertex.cwiseAbs().array() - 1.0).abs().maxCoeff();
-    EXPECT(maxModErr < 1e-9, "all rotations unit modulus");
+    EXPECT(maxModErr < 1e-9, "all vertex rotations unit modulus");
+    double maxModErrF = (g.face.cwiseAbs().array() - 1.0).abs().maxCoeff();
+    EXPECT(maxModErrF < 1e-9, "all face rotations unit modulus");
 
     double spread = (g.vertex.array() - g.vertex(0)).abs().maxCoeff();
     EXPECT(spread > 1e-6, "trivial gauge differs from Levi-Civita");
 
     EXPECT(std::abs(g.vertex(0) - std::complex<double>(1.0, 0.0)) < 1e-15,
-           "root rotation is identity");
+           "root vertex rotation is identity");
+    EXPECT(std::abs(g.face(0) - std::complex<double>(1.0, 0.0)) < 1e-15,
+           "root face rotation is identity");
 
     auto g2 = nxr::manifold::connection::integrateTrivialGaugeRotations(m, dec, cache, sing);
-    EXPECT((g.vertex - g2.vertex).cwiseAbs().maxCoeff() < 1e-15,
-           "rotation field deterministic");
+    EXPECT((g.vertex - g2.vertex).cwiseAbs().maxCoeff() < 1e-15 &&
+           (g.face - g2.face).cwiseAbs().maxCoeff() < 1e-15,
+           "rotation fields deterministic");
+
+    // ── Combing anchor: rotation .* grid realizes the trivial parallel field ──
+    // The stored rotation is the combing multiplier (conjugate of the
+    // accumulated transport), so real(rotation .* grid) must equal the
+    // direction field that propagateAngles{,Vertex} integrate from the same φ.
+    auto df = nxr::manifold::connection::trivial(m, dec, cache, sing);
+    Eigen::MatrixXcd vg = nxr::manifold::geometry::vertexGrid(m);
+    double maxVErr = 0;
+    for (int v = 0; v < 12; ++v) {
+        Eigen::RowVector3d realized = (g.vertex(v) * vg.row(v)).real();
+        maxVErr = std::max(maxVErr, (realized - df.vertexVectors.row(v)).norm());
+    }
+    EXPECT(maxVErr < 1e-12,
+           "real(vertex rotation .* vertexGrid) == trivial parallel field (vertexVectors)");
+
+    Eigen::MatrixXcd fg = nxr::manifold::geometry::faceGrid(m);
+    double maxFErr = 0;
+    for (int f = 0; f < 20; ++f) {
+        Eigen::RowVector3d realized = (g.face(f) * fg.row(f)).real();
+        maxFErr = std::max(maxFErr, (realized - df.directionVectors.row(f)).norm());
+    }
+    EXPECT(maxFErr < 1e-12,
+           "real(face rotation .* faceGrid) == trivial parallel field (directionVectors)");
 }
 
 static void testGraphLaplacian() {
