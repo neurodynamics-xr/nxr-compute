@@ -43,6 +43,27 @@ assert(max(abs(D * U), [], 'all') < 1e-9, 'D does not kill constant quaternion f
 % Cache consistency: a repeat call returns the identical matrix.
 assert(norm(D - nxr_compute('operators', h, 'diracD'), 'fro') == 0, 'diracD not stable across calls');
 
+%% ---- vertex-domain first-order INTRINSIC D_int : [4F x 4V] ----
+% The immersion/edge-based root (vertex positions instead of the Gauss map): the
+% spin-connection Dirac. Its W_F-Galerkin square is the intrinsic Dirac², whose
+% SCALAR (w-w) block is exactly the cotan Laplacian (the Crane property).
+Dint = nxr_compute('operators', h, 'diracIntrinsicD');
+assert(isequal(size(Dint), [4*nF, 4*nV]), 'diracIntrinsicD size != [4F, 4V]');
+assert(issparse(Dint) && isreal(Dint), 'diracIntrinsicD must be real sparse');
+
+Lint = Dint.' * WF * Dint;                               % intrinsic Dirac² [4V x 4V]
+Lw   = Lint(1:4:end, 1:4:end);                           % scalar (w-w) block [V x V]
+Kc   = nxr_compute('operators', h, 'laplacian', 'cotan');
+assert(norm(Lw - Kc, 'fro') / norm(Kc, 'fro') < 1e-9, ...
+    'intrinsic Dirac^2 scalar part != cotan Laplacian');
+
+% First-order property: D_int kills constant quaternionic fields (same U as above).
+assert(max(abs(Dint * U), [], 'all') < 1e-9, 'D_int does not kill constant quaternion fields');
+
+% Cache consistency.
+assert(norm(Dint - nxr_compute('operators', h, 'diracIntrinsicD'), 'fro') == 0, ...
+    'diracIntrinsicD not stable across calls');
+
 %% ---- face-domain (dual) first-order D~ : [4V x 4F] ----
 Dt = nxr_compute('operators', h, 'diracFaceD');
 assert(isequal(size(Dt), [4*nV, 4*nF]), 'diracFaceD size != [4V, 4F]');

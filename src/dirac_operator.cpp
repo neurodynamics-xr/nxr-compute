@@ -76,6 +76,60 @@ Eigen::SparseMatrix<double> matrix(Manifold& m) {
     return D;
 }
 
+Eigen::SparseMatrix<double> matrixIntrinsic(Manifold& m) {
+    using namespace geometrycentral;
+    using namespace geometrycentral::surface;
+
+    // INTRINSIC first-order Dirac D_int : 4F × 4V — identical block structure to
+    // matrix(), but the per-block source is the IMMERSION (vertex positions f, i.e.
+    // the opposite EDGE VECTOR f_r − f_q) instead of the Gauss map N. This is the
+    // spin-connection / tangent-frame-transport root (Crane et al.); its area-
+    // weighted Galerkin square Dᵀ ⋆_F D is the intrinsic Dirac² (scalar part = the
+    // cotan Laplacian). Geometry-only (vertex positions + face areas).
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
+    geom.requireFaceAreas();
+
+    const int N = m.nV();
+    const int Fn = m.nF();
+
+    auto vec3 = [](const Vector3& u) { return Eigen::Vector3d(u.x, u.y, u.z); };
+
+    std::vector<Eigen::Triplet<double>> TD;
+    TD.reserve(static_cast<size_t>(Fn) * 3 * 16);
+
+    for (Face f : mesh.faces()) {
+        const int fi = static_cast<int>(f.getIndex());
+        const double A = geom.faceAreas[f];
+        if (A <= 0.0)
+            throw Error(ErrorCode::InvalidInput,
+                "dirac::matrixIntrinsic: degenerate (zero-area) face",
+                "Face index " + std::to_string(fi) + "; fix mesh quality first.");
+        std::array<int,3> vid{};
+        std::array<Eigen::Vector3d,3> pos{};
+        int c = 0;
+        for (Vertex v : f.adjacentVertices()) {
+            vid[c] = static_cast<int>(v.getIndex());
+            pos[c] = vec3(geom.inputVertexPositions[v]);
+            ++c;
+        }
+        for (int s = 0; s < 3; ++s) {
+            const int p = vid[s];
+            const Eigen::Vector3d& Pr = pos[(s + 2) % 3];
+            const Eigen::Vector3d& Pq = pos[(s + 1) % 3];
+            Eigen::Matrix4d B = (-1.0 / (2.0 * A)) * leftMulImag(Pr - Pq);
+            for (int a = 0; a < 4; ++a)
+                for (int b = 0; b < 4; ++b)
+                    if (B(a, b) != 0.0)
+                        TD.emplace_back(4 * fi + a, 4 * p + b, B(a, b));
+        }
+    }
+    Eigen::SparseMatrix<double> D(4 * Fn, 4 * N);
+    D.setFromTriplets(TD.begin(), TD.end());
+    D.makeCompressed();
+    return D;
+}
+
 Eigen::SparseMatrix<double> extrinsicBlock(Manifold& m) {
     using namespace geometrycentral::surface;
 

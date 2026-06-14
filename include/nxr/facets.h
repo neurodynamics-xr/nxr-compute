@@ -173,6 +173,12 @@ public:
     // diracFace(τ). Closed-mesh v1: throws on an open boundary (as diracFace).
     const Eigen::SparseMatrix<double>& diracFaceD() const;
 
+    // diracIntrinsicD(): the first-order INTRINSIC Dirac operator D_int [4F×4V],
+    // cached, by const-ref (τ-free, geometry-only). Built from the immersion (edge
+    // vectors) rather than the Gauss map; its area-weighted Galerkin square is the
+    // intrinsic Dirac² (the spin-connection root, scalar part = cotan Laplacian).
+    const Eigen::SparseMatrix<double>& diracIntrinsicD() const;
+
 private:
     Manifold& m_;
 };

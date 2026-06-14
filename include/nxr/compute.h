@@ -83,7 +83,7 @@ enum class GaugeType { Euclidean, LeviCivita, Trivial };
 enum class OperatorId {
     LaplacianCotan, LaplacianGraph, LaplacianConnection, LaplacianCovariant,
     Dec, MassLumped, MassGalerkin, Gradient3D, Dirac, DiracFace,
-    DiracD, DiracFaceD
+    DiracD, DiracFaceD, DiracIntrinsicD
 };
 
 // ── Compute Context ──────────────────────────────────────────
@@ -184,6 +184,7 @@ private:
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracFace_;  // face extrinsic block Ẽ
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracD_;     // first-order Dirac D [4F×4V]
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracFaceD_; // first-order face Dirac D̃ [4V×4F]
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracIntrinsicD_; // first-order INTRINSIC Dirac D_int [4F×4V]
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheTwoFormLaplacian_;  // K̃ = d₁⋆₁⁻¹d₁ᵀ (diracFace intrinsic anchor)
 
     // Private cache-fill helpers called by OperatorsFacet::LaplacianView.
@@ -215,6 +216,9 @@ private:
     Eigen::SparseMatrix<double> diracFamily_(double tau);
     // First-order Dirac D (4F×4V), cached (OperatorId::DiracD). ops::dirac::matrix.
     const Eigen::SparseMatrix<double>& diracMatrixCached_();
+    // First-order INTRINSIC Dirac D_int (4F×4V), cached (OperatorId::DiracIntrinsicD).
+    // ops::dirac::matrixIntrinsic (immersion/edge-based; the spin-connection root).
+    const Eigen::SparseMatrix<double>& diracIntrinsicMatrixCached_();
 
     // Face-domain relative-Dirac extrinsic block Ẽ (4F×4F), cached (OperatorId::DiracFace).
     const Eigen::SparseMatrix<double>& diracFaceExtrinsicBlockCached_();
@@ -434,6 +438,13 @@ namespace dirac {
 // column 4*v+c. Geometry-only (vertex normals + face areas).
 Eigen::SparseMatrix<double> matrix(Manifold& m);
 Eigen::SparseMatrix<double> extrinsicBlock(Manifold& m);
+// First-order (rectangular) INTRINSIC Dirac operator D_int : [4F×4V] — identical
+// block structure to matrix(), but built from the IMMERSION (vertex positions /
+// opposite edge vectors) instead of the Gauss map. This is the spin-connection /
+// tangent-frame-transport root; its area-weighted Galerkin square Dᵀ ⋆_F D equals
+// the intrinsic Dirac² (the cotan-Laplacian-scalar-part operator). Geometry-only
+// (vertex positions + face areas). Quaternion order [w,x,y,z].
+Eigen::SparseMatrix<double> matrixIntrinsic(Manifold& m);
 // Face-domain (Poincaré dual) first-order Dirac operator D̃ : [4V×4F] — maps a
 // quaternionic field on faces to one on vertices, from EXACT per-face normals
 // aggregated over vertex stars (the dual of matrix). Its Galerkin square is the

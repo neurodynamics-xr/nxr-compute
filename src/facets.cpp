@@ -110,6 +110,7 @@ bool Manifold::isOperatorCached(OperatorId id) const {
         case OperatorId::DiracFace:           return (bool)cacheDiracFace_;
         case OperatorId::DiracD:              return (bool)cacheDiracD_;
         case OperatorId::DiracFaceD:          return (bool)cacheDiracFaceD_;
+        case OperatorId::DiracIntrinsicD:     return (bool)cacheDiracIntrinsicD_;
     }
     return false;
 }
@@ -128,6 +129,7 @@ void Manifold::releaseOperator(OperatorId id) {
         case OperatorId::DiracFace:           cacheDiracFace_.reset();           break;
         case OperatorId::DiracD:              cacheDiracD_.reset();              break;
         case OperatorId::DiracFaceD:          cacheDiracFaceD_.reset();          break;
+        case OperatorId::DiracIntrinsicD:     cacheDiracIntrinsicD_.reset();     break;
     }
 }
 
@@ -197,6 +199,15 @@ const Eigen::SparseMatrix<double>& Manifold::diracMatrixCached_() {
         cacheDiracD_ = std::make_unique<Eigen::SparseMatrix<double>>(
             ops::dirac::matrix(*this));
     return *cacheDiracD_;
+}
+
+// First-order INTRINSIC Dirac D_int [4F×4V] — immersion/edge-based (spin-connection
+// root). Cached independently of the extrinsic D and of the intrinsic square.
+const Eigen::SparseMatrix<double>& Manifold::diracIntrinsicMatrixCached_() {
+    if (!cacheDiracIntrinsicD_)
+        cacheDiracIntrinsicD_ = std::make_unique<Eigen::SparseMatrix<double>>(
+            ops::dirac::matrixIntrinsic(*this));
+    return *cacheDiracIntrinsicD_;
 }
 
 // L(τ) = (1−τ)(cotanL ⊗ I₄) + τ·E. Builds each term only when its coefficient is
@@ -437,6 +448,7 @@ Eigen::SparseMatrix<double> OperatorsFacet::dirac(double tau) const { return m_.
 Eigen::SparseMatrix<double> OperatorsFacet::diracFace(double tau) const { return m_.diracFaceFamily_(tau); }
 const Eigen::SparseMatrix<double>& OperatorsFacet::diracD() const { return m_.diracMatrixCached_(); }
 const Eigen::SparseMatrix<double>& OperatorsFacet::diracFaceD() const { return m_.diracFaceMatrixCached_(); }
+const Eigen::SparseMatrix<double>& OperatorsFacet::diracIntrinsicD() const { return m_.diracIntrinsicMatrixCached_(); }
 
 // MassView: each helper calls through to the independent private Manifold cache-fill.
 // Holds Manifold& m (C1 pattern) — never dangles.
