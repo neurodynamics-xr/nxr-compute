@@ -24,11 +24,11 @@ static Eigen::Matrix4d leftMulImag(const Eigen::Vector3d& v) {
     return L;
 }
 
-Eigen::SparseMatrix<double> extrinsicBlock(Manifold& m) {
+Eigen::SparseMatrix<double> matrix(Manifold& m) {
     using namespace geometrycentral::surface;
 
     // Gauss map: per-vertex unit normals from the embedded geometry. The Dirac
-    // extrinsic term is genuinely extrinsic, so it always uses the TRUE embedding
+    // operator is genuinely extrinsic, so it always uses the TRUE embedding
     // (geometry()), independent of intrinsicDelaunay normalization.
     geometry::VertexFrames vf = geometry::vertexFrames(m);   // vf.normals = N [nV,3]
     auto& mesh = m.mesh();
@@ -38,20 +38,20 @@ Eigen::SparseMatrix<double> extrinsicBlock(Manifold& m) {
     const int N = m.nV();
     const int Fn = m.nF();
 
-    // Rectangular real Dirac matrix D : 4F × 4V.
-    // Per face f=ijk, area A: for each cyclic (p,q,r), block on column p is
-    //   D_{f,p} = −leftMulImag(N_r − N_q) / (2A).
+    // Rectangular real first-order Dirac matrix D : 4F × 4V — maps a quaternionic
+    // field on vertices to one on faces. Per face f=ijk, area A: for each cyclic
+    // (p,q,r), the block on column p is D_{f,p} = −leftMulImag(N_r − N_q) / (2A).
     std::vector<Eigen::Triplet<double>> TD;
     TD.reserve(static_cast<size_t>(Fn) * 3 * 16);
 
     for (Face f : mesh.faces()) {
         const int fi = static_cast<int>(f.getIndex());
         const double A = geom.faceAreas[f];
-        // Fail loud (CLAUDE.md §6): a single zero-area face would poison the
-        // whole E with inf/NaN via the 1/(2A) below — diagnose, don't propagate.
+        // Fail loud (CLAUDE.md §6): a single zero-area face would poison D (and
+        // hence E) with inf/NaN via the 1/(2A) below — diagnose, don't propagate.
         if (A <= 0.0)
             throw Error(ErrorCode::InvalidInput,
-                "dirac::extrinsicBlock: degenerate (zero-area) face",
+                "dirac::matrix: degenerate (zero-area) face",
                 "Face index " + std::to_string(fi) + "; fix mesh quality first.");
         std::array<int,3> vid{};
         int c = 0;
@@ -72,6 +72,22 @@ Eigen::SparseMatrix<double> extrinsicBlock(Manifold& m) {
     }
     Eigen::SparseMatrix<double> D(4 * Fn, 4 * N);
     D.setFromTriplets(TD.begin(), TD.end());
+    D.makeCompressed();
+    return D;
+}
+
+Eigen::SparseMatrix<double> extrinsicBlock(Manifold& m) {
+    using namespace geometrycentral::surface;
+
+    // First-order Dirac D : 4F × 4V — the single source of truth (also exposed
+    // directly as operators().diracD()). E is its ⋆_F-weighted Galerkin square,
+    // so the two never drift: built from the same triplets.
+    Eigen::SparseMatrix<double> D = matrix(m);
+
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
+    geom.requireFaceAreas();
+    const int Fn = m.nF();
 
     // Face-area 2-form mass ⋆_F : 4F × 4F diagonal (A_f on each of the 4 rows).
     std::vector<Eigen::Triplet<double>> TW;
@@ -92,7 +108,7 @@ Eigen::SparseMatrix<double> extrinsicBlock(Manifold& m) {
     return E;
 }
 
-Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m) {
+Eigen::SparseMatrix<double> matrixFace(Manifold& m) {
     using namespace geometrycentral;
     using namespace geometrycentral::surface;
 
@@ -106,7 +122,7 @@ Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m) {
     // are closed topological spheres, so this is exact for the intended use.
     if (mesh.hasBoundary())
         throw Error(ErrorCode::InvalidInput,
-            "dirac::extrinsicBlockFace: open boundary unsupported (diracFace is closed-mesh v1)",
+            "dirac::matrixFace: open boundary unsupported (diracFace is closed-mesh v1)",
             "Vertex stars must be closed; pass a closed mesh (e.g. a FreeSurfer hemisphere).");
 
     geom.requireFaceNormals();        // EXACT per-face normals (the Gauss map at faces)
@@ -117,7 +133,7 @@ Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m) {
 
     auto vec3 = [](const Vector3& u) { return Eigen::Vector3d(u.x, u.y, u.z); };
 
-    // Rectangular real operator D̃ : ℍ^F → ℍ^V  [4V × 4F].
+    // Rectangular real first-order face-domain Dirac operator D̃ : ℍ^F → ℍ^V  [4V × 4F].
     // For each vertex v (all interior — closed mesh) with cyclically ordered incident
     // faces f_0..f_{d-1}:  block(v, f_k) = -leftMulImag(N_{f_{k+1}} - N_{f_{k-1}}) / (2 Ã_v).
     std::vector<Eigen::Triplet<double>> TD;
@@ -128,7 +144,7 @@ Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m) {
         const double Av = geom.vertexDualAreas[v];
         if (Av <= 0.0)
             throw Error(ErrorCode::InvalidInput,
-                "dirac::extrinsicBlockFace: degenerate (zero-area) vertex dual cell",
+                "dirac::matrixFace: degenerate (zero-area) vertex dual cell",
                 "Vertex index " + std::to_string(vi) + "; fix mesh quality first.");
 
         std::vector<int> fid;
@@ -151,6 +167,22 @@ Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m) {
     }
     Eigen::SparseMatrix<double> D(4 * N, 4 * Fn);
     D.setFromTriplets(TD.begin(), TD.end());
+    D.makeCompressed();
+    return D;
+}
+
+Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m) {
+    using namespace geometrycentral::surface;
+
+    // First-order face-domain Dirac D̃ : 4V × 4F — the single source of truth (also
+    // exposed as operators().diracFaceD()). It throws on an open boundary, so Ẽ
+    // inherits the closed-mesh-v1 guard. Ẽ is its ⋆_V-weighted Galerkin square.
+    Eigen::SparseMatrix<double> D = matrixFace(m);
+
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
+    geom.requireVertexDualAreas();
+    const int N = m.nV();
 
     std::vector<Eigen::Triplet<double>> TW;
     TW.reserve(static_cast<size_t>(4) * N);

@@ -82,7 +82,8 @@ enum class GaugeType { Euclidean, LeviCivita, Trivial };
 
 enum class OperatorId {
     LaplacianCotan, LaplacianGraph, LaplacianConnection, LaplacianCovariant,
-    Dec, MassLumped, MassGalerkin, Gradient3D, Dirac, DiracFace
+    Dec, MassLumped, MassGalerkin, Gradient3D, Dirac, DiracFace,
+    DiracD, DiracFaceD
 };
 
 // ── Compute Context ──────────────────────────────────────────
@@ -181,6 +182,8 @@ private:
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheGradient3D_;
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDirac_;      // extrinsic block E
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracFace_;  // face extrinsic block Ẽ
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracD_;     // first-order Dirac D [4F×4V]
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracFaceD_; // first-order face Dirac D̃ [4V×4F]
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheTwoFormLaplacian_;  // K̃ = d₁⋆₁⁻¹d₁ᵀ (diracFace intrinsic anchor)
 
     // Private cache-fill helpers called by OperatorsFacet::LaplacianView.
@@ -210,9 +213,13 @@ private:
     const Eigen::SparseMatrix<double>& diracExtrinsicBlockCached_();
     // Assemble L(τ) = (1−τ)(cotanL⊗I₄) + τ·E by value. τ ∈ [0,1] (validated).
     Eigen::SparseMatrix<double> diracFamily_(double tau);
+    // First-order Dirac D (4F×4V), cached (OperatorId::DiracD). ops::dirac::matrix.
+    const Eigen::SparseMatrix<double>& diracMatrixCached_();
 
     // Face-domain relative-Dirac extrinsic block Ẽ (4F×4F), cached (OperatorId::DiracFace).
     const Eigen::SparseMatrix<double>& diracFaceExtrinsicBlockCached_();
+    // First-order face Dirac D̃ (4V×4F), cached (OperatorId::DiracFaceD). ops::dirac::matrixFace.
+    const Eigen::SparseMatrix<double>& diracFaceMatrixCached_();
     // DEC 2-form Laplacian K̃ = d₁⋆₁⁻¹d₁ᵀ ([F×F]) — the diracFace intrinsic anchor.
     // Cached (mesh-fixed; not user-facing, so no OperatorId) so a τ-sweep reuses it.
     const Eigen::SparseMatrix<double>& twoFormLaplacianCached_();
@@ -420,13 +427,22 @@ Eigen::SparseMatrix<double> graphLaplacian(Manifold& m);
 // [w,x,y,z]; index 4*v+c. Geometry-only (vertex normals + face areas) — the one
 // operator assembled directly rather than wrapped from geometry-central.
 namespace dirac {
+// First-order (rectangular) extrinsic Dirac operator D : [4F×4V] — maps a
+// quaternionic field on vertices to one on faces. This is the operator whose
+// area-weighted Galerkin square is E = Dᵀ ⋆_F D (extrinsicBlock builds E from
+// THIS matrix, so the two never drift). Quaternion order [w,x,y,z]; row 4*f+c,
+// column 4*v+c. Geometry-only (vertex normals + face areas).
+Eigen::SparseMatrix<double> matrix(Manifold& m);
 Eigen::SparseMatrix<double> extrinsicBlock(Manifold& m);
-// Face-domain (Poincaré dual) extrinsic block: Ẽ = D̃ᵀ ⋆_V D̃, the [4F×4F]
-// real-symmetric PSD operator from EXACT per-face normals aggregated over vertex
-// stars (the dual of extrinsicBlock). Quaternion order [w,x,y,z]; index 4*f+c.
-// Geometry-only (face normals + vertex dual areas). Closed-mesh v1: throws
-// Error(InvalidInput) on an open boundary (vertex stars must be closed) —
-// exact on closed cortical hemispheres.
+// Face-domain (Poincaré dual) first-order Dirac operator D̃ : [4V×4F] — maps a
+// quaternionic field on faces to one on vertices, from EXACT per-face normals
+// aggregated over vertex stars (the dual of matrix). Its Galerkin square is the
+// face-domain extrinsic block Ẽ = D̃ᵀ ⋆_V D̃, the [4F×4F] real-symmetric PSD
+// operator (extrinsicBlockFace builds Ẽ from THIS matrix). Quaternion order
+// [w,x,y,z]; row 4*v+c, column 4*f+c. Geometry-only (face normals + vertex dual
+// areas). Closed-mesh v1: both throw Error(InvalidInput) on an open boundary
+// (vertex stars must be closed) — exact on closed cortical hemispheres.
+Eigen::SparseMatrix<double> matrixFace(Manifold& m);
 Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m);
 }  // namespace dirac
 

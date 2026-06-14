@@ -165,12 +165,84 @@ static void testDiracEigenbasis() {
            "eigenvalues form 4-fold quaternionic multiplets");
 }
 
+// ⋆_F : 4F×4F diagonal of face areas (each repeated 4×) — the Galerkin measure.
+static Eigen::SparseMatrix<double> faceMass4(Manifold& m) {
+    using namespace geometrycentral::surface;
+    auto& geom = m.geometry();
+    geom.requireFaceAreas();
+    const int Fn = m.nF();
+    std::vector<Eigen::Triplet<double>> T;
+    for (Face f : m.mesh().faces()) {
+        const int fi = static_cast<int>(f.getIndex());
+        const double A = geom.faceAreas[f];
+        for (int a = 0; a < 4; ++a) T.emplace_back(4 * fi + a, 4 * fi + a, A);
+    }
+    Eigen::SparseMatrix<double> W(4 * Fn, 4 * Fn);
+    W.setFromTriplets(T.begin(), T.end());
+    return W;
+}
+
+static void testDiracMatrixD() {
+    std::cout << "\n=== dirac: first-order operator D ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+    const int N = m.nV();    // 12
+    const int Fn = m.nF();   // 20
+
+    Eigen::SparseMatrix<double> D = ops::dirac::matrix(m);
+    EXPECT(D.rows() == 4*Fn && D.cols() == 4*N, "D is [4F, 4V] = [80, 48]");
+
+    // HEADLINE anchor: E = DᵀW_F D byte-matches the cached extrinsic block (and
+    // hence dirac(1)). The first-order D is the genuine square root of the family.
+    Eigen::SparseMatrix<double> W = faceMass4(m);
+    Eigen::SparseMatrix<double> Dt = D.transpose();
+    Eigen::SparseMatrix<double> E_from_D = (Dt * W * D).pruned();
+    EXPECT((E_from_D - ops::dirac::extrinsicBlock(m)).norm() < 1e-12,
+           "DᵀW_F D == extrinsicBlock (E is D's Galerkin square)");
+
+    // First-order property: D annihilates a CONSTANT quaternionic field (the
+    // per-face cyclic normal differences telescope to zero) — the Dirac analogue
+    // of "the Laplacian kills constants". Test all four constant unit quaternions.
+    Eigen::MatrixXd U = Eigen::MatrixXd::Zero(4*N, 4);
+    for (int v = 0; v < N; ++v)
+        for (int c = 0; c < 4; ++c) U(4*v + c, c) = 1.0;
+    EXPECT((D * U).cwiseAbs().maxCoeff() < 1e-10, "D kills constant quaternionic fields");
+
+    // The facet accessor returns the same matrix as the free function.
+    EXPECT((m.operators().diracD() - D).norm() < 1e-12, "operators().diracD() == ops::dirac::matrix");
+}
+
+static void testDiracMatrixFlat() {
+    std::cout << "\n=== dirac: first-order D on a flat patch ===\n";
+    std::vector<double> V; std::vector<int32_t> F; flatPatch(V, F);
+    Manifold m(V.data(), 7, F.data(), 6);
+    // Flat: Gauss map constant ⇒ every N_r − N_q ≡ 0 ⇒ D ≡ 0 (pure kernel).
+    EXPECT(ops::dirac::matrix(m).norm() < 1e-10, "D vanishes on a flat patch");
+}
+
+static void testDiracMatrixCache() {
+    std::cout << "\n=== dirac: first-order D cache lifecycle ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+
+    EXPECT(!m.isOperatorCached(OperatorId::DiracD), "DiracD not cached initially");
+    m.operators().diracD();
+    EXPECT(m.isOperatorCached(OperatorId::DiracD), "diracD() caches D");
+    // Independent of the squared-form cache: building D must not build E.
+    EXPECT(!m.isOperatorCached(OperatorId::Dirac), "diracD() does not build E");
+    m.releaseOperator(OperatorId::DiracD);
+    EXPECT(!m.isOperatorCached(OperatorId::DiracD), "releaseOperator(DiracD) clears D");
+}
+
 int main() {
     testExtrinsicBlock();
     testFlatKernel();
     testDiracFamily();
     testDiracCache();
     testDiracEigenbasis();
+    testDiracMatrixD();
+    testDiracMatrixFlat();
+    testDiracMatrixCache();
     std::cout << (g_failures ? "\nFAILURES\n" : "\nALL PASSED\n");
     return g_failures ? 1 : 0;
 }

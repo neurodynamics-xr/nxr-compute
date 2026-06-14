@@ -96,7 +96,7 @@ coordinate system for MEG leadfield analysis (design:
 | `nxr_compute('geometry', h)` | light per-element geometry; frames are the complex `grid` (`c = e1+i·e2`, normal = `real×imag`); curvature is the 2-RoSy deviatoric `q` + `meanCurvature` |
 | `nxr_compute('gauge', h, type[, opts])` | gauge as a transform of the Levi-Civita grid: `euclidean`/`levi-civita`/`trivial`. Returns `vertex.rotation` [V×1] AND `face.rotation` [F×1] (identity except `trivial`, which also carries singularities). Rotations are COMBING multipliers: `rotation .* grid` is the combed (trivially-parallel) frame and `real(rotation .* grid)` is the trivial parallel field on that domain — i.e. the *conjugate* of the accumulated transport coefficient (anchored byte-exact to `directionField`'s `vertexVectors`/`directionVectors`) |
 | `nxr_compute('bundle', h, gaugeType[, opts])` | `{Topology, Geometry, Gauge}` in one call |
-| `nxr_compute('operators', h, family[, subtype])` | a single named operator as native sparse — `laplacian` (`cotan`/`graph`/`connection`/`covariant`), `mass` (`lumped`/`galerkin`), `hodge` (`h0`/`h1`/`h2`/`h1inv`), `dec` (struct `{d0,d1}`), `gradient3D` (the covariant gradient `G`, `[3E×3N]`, cached), `dirac` (the relative-Dirac family `L(τ) = (1−τ)·cotan⊗I₄ + τ·D_N`, real `[4V×4V]`, `τ∈[0,1]`; the 4th arg is a numeric `τ`, not a string subtype), `diracFace` (the FACE-domain dual relative-Dirac family `L̃(τ) = (1−τ)·K̃⊗I₄ + τ·Ẽ`, real `[4F×4F]`, `τ∈[0,1]` numeric; exact face normals, face-supported eigenbasis); `connection` is complex. Same matrix the internal solvers use (single source of truth). |
+| `nxr_compute('operators', h, family[, subtype])` | a single named operator as native sparse — `laplacian` (`cotan`/`graph`/`connection`/`covariant`), `mass` (`lumped`/`galerkin`), `hodge` (`h0`/`h1`/`h2`/`h1inv`), `dec` (struct `{d0,d1}`), `gradient3D` (the covariant gradient `G`, `[3E×3N]`, cached), `dirac` (the relative-Dirac family `L(τ) = (1−τ)·cotan⊗I₄ + τ·D_N`, real `[4V×4V]`, `τ∈[0,1]`; the 4th arg is a numeric `τ`, not a string subtype), `diracFace` (the FACE-domain dual relative-Dirac family `L̃(τ) = (1−τ)·K̃⊗I₄ + τ·Ẽ`, real `[4F×4F]`, `τ∈[0,1]` numeric; exact face normals, face-supported eigenbasis), `diracD` (the *first-order* rectangular Dirac `D`, real `[4F×4V]`, cached, τ-free — `DᵀW_F D == dirac(1)`), `diracFaceD` (the first-order face-domain dual Dirac `D̃`, real `[4V×4F]`, cached — `D̃ᵀW_V D̃ == diracFace(1)`; throws on open boundary, like `diracFace`); `connection` is complex. Same matrix the internal solvers use (single source of truth). |
 | `nxr_compute('frameTransport', h, i, j)` | `3×3` orthogonal `Fⱼᵀ Fᵢ` — flat full-frame transport between any two vertex frames (1-based `i,j`) |
 | `nxr_compute('liftToWorld', h, Lloc)` / `('liftToFrame', h, Lworld)` | `[nV×3]` local↔Cartesian frame lift (inverse of `G·cᵀ`) |
 
@@ -160,7 +160,12 @@ value (`τ=0` skips `E`, `τ=1` skips `Δ₄`). Quaternion storage is
 (Galerkin mass, *not* `kron(I₄, ·)`). `L(τ)` commutes with right-ℍ-multiplication,
 so eigenvalues come in exact 4-fold quaternionic multiplets (the constant mode is
 a 4-fold zero for all τ). The `τ=0` discretization byte-matches `cotanL ⊗ I₄`
-(built-in correctness anchor). Designs:
+(built-in correctness anchor). The **first-order** rectangular Dirac `D` itself
+(`[4F×4V]`, `ops::dirac::matrix` → `operators().diracD()`, MEX `operators … diracD`)
+is exposed as a separate cached operator: `E = DᵀW_F D` is its area-weighted
+Galerkin square (so `dirac(1)` and `diracD` never drift — same triplets), and `D`
+annihilates constant quaternionic fields (the first-order analogue of "Δ kills
+constants"). Designs:
 `docs/superpowers/specs/2026-06-10-extrinsic-dirac-operator-design.md`. Boundary
 conditions (infinite potential well) and the cross-surface canonical
 representative remain deferred (single closed cortex, v1).
@@ -179,10 +184,14 @@ Dirac). Storage is **face-interleaved** `4f+c` (`kron(K̃,I₄)`), so in MATLAB 
 anchor is `kron(Ktilde, speye(4))` and the eigenbasis `eigs(L, kron(diag(Af),
 speye(4)), k, -1e-8)`. Still right-ℍ-equivariant ⇒ multiplicities divisible by 4
 (NOTE: Spectra miscounts the degenerate clusters — use a dense solve to verify
-multiplicities). `diracFace(0)` byte-matches `K̃⊗I₄`. Design:
+multiplicities). `diracFace(0)` byte-matches `K̃⊗I₄`. The first-order rectangular face-domain Dirac
+`D̃` (`[4V×4F]`, `ops::dirac::matrixFace` → `operators().diracFaceD()`, MEX
+`operators … diracFaceD`) is likewise exposed as a separate cached operator:
+`Ẽ = D̃ᵀW_V D̃` is its `⋆_V`-weighted Galerkin square (`diracFace(1) == diracFaceD`
+square), and `D̃` kills constant face-quaternionic fields. Design:
 `docs/superpowers/specs/2026-06-10-face-domain-dirac-operator-design.md`. Closed-mesh
-v1: **throws** on an open boundary (open vertex stars; fail-loud) — the
-infinite-potential-well boundary treatment is deferred.
+v1: both `Ẽ` and `D̃` **throw** on an open boundary (open vertex stars; fail-loud) —
+the infinite-potential-well boundary treatment is deferred.
 
 **Mesh quality / PSD note.** All operators use geometry-central's raw signed cotan
 weights (matching GC), so on non-Delaunay meshes (obtuse triangles — common on

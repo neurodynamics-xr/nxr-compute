@@ -1776,6 +1776,10 @@ void cmdVersion(int /*nlhs*/, mxArray** plhs,
 //                                               % tau in [0,1] (0=cotan⊗I4, 1=D_N)
 //   nxr_compute('operators', h, 'diracFace', tau)  % [4F×4F] FACE-domain (dual)
 //                                                  % relative-Dirac, tau in [0,1]
+//   nxr_compute('operators', h, 'diracD')       % [4F×4V] first-order Dirac D
+//                                               % (DᵀW_F D == dirac(1)); cached
+//   nxr_compute('operators', h, 'diracFaceD')   % [4V×4F] first-order face Dirac D̃
+//                                               % (D̃ᵀW_V D̃ == diracFace(1)); cached
 //
 // All sparse outputs are native MATLAB sparse (real or complex).
 // 'covariant' uses the default Ambient coupling (same as the existing
@@ -1854,9 +1858,16 @@ void cmdOperators(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) 
         double tau = getDoubleArg(prhs[3]);
         plhs[0] = eigenSparseToMx(m.operators().diracFace(tau));   // [4F×4F], caches Ẽ
 
+    } else if (family == "diracD") {
+        plhs[0] = eigenSparseToMx(m.operators().diracD());   // [4F×4V], cached first-order D
+
+    } else if (family == "diracFaceD") {
+        plhs[0] = eigenSparseToMx(m.operators().diracFaceD());   // [4V×4F], cached first-order D̃
+
     } else {
         throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
-            "operators: family must be laplacian|mass|hodge|dec|gradient3D|dirac|diracFace.");
+            "operators: family must be "
+            "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD.");
     }
 }
 

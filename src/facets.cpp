@@ -108,6 +108,8 @@ bool Manifold::isOperatorCached(OperatorId id) const {
         case OperatorId::Gradient3D:          return (bool)cacheGradient3D_;
         case OperatorId::Dirac:               return (bool)cacheDirac_;
         case OperatorId::DiracFace:           return (bool)cacheDiracFace_;
+        case OperatorId::DiracD:              return (bool)cacheDiracD_;
+        case OperatorId::DiracFaceD:          return (bool)cacheDiracFaceD_;
     }
     return false;
 }
@@ -124,6 +126,8 @@ void Manifold::releaseOperator(OperatorId id) {
         case OperatorId::Gradient3D:          cacheGradient3D_.reset();          break;
         case OperatorId::Dirac:               cacheDirac_.reset();               break;
         case OperatorId::DiracFace:           cacheDiracFace_.reset();           break;
+        case OperatorId::DiracD:              cacheDiracD_.reset();              break;
+        case OperatorId::DiracFaceD:          cacheDiracFaceD_.reset();          break;
     }
 }
 
@@ -185,6 +189,16 @@ const Eigen::SparseMatrix<double>& Manifold::diracExtrinsicBlockCached_() {
     return *cacheDirac_;
 }
 
+// First-order Dirac D [4F×4V] — the rectangular operator E = DᵀW_F D is built
+// from. Cached independently of E: requesting diracD() never builds E, and a
+// dirac(τ) sweep does not force D (E is its own cache slot).
+const Eigen::SparseMatrix<double>& Manifold::diracMatrixCached_() {
+    if (!cacheDiracD_)
+        cacheDiracD_ = std::make_unique<Eigen::SparseMatrix<double>>(
+            ops::dirac::matrix(*this));
+    return *cacheDiracD_;
+}
+
 // L(τ) = (1−τ)(cotanL ⊗ I₄) + τ·E. Builds each term only when its coefficient is
 // nonzero — τ=0 never assembles E; τ=1 never builds the intrinsic block. The
 // τ==0.0 / τ==1.0 fast paths use exact equality deliberately: τ arrives unmodified
@@ -224,6 +238,15 @@ const Eigen::SparseMatrix<double>& Manifold::diracFaceExtrinsicBlockCached_() {
         cacheDiracFace_ = std::make_unique<Eigen::SparseMatrix<double>>(
             ops::dirac::extrinsicBlockFace(*this));
     return *cacheDiracFace_;
+}
+
+// First-order face-domain Dirac D̃ [4V×4F]. Cached independently of Ẽ. Throws
+// on an open boundary (closed-mesh v1), inheriting matrixFace's guard.
+const Eigen::SparseMatrix<double>& Manifold::diracFaceMatrixCached_() {
+    if (!cacheDiracFaceD_)
+        cacheDiracFaceD_ = std::make_unique<Eigen::SparseMatrix<double>>(
+            ops::dirac::matrixFace(*this));
+    return *cacheDiracFaceD_;
 }
 
 // K̃ = d₁⋆₁⁻¹d₁ᵀ, the DEC 2-form Laplacian ([F×F]). Cached: depends only on the
@@ -412,6 +435,8 @@ const ops::DECOperators& OperatorsFacet::dec() const { return m_.decOperators();
 const Eigen::SparseMatrix<double>& OperatorsFacet::gradient3D() const { return m_.gradient3DCached_(); }
 Eigen::SparseMatrix<double> OperatorsFacet::dirac(double tau) const { return m_.diracFamily_(tau); }
 Eigen::SparseMatrix<double> OperatorsFacet::diracFace(double tau) const { return m_.diracFaceFamily_(tau); }
+const Eigen::SparseMatrix<double>& OperatorsFacet::diracD() const { return m_.diracMatrixCached_(); }
+const Eigen::SparseMatrix<double>& OperatorsFacet::diracFaceD() const { return m_.diracFaceMatrixCached_(); }
 
 // MassView: each helper calls through to the independent private Manifold cache-fill.
 // Holds Manifold& m (C1 pattern) — never dangles.

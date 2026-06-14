@@ -194,12 +194,79 @@ static void testDiracFaceEigenbasis() {
     EXPECT(allDiv4, "all eigenvalue multiplicities divisible by 4 (right-ℍ quaternionic structure)");
 }
 
+// ⋆_V : 4V×4V diagonal of vertex dual areas (each repeated 4×).
+static Eigen::SparseMatrix<double> vertexDualMass4(Manifold& m) {
+    using namespace geometrycentral::surface;
+    auto& geom = m.geometry();
+    geom.requireVertexDualAreas();
+    const int N = m.nV();
+    std::vector<Eigen::Triplet<double>> T;
+    for (Vertex v : m.mesh().vertices()) {
+        const int vi = static_cast<int>(v.getIndex());
+        const double Av = geom.vertexDualAreas[v];
+        for (int a = 0; a < 4; ++a) T.emplace_back(4 * vi + a, 4 * vi + a, Av);
+    }
+    Eigen::SparseMatrix<double> W(4 * N, 4 * N);
+    W.setFromTriplets(T.begin(), T.end());
+    return W;
+}
+
+static void testDiracMatrixFace() {
+    std::cout << "\n=== diracFace: first-order operator D~ ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+    const int N = m.nV();    // 12
+    const int Fn = m.nF();   // 20
+
+    Eigen::SparseMatrix<double> D = ops::dirac::matrixFace(m);
+    EXPECT(D.rows() == 4*N && D.cols() == 4*Fn, "D~ is [4V, 4F] = [48, 80]");
+
+    // HEADLINE anchor: Ẽ = D̃ᵀW_V D̃ byte-matches the cached face extrinsic block.
+    Eigen::SparseMatrix<double> W = vertexDualMass4(m);
+    Eigen::SparseMatrix<double> Dt = D.transpose();
+    Eigen::SparseMatrix<double> E_from_D = (Dt * W * D).pruned();
+    EXPECT((E_from_D - ops::dirac::extrinsicBlockFace(m)).norm() < 1e-12,
+           "D~ᵀW_V D~ == extrinsicBlockFace (Ẽ is D~'s Galerkin square)");
+
+    // First-order property: D̃ annihilates a CONSTANT (per-face) quaternionic field
+    // — the cyclic normal differences telescope around each vertex star.
+    Eigen::MatrixXd U = Eigen::MatrixXd::Zero(4*Fn, 4);
+    for (int f = 0; f < Fn; ++f)
+        for (int c = 0; c < 4; ++c) U(4*f + c, c) = 1.0;
+    EXPECT((D * U).cwiseAbs().maxCoeff() < 1e-10, "D~ kills constant face-quaternionic fields");
+
+    EXPECT((m.operators().diracFaceD() - D).norm() < 1e-12,
+           "operators().diracFaceD() == ops::dirac::matrixFace");
+}
+
+static void testDiracFaceMatrixCacheAndBoundary() {
+    std::cout << "\n=== diracFace: first-order D~ cache + boundary ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+
+    EXPECT(!m.isOperatorCached(OperatorId::DiracFaceD), "DiracFaceD not cached initially");
+    m.operators().diracFaceD();
+    EXPECT(m.isOperatorCached(OperatorId::DiracFaceD), "diracFaceD() caches D~");
+    EXPECT(!m.isOperatorCached(OperatorId::DiracFace), "diracFaceD() does not build Ẽ");
+    m.releaseOperator(OperatorId::DiracFaceD);
+    EXPECT(!m.isOperatorCached(OperatorId::DiracFaceD), "releaseOperator(DiracFaceD) clears D~");
+
+    // Closed-mesh v1: diracFaceD() must fail loud on an open boundary (as diracFace).
+    std::vector<double> Vb; std::vector<int32_t> Fb; borderedPatch(Vb, Fb);
+    Manifold mb(Vb.data(), 7, Fb.data(), 6);
+    bool threw = false;
+    try { mb.operators().diracFaceD(); } catch (const std::exception&) { threw = true; }
+    EXPECT(threw, "diracFaceD() throws on an open boundary");
+}
+
 int main() {
     testExtrinsicBlockFace();
     testBoundaryThrows();
     testDiracFaceFamily();
     testDiracFaceCache();
     testDiracFaceEigenbasis();
+    testDiracMatrixFace();
+    testDiracFaceMatrixCacheAndBoundary();
     std::cout << (g_failures ? "\nFAILURES\n" : "\nALL PASSED\n");
     return g_failures ? 1 : 0;
 }

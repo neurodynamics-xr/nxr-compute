@@ -163,6 +163,16 @@ public:
     // τ=0 ⇒ DEC 2-form Laplacian ⊗ I₄; τ=1 ⇒ pure extrinsic face Dirac Ẽ. τ ∈ [0,1].
     Eigen::SparseMatrix<double> diracFace(double tau) const;
 
+    // diracD(): the first-order (rectangular) extrinsic Dirac operator D [4F×4V],
+    // cached, returned by const-ref (τ-free, geometry-only). Its area-weighted
+    // Galerkin square DᵀW_F D is the τ=1 block of dirac(τ).
+    const Eigen::SparseMatrix<double>& diracD() const;
+
+    // diracFaceD(): the first-order FACE-domain (dual) Dirac operator D̃ [4V×4F],
+    // cached, by const-ref. Its Galerkin square D̃ᵀW_V D̃ is the τ=1 block of
+    // diracFace(τ). Closed-mesh v1: throws on an open boundary (as diracFace).
+    const Eigen::SparseMatrix<double>& diracFaceD() const;
+
 private:
     Manifold& m_;
 };
