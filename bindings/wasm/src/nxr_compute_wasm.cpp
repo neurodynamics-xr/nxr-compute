@@ -24,6 +24,7 @@
 #include <emscripten/val.h>
 
 #include "nxr/compute.h"
+#include "nxr/facets.h"   // OperatorsFacet definition (operators() command)
 
 #include <atomic>
 #include <cstdint>
@@ -142,6 +143,22 @@ std::vector<int> valToInt32Vector(const val& jsArr) {
 
 std::vector<double> valToDoubleVector(const val& jsArr) {
     return emscripten::convertJSArrayToNumberVector<double>(jsArr);
+}
+
+// Re-throw an nxr-compute Error as a std::runtime_error whose message carries
+// the "[CODE] msg | hint: ..." shape JS consumers parse (same as solve() /
+// assembleConnectionLaplacian above). Centralised so every binding method that
+// surfaces nxr::core::Error produces an identical JS .message.
+[[noreturn]] void rethrowAsJsError(const nxr::core::Error& e) {
+    std::string msg = "[";
+    msg += nxr::core::errorCodeName(e.code());
+    msg += "] ";
+    msg += e.what();
+    if (!e.hint().empty()) {
+        msg += " | hint: ";
+        msg += std::string(e.hint());
+    }
+    throw std::runtime_error(msg);
 }
 
 } // namespace
@@ -272,6 +289,72 @@ public:
         out.set("regularization", cl.regularization);
         out.set("format",         std::string(formatStr));
         return out;
+    }
+
+    // Single named operator as COO sparse — mirrors the MEX 'operators' command
+    // (bindings/mex/src/nxr_compute_mex.cpp::cmdOperators) for cross-binding
+    // parity. The `arg` is polymorphic: a subtype STRING for laplacian/mass/hodge,
+    // a numeric TAU for dirac/diracFace (∈ [0,1]), or null/undefined for the
+    // no-argument families (dec/gradient3D/diracD/diracFaceD/diracIntrinsicD).
+    // Returns a real COO object; 'connection' returns a complex COO
+    // ({row,col,realData,imagData}); 'dec' returns { d0, d1 }. Same matrices the
+    // internal solvers use (single source of truth — the Manifold operators facet).
+    val operators(std::string family, val arg) {
+        namespace cl = nxr::manifold::ops::laplacian::connection;
+        nxr::manifold::Manifold& m = *ctx_;
+        const bool hasNum = arg.isNumber();
+        const std::string sub = arg.isString() ? arg.as<std::string>() : "";
+        try {
+            if (family == "laplacian") {
+                if (sub == "cotan")      return sparseToVal(m.operators().laplacian().cotan());
+                if (sub == "graph")      return sparseToVal(m.operators().laplacian().graph());
+                if (sub == "connection") return sparseComplexToVal(m.operators().laplacian().connection());
+                if (sub == "covariant")  return sparseToVal(m.operators().laplacian().covariant(cl::CovariantCoupling::Ambient));
+                throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                    "operators laplacian: subtype must be cotan|graph|connection|covariant.");
+            } else if (family == "mass") {
+                if (sub == "lumped")   return sparseToVal(m.operators().mass().lumped());
+                if (sub == "galerkin") return sparseToVal(m.operators().mass().galerkin());
+                throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                    "operators mass: subtype must be lumped|galerkin.");
+            } else if (family == "hodge") {
+                if (sub == "h0")    return sparseToVal(m.operators().hodge().h0());
+                if (sub == "h1")    return sparseToVal(m.operators().hodge().h1());
+                if (sub == "h2")    return sparseToVal(m.operators().hodge().h2());
+                if (sub == "h1inv") return sparseToVal(m.operators().hodge().h1inv());
+                throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                    "operators hodge: subtype must be h0|h1|h2|h1inv.");
+            } else if (family == "dec") {
+                const auto& dec = m.operators().dec();
+                val obj = val::object();
+                obj.set("d0", sparseToVal(dec.d0));
+                obj.set("d1", sparseToVal(dec.d1));
+                return obj;
+            } else if (family == "gradient3D") {
+                return sparseToVal(m.operators().gradient3D());
+            } else if (family == "dirac") {
+                if (!hasNum)
+                    throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                        "operators dirac: expected a numeric tau, operators('dirac', tau).");
+                return sparseToVal(m.operators().dirac(arg.as<double>()));
+            } else if (family == "diracFace") {
+                if (!hasNum)
+                    throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                        "operators diracFace: expected a numeric tau, operators('diracFace', tau).");
+                return sparseToVal(m.operators().diracFace(arg.as<double>()));
+            } else if (family == "diracD") {
+                return sparseToVal(m.operators().diracD());
+            } else if (family == "diracFaceD") {
+                return sparseToVal(m.operators().diracFaceD());
+            } else if (family == "diracIntrinsicD") {
+                return sparseToVal(m.operators().diracIntrinsicD());
+            }
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                "operators: family must be "
+                "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD.");
+        } catch (const nxr::core::Error& e) {
+            rethrowAsJsError(e);
+        }
     }
 
     val frames() {
@@ -948,6 +1031,7 @@ EMSCRIPTEN_BINDINGS(nxr_compute_wasm) {
         .function("assembleManifoldOperators",  &ContextWrapper::assembleManifoldOperators)
         .function("assembleDECOperators",   &ContextWrapper::assembleDECOperators)
         .function("assembleConnectionLaplacian", &ContextWrapper::assembleConnectionLaplacian)
+        .function("operators",   &ContextWrapper::operators)
         .function("frames",      &ContextWrapper::frames)
         .function("normals",   &ContextWrapper::normals)
         // Spectral

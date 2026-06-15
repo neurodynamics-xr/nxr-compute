@@ -239,6 +239,19 @@ export interface Manifold {
    *  @param variant — mass-matrix variant ("lumped" default, "galerkin"). */
   assembleManifoldOperators(variant?: MassMatrixVariant | ""): ManifoldOperators
   assembleDECOperators():  DECOperators
+
+  /** Single named operator as COO sparse — parity with the MEX 'operators'
+   *  command (same matrices the internal solvers use). `connection` returns a
+   *  complex COO; `dec` returns `{ d0, d1 }`; `dirac`/`diracFace` take a numeric
+   *  tau ∈ [0,1]; the remaining families take no second argument. */
+  operators(family: "laplacian", subtype: "cotan" | "graph" | "covariant"): SparseMatrixCOO
+  operators(family: "laplacian", subtype: "connection"): SparseMatrixCOOComplex
+  operators(family: "mass", subtype: "lumped" | "galerkin"): SparseMatrixCOO
+  operators(family: "hodge", subtype: "h0" | "h1" | "h2" | "h1inv"): SparseMatrixCOO
+  operators(family: "dec"): { d0: SparseMatrixCOO; d1: SparseMatrixCOO }
+  operators(family: "gradient3D" | "diracD" | "diracFaceD" | "diracIntrinsicD"): SparseMatrixCOO
+  operators(family: "dirac" | "diracFace", tau: number): SparseMatrixCOO
+
   frames():     FaceFrames
   normals(type?: NormalType): Float64Array
 

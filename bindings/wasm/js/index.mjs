@@ -170,6 +170,11 @@ function makeContextWrapper(raw) {
     // vertexLumpedMassMatrix and vertexGalerkinMassMatrix.
     assembleManifoldOperators: (variant = "") => raw.assembleManifoldOperators(variant),
     assembleDECOperators:  () => raw.assembleDECOperators(),
+    // Single named operator as COO sparse — parity with the MEX 'operators'
+    // command. `arg` is a subtype string (laplacian/mass/hodge), a numeric tau
+    // (dirac/diracFace), or omitted (dec/gradient3D/diracD/diracFaceD/
+    // diracIntrinsicD). Embind needs both args, so undefined → null.
+    operators: (family, arg) => raw.operators(family, arg === undefined ? null : arg),
     frames:     () => raw.frames(),
     normals:  (type = 0) => raw.normals(type),
 

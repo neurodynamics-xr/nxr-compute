@@ -300,6 +300,65 @@ console.log(`  heatDiffusion ✓ (T=${heat.T}, nV=${heat.nV})`)
   console.log('  index.mjs defaults ✓')
 }
 
+// ── Test 13: operators() command (Dirac + facet operators) ──────
+//
+// Parity with the MEX 'operators' command. Exercises the raw Embind method
+// directly, then the index.mjs wrapper forwarder (undefined arg → null).
+{
+  const isCOO = (s, r, c) =>
+    s && s.rows === r && s.cols === c &&
+    s.row instanceof Int32Array && s.data instanceof Float64Array && s.nnz > 0
+
+  // Extrinsic Dirac family + first-order operators.
+  const dirac0 = ctx.operators('dirac', 0.0)
+  require(isCOO(dirac0, 4*nV, 4*nV), 'dirac(0) is [4V×4V] COO')
+  const dirac1 = ctx.operators('dirac', 1.0)
+  require(isCOO(dirac1, 4*nV, 4*nV), 'dirac(1) is [4V×4V] COO')
+  const dFace = ctx.operators('diracFace', 0.5)
+  require(isCOO(dFace, 4*nF, 4*nF), 'diracFace(0.5) is [4F×4F] COO')
+  const dD = ctx.operators('diracD')
+  require(isCOO(dD, 4*nF, 4*nV), 'diracD is [4F×4V] COO')
+  const dFaceD = ctx.operators('diracFaceD')
+  require(isCOO(dFaceD, 4*nV, 4*nF), 'diracFaceD is [4V×4F] COO')
+  const dIntD = ctx.operators('diracIntrinsicD')
+  require(isCOO(dIntD, 4*nF, 4*nV), 'diracIntrinsicD is [4F×4V] COO')
+
+  // Cross-binding anchor (cheap): dirac(0) == cotanL ⊗ I4, so nnz(dirac0) == 4·nnz(cotanL).
+  const cotan = ctx.operators('laplacian', 'cotan')
+  require(isCOO(cotan, nV, nV), 'laplacian cotan is [V×V] COO')
+  require(dirac0.nnz === 4 * cotan.nnz, `dirac(0) nnz == 4·cotan nnz (${dirac0.nnz} vs ${4*cotan.nnz})`)
+
+  // Other facet operators.
+  const grad3D = ctx.operators('gradient3D')
+  require(isCOO(grad3D, 3*nE, 3*nV), 'gradient3D is [3E×3N] COO')
+  const dec = ctx.operators('dec')
+  require(isCOO(dec.d0, nE, nV) && isCOO(dec.d1, nF, nE), 'dec returns {d0,d1}')
+  const conn = ctx.operators('laplacian', 'connection')
+  require(conn.rows === nV && conn.realData instanceof Float64Array &&
+          conn.imagData instanceof Float64Array, 'connection is complex COO')
+
+  // Error paths surface as JS Errors with the "[CODE] ..." message shape.
+  let threwTau = false
+  try { ctx.operators('dirac') } catch { threwTau = true }
+  require(threwTau, 'dirac without tau throws')
+  let threwFam = false
+  try { ctx.operators('nope') } catch { threwFam = true }
+  require(threwFam, 'unknown family throws')
+  console.log(`  operators ✓ (dirac0 nnz=${dirac0.nnz}, diracD ${dD.rows}×${dD.cols}, ` +
+              `diracFaceD ${dFaceD.rows}×${dFaceD.cols})`)
+
+  // Wrapper forwarder: omitted optional arg works (undefined → null).
+  const { initNxrCompute } = await import('../bindings/wasm/js/index.mjs')
+  const wrapped = await initNxrCompute()
+  const wctx = wrapped.createContext(verts, faces)
+  const wD = wctx.operators('diracD')
+  require(isCOO(wD, 4*nF, 4*nV), 'wrapped operators(diracD) works without arg')
+  const wDirac = wctx.operators('dirac', 0.5)
+  require(isCOO(wDirac, 4*nV, 4*nV), 'wrapped operators(dirac, tau) works')
+  wctx.delete()
+  console.log('  operators wrapper ✓')
+}
+
 // ── Cleanup ───────────────────────────────────────────────────
 ctx.delete()
 console.log('[smoke] all assertions passed ✓')
