@@ -108,6 +108,38 @@ export interface EigenResult {
   nConverged:   number
 }
 
+/** Options for Manifold.eigs() — the named-operator eigensolve. */
+export interface EigsOptions {
+  /** Which operator to eigensolve. 'laplacian' pairs with `subtype`; 'cotan'/
+   *  'graph' are convenience aliases; 'dirac'/'diracFace' are the [4·domain]
+   *  quaternionic families (blockSize 4). */
+  operator: "laplacian" | "cotan" | "graph" | "dirac" | "diracFace"
+  /** Required when operator === 'laplacian'. */
+  subtype?: "cotan" | "graph"
+  /** Blend for dirac/diracFace ∈ [0,1] (0 = intrinsic, 1 = pure extrinsic). */
+  tau?:     number
+  /** Vertex-domain mass for cotan/dirac (default 'galerkin'). */
+  mass?:    MassMatrixVariant
+  /** Number of eigenpairs. */
+  k:        number
+  /** Shift for shift-invert (default -1e-8). */
+  sigma?:   number
+  /** M-orthonormalize the basis (default true). */
+  normalize?:  boolean
+  /** Dirac only: reconstruct exact 4-fold multiplets from the right-ℍ symmetry.
+   *  The returned count is rounded up to a multiple of 4. */
+  multiplets?: boolean
+  /** Exact dense generalized solve — small meshes / verification only. */
+  dense?:      boolean
+}
+
+/** Result of Manifold.eigs() — EigenResult plus the operator's block size
+ *  (1 scalar / 4 Dirac), so consumers can reshape the n·k eigenvector buffer
+ *  (n = blockSize · domainSize). */
+export interface EigsResult extends EigenResult {
+  blockSize: number
+}
+
 export interface FaceFrames {
   /** First per-face tangent vector, F*3 row-major */
   e1:      Float64Array
@@ -251,6 +283,15 @@ export interface Manifold {
   operators(family: "dec"): { d0: SparseMatrixCOO; d1: SparseMatrixCOO }
   operators(family: "gradient3D" | "diracD" | "diracFaceD" | "diracIntrinsicD"): SparseMatrixCOO
   operators(family: "dirac" | "diracFace", tau: number): SparseMatrixCOO
+
+  /** Named-operator eigensolve. Assembles the operator AND its natural
+   *  generalized mass C++-side (no JS-side ⊗I₄), then eigensolves via the shared
+   *  single-source-of-truth path. For the Dirac, `multiplets: true` reconstructs
+   *  exact 4-fold quaternionic multiplets (Spectra miscounts the degenerate
+   *  clusters); `dense: true` runs an exact dense generalized solve for small
+   *  meshes / verification. Eigenvectors are vMajor row-major, length `n·k`
+   *  (n = blockSize·domainSize). */
+  eigs(opts: EigsOptions): EigsResult
 
   frames():     FaceFrames
   normals(type?: NormalType): Float64Array

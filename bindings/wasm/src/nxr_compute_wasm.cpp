@@ -357,6 +357,66 @@ public:
         }
     }
 
+    // Named-operator eigensolve — assembles the operator AND its natural
+    // generalized mass C++-side (no JS-side ⊗I₄, one boundary crossing) and
+    // eigensolves via the shared solve::eigenOperator (single source of truth).
+    // opts: { operator: 'laplacian'|'cotan'|'graph'|'dirac'|'diracFace',
+    //         subtype?: 'cotan'|'graph',           // when operator === 'laplacian'
+    //         tau?: number,                        // dirac / diracFace blend ∈ [0,1]
+    //         mass?: 'lumped'|'galerkin',          // vertex-domain mass (default galerkin)
+    //         k: number, sigma?: number (= -1e-8),
+    //         normalize?: boolean (= true),
+    //         multiplets?: boolean (= false),      // Dirac: exact 4-fold ℍ-reconstruction
+    //         dense?: boolean (= false) }          // exact small-mesh verification
+    // Returns { eigenvectors (vMajor, n·k), eigenvalues, k, nConverged, blockSize }.
+    val eigs(val opts) {
+        if (opts.isNull() || opts.isUndefined() || opts["operator"].isUndefined())
+            throw std::runtime_error("[INVALID_INPUT] eigs: expected { operator, k, ... }.");
+        try {
+            nxr::manifold::solve::EigenOperatorSpec spec;
+            const std::string op = opts["operator"].as<std::string>();
+            int blockSize = 1;
+            if (op == "laplacian") {
+                const std::string sub = opts["subtype"].isUndefined() ? "" : opts["subtype"].as<std::string>();
+                if      (sub == "cotan") spec.op = nxr::manifold::solve::EigenOperator::LaplacianCotan;
+                else if (sub == "graph") spec.op = nxr::manifold::solve::EigenOperator::LaplacianGraph;
+                else throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                    "eigs laplacian: subtype must be cotan|graph.");
+            } else if (op == "cotan") {
+                spec.op = nxr::manifold::solve::EigenOperator::LaplacianCotan;
+            } else if (op == "graph") {
+                spec.op = nxr::manifold::solve::EigenOperator::LaplacianGraph;
+            } else if (op == "dirac") {
+                spec.op = nxr::manifold::solve::EigenOperator::Dirac; blockSize = 4;
+            } else if (op == "diracFace") {
+                spec.op = nxr::manifold::solve::EigenOperator::DiracFace; blockSize = 4;
+            } else {
+                throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                    "eigs: operator must be laplacian|cotan|graph|dirac|diracFace.");
+            }
+
+            if (!opts["tau"].isUndefined())  spec.tau  = opts["tau"].as<double>();
+            if (!opts["mass"].isUndefined())
+                spec.mass = nxr::manifold::ops::parseMassMatrixVariant(opts["mass"].as<std::string>());
+            if (opts["k"].isUndefined())
+                throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput, "eigs: k is required.");
+
+            const int    k          = opts["k"].as<int>();
+            const double sigma      = opts["sigma"].isUndefined()      ? -1e-8 : opts["sigma"].as<double>();
+            const bool   normalize  = opts["normalize"].isUndefined()  ? true  : opts["normalize"].as<bool>();
+            const bool   multiplets = opts["multiplets"].isUndefined() ? false : opts["multiplets"].as<bool>();
+            const bool   dense      = opts["dense"].isUndefined()      ? false : opts["dense"].as<bool>();
+
+            nxr::manifold::solve::EigenResult r = nxr::manifold::solve::eigenOperator(
+                *ctx_, spec, k, sigma, normalize, multiplets, dense);
+            val out = eigenResultToVal(r);
+            out.set("blockSize", blockSize);
+            return out;
+        } catch (const nxr::core::Error& e) {
+            rethrowAsJsError(e);
+        }
+    }
+
     val frames() {
         auto frames = nxr::manifold::geometry::frames(*ctx_);
         val obj = val::object();
@@ -1032,6 +1092,7 @@ EMSCRIPTEN_BINDINGS(nxr_compute_wasm) {
         .function("assembleDECOperators",   &ContextWrapper::assembleDECOperators)
         .function("assembleConnectionLaplacian", &ContextWrapper::assembleConnectionLaplacian)
         .function("operators",   &ContextWrapper::operators)
+        .function("eigs",        &ContextWrapper::eigs)
         .function("frames",      &ContextWrapper::frames)
         .function("normals",   &ContextWrapper::normals)
         // Spectral

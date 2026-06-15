@@ -770,6 +770,65 @@ Eigen::MatrixXd normalize(
 EigenResult removeDC(const EigenResult& result);
 
 
+// ── Named-operator eigensolve ────────────────────────────────
+//
+// Single source of truth for "named operator → generalized eigenproblem".
+// Each operator has a NATURAL generalized mass (the metric its eigenproblem is
+// posed against); that pairing is library knowledge, not something every
+// consumer should re-derive. `eigenProblemFor` centralizes it; `eigenOperator`
+// assembles + eigensolves (+ optional ℍ-multiplet reconstruction / dense path).
+// Design: docs/superpowers/specs/2026-06-15-operator-eigensolve-design.md.
+
+enum class EigenOperator {
+    LaplacianCotan,   // (cotanL, mass)
+    LaplacianGraph,   // (graphL, I)           — standard eigenproblem
+    Dirac,            // (dirac(τ) 4V, M_galerkin ⊗ I₄)   — vertex-interleaved 4v+c
+    DiracFace         // (diracFace(τ) 4F, diag(faceArea) ⊗ I₄)
+    // Covariant (3N) deferred: it is component-major (c·N+v, mass = kron(I₃, M),
+    // a different expansion than the Dirac's interleaved kron(M, I₄)) and its
+    // ambient spectrum is just the triply-degenerate Laplace–Beltrami spectrum.
+};
+
+struct EigenOperatorSpec {
+    EigenOperator op;
+    double tau = 0.0;                                       // Dirac / DiracFace blend ∈ [0,1]
+    ops::MassMatrixVariant mass = ops::MassMatrixVariant::Galerkin;  // vertex-domain mass choice
+};
+
+struct EigenProblem {
+    Eigen::SparseMatrix<double> K;   // the operator
+    Eigen::SparseMatrix<double> M;   // its natural generalized mass (block-expanded)
+    double sigma;                    // shift for shift-invert
+    int blockSize;                   // 1 scalar / 3 covariant / 4 Dirac
+};
+
+// Build the (K, M, σ, blockSize) generalized eigenproblem for a named operator.
+EigenProblem eigenProblemFor(Manifold& m, const EigenOperatorSpec& spec);
+
+// blockKron(M, b): expand a [n×n] sparse to [bn×bn] block-diagonal (kron(M, I_b),
+// entry (i,j,v) → (b·i+c, b·j+c, v) for c=0..b−1). Exposed for callers that build
+// their own block masses; used internally by eigenProblemFor.
+Eigen::SparseMatrix<double> blockKron(const Eigen::SparseMatrix<double>& M, int b);
+
+// Assemble + eigensolve a named operator. With reconstructMultiplets and a
+// blockSize-4 (Dirac) operator, the eigenspaces are closed under right-quaternion
+// multiplication to recover exact 4-fold multiplets (Spectra miscounts the
+// degenerate clusters). With dense=true, uses Eigen's dense generalized solver
+// (exact eigenvalues + multiplicities; small meshes / verification only — throws
+// EigensolveInvalidK if the dense size exceeds the cap unless the mesh is small).
+EigenResult eigenOperator(
+    Manifold& m,
+    const EigenOperatorSpec& spec,
+    int k,
+    double sigma                       = -1e-8,
+    bool normalize                     = true,
+    bool reconstructMultiplets         = false,
+    bool dense                         = false,
+    const CancellationToken& cancel    = {},
+    const ProgressObserver& progress   = {}
+);
+
+
 // ── Poisson Solver ───────────────────────────────────────────
 
 /**

@@ -72,6 +72,7 @@ add_library(nxr_compute STATIC
   src/facets.cpp
   src/covariant_differential.cpp
   src/dirac_operator.cpp
+  src/eigenproblem.cpp
 )
 
 target_include_directories(nxr_compute PUBLIC
@@ -215,4 +216,8 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_dirac_face_operator test/test_dirac_face_operator.cpp)
     target_link_libraries(test_dirac_face_operator PRIVATE nxr_compute)
     add_test(NAME test_dirac_face_operator COMMAND test_dirac_face_operator)
+
+    add_executable(test_operator_eigensolve test/test_operator_eigensolve.cpp)
+    target_link_libraries(test_operator_eigensolve PRIVATE nxr_compute)
+    add_test(NAME test_operator_eigensolve COMMAND test_operator_eigensolve)
 endif()

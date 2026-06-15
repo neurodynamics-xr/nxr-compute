@@ -100,6 +100,30 @@ coordinate system for MEG leadfield analysis (design:
 | `nxr_compute('frameTransport', h, i, j)` | `3×3` orthogonal `Fⱼᵀ Fᵢ` — flat full-frame transport between any two vertex frames (1-based `i,j`) |
 | `nxr_compute('liftToWorld', h, Lloc)` / `('liftToFrame', h, Lworld)` | `[nV×3]` local↔Cartesian frame lift (inverse of `G·cᵀ`) |
 
+**Named-operator eigensolve (`solve::eigenProblemFor` / `solve::eigenOperator`).**
+Single source of truth for "named operator → generalized eigenproblem `(K, M, σ)`":
+each operator's *natural* generalized mass (the metric its eigenproblem is posed
+against) lives in the library, not in every consumer. `eigenProblemFor(m, spec)`
+returns `{K, M, σ, blockSize}` for `LaplacianCotan` (`(cotanL, mass)`),
+`LaplacianGraph` (`(graphL, I)`), `Dirac` (`(dirac(τ), M_galerkin ⊗ I₄)`), and
+`DiracFace` (`(diracFace(τ), diag(faceArea) ⊗ I₄)`) — masses built via
+`blockKron(M, b)` = interleaved `kron(M, I_b)` matching the Dirac 4v+c storage.
+`eigenOperator(m, spec, k, σ, normalize, reconstructMultiplets, dense)` assembles
++ eigensolves: with `reconstructMultiplets` on a blockSize-4 operator it closes
+each eigenvalue cluster under **right-quaternion multiplication** to recover exact
+4-fold multiplets (Spectra miscounts the degenerate clusters — this fixes both the
+*count* and a cluster truncated at the k-boundary); with `dense=true` it runs
+Eigen's `GeneralizedSelfAdjointEigenSolver` for an exact small-mesh cross-check
+(size-capped at 4096 — verification-only, not the cortical path). Exposed in WASM
+as `manifold.eigs({operator, subtype?, tau?, mass?, k, sigma?, normalize?,
+multiplets?, dense?})` → `{eigenvectors (vMajor n·k), eigenvalues, k, nConverged,
+blockSize}` — the operator AND its mass are assembled C++-side, so consumers never
+build `M⊗I₄` and there is one boundary crossing (results only).
+`solveEigenmodesFromTriplets` remains the bring-your-own-matrix escape hatch.
+Covariant (component-major, `kron(I₃,M)`) and the complex connection Laplacian
+(needs the real2N embedding) are deferred. Design:
+`docs/superpowers/specs/2026-06-15-operator-eigensolve-design.md`.
+
 **Covariant differential operators (`nxr::manifold::differential`).** Artifact-free
 transport + differentiation of a 3-vector cortical field (e.g. a leadfield) expressed in
 per-vertex frames `Fᵥ = [e1|e2|n]` (from `geometry::vertexFrames`). The connection is the

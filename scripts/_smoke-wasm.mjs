@@ -359,6 +359,54 @@ console.log(`  heatDiffusion ✓ (T=${heat.T}, nV=${heat.nV})`)
   console.log('  operators wrapper ✓')
 }
 
+// ── Test 14: named-operator eigensolve (Dirac, no JS-side ⊗I₄) ───
+//
+// One call assembles K + its natural mass C++-side and eigensolves — the
+// consumer never builds B = M⊗I₄. multiplets:true gives exact 4-fold multiplets;
+// dense:true cross-checks on this small mesh.
+{
+  // Scalar Laplace–Beltrami via the same entry point.
+  const lb = ctx.eigs({ operator: 'laplacian', subtype: 'cotan', k: 6 })
+  require(lb.eigenvalues.length === 6 && lb.blockSize === 1, 'eigs(cotan) k=6, blockSize 1')
+  require(Math.abs(lb.eigenvalues[0]) < 1e-6, 'cotan lowest eigenvalue ≈ 0 (constant mode)')
+
+  // Dirac eigensolve — eigenvectors are [4·nV × k] vMajor.
+  const d = ctx.eigs({ operator: 'dirac', tau: 0.5, k: 8 })
+  require(d.blockSize === 4, 'eigs(dirac) blockSize 4')
+  require(d.eigenvalues.length === d.k, 'eigenvalues length == k')
+  require(d.eigenvectors.length === 4 * nV * d.k, 'eigenvectors length 4·nV·k')
+
+  // Exact 4-fold multiplets via ℍ-reconstruction.
+  const dm = ctx.eigs({ operator: 'dirac', tau: 0.5, k: 8, multiplets: true })
+  require(dm.k % 4 === 0, 'multiplets: k rounded to a multiple of 4')
+  const ev = Array.from(dm.eigenvalues)
+  let maxSpread = 0
+  for (let g = 0; 4*g + 3 < ev.length; g++) {
+    const seg = ev.slice(4*g, 4*g + 4)
+    maxSpread = Math.max(maxSpread, (Math.max(...seg) - Math.min(...seg)) / (1 + Math.abs(seg[3])))
+  }
+  require(maxSpread < 1e-8, `multiplets are exact 4-fold (spread ${maxSpread.toExponential(2)})`)
+
+  // Dense exact solve agrees on the lowest 8.
+  const dd = ctx.eigs({ operator: 'dirac', tau: 0.5, k: 8, dense: true })
+  let maxDiff = 0
+  for (let i = 0; i < 8; i++) maxDiff = Math.max(maxDiff, Math.abs(dm.eigenvalues[i] - dd.eigenvalues[i]))
+  require(maxDiff < 1e-6, `sparse-reconstruct == dense (lowest 8, Δ=${maxDiff.toExponential(2)})`)
+  require(Math.abs(dd.eigenvalues[0]) < 1e-8 && Math.abs(dd.eigenvalues[3]) < 1e-8,
+          'dirac has a 4-fold zero (constant mode)')
+
+  // diracFace eigensolve (closed mesh).
+  const df = ctx.eigs({ operator: 'diracFace', tau: 0.5, k: 8, multiplets: true })
+  require(df.k % 4 === 0 && df.eigenvectors.length === 4 * nF * df.k, 'eigs(diracFace) shapes')
+
+  // Missing k → throws.
+  let threw = false
+  try { ctx.eigs({ operator: 'dirac', tau: 0.5 }) } catch { threw = true }
+  require(threw, 'eigs without k throws')
+  console.log(`  eigs ✓ (dirac k=${dm.k} multiplets, dense Δ=${maxDiff.toExponential(2)}, ` +
+              `cotan λ₁=${lb.eigenvalues[1].toFixed(4)})`)
+}
+
 // ── Cleanup ───────────────────────────────────────────────────
 ctx.delete()
 console.log('[smoke] all assertions passed ✓')

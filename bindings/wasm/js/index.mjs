@@ -175,6 +175,12 @@ function makeContextWrapper(raw) {
     // (dirac/diracFace), or omitted (dec/gradient3D/diracD/diracFaceD/
     // diracIntrinsicD). Embind needs both args, so undefined → null.
     operators: (family, arg) => raw.operators(family, arg === undefined ? null : arg),
+    // Named-operator eigensolve. opts: { operator, subtype?, tau?, mass?, k,
+    // sigma?, normalize?, multiplets?, dense? }. Assembles the operator + its
+    // natural generalized mass C++-side — no JS-side ⊗I₄. For the Dirac, pass
+    // multiplets:true for exact 4-fold multiplets, or dense:true (small meshes)
+    // for an exact cross-check.
+    eigs: (opts) => raw.eigs(opts),
     frames:     () => raw.frames(),
     normals:  (type = 0) => raw.normals(type),
 
