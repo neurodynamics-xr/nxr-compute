@@ -225,6 +225,63 @@ Eigen::SparseMatrix<double> matrixFace(Manifold& m) {
     return D;
 }
 
+Eigen::SparseMatrix<double> matrixFaceIntrinsic(Manifold& m) {
+    using namespace geometrycentral;
+    using namespace geometrycentral::surface;
+
+    // INTRINSIC face-domain Dirac D̃_int : ℍ^F → ℍ^V  [4V × 4F]. Identical vertex-star
+    // structure to matrixFace, but the per-block source is the IMMERSION of the dual
+    // vertices (face CENTROIDS C) instead of the Gauss map (face normals N): the dual
+    // mirror of how matrixIntrinsic uses vertex positions instead of normals. Geometry-
+    // only (vertex positions + barycentric vertex dual areas). Closed-mesh v1.
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
+    if (mesh.hasBoundary())
+        throw Error(ErrorCode::InvalidInput,
+            "dirac::matrixFaceIntrinsic: open boundary unsupported (closed-mesh v1)",
+            "Vertex stars must be closed; pass a closed mesh (e.g. a FreeSurfer hemisphere).");
+    geom.requireVertexDualAreas();
+
+    const int N  = m.nV();
+    const int Fn = m.nF();
+    auto vec3 = [](const Vector3& u) { return Eigen::Vector3d(u.x, u.y, u.z); };
+
+    // dual immersion: per-face barycentric centroid
+    std::vector<Eigen::Vector3d> C(Fn, Eigen::Vector3d::Zero());
+    for (Face f : mesh.faces()) {
+        Eigen::Vector3d c = Eigen::Vector3d::Zero();
+        for (Vertex v : f.adjacentVertices()) c += vec3(geom.inputVertexPositions[v]);
+        C[static_cast<int>(f.getIndex())] = c / 3.0;
+    }
+
+    std::vector<Eigen::Triplet<double>> TD;
+    TD.reserve(static_cast<size_t>(Fn) * 6 * 16);
+    for (Vertex v : mesh.vertices()) {
+        const int vi = static_cast<int>(v.getIndex());
+        const double Av = geom.vertexDualAreas[v];
+        if (Av <= 0.0)
+            throw Error(ErrorCode::InvalidInput,
+                "dirac::matrixFaceIntrinsic: degenerate (zero-area) vertex dual cell",
+                "Vertex index " + std::to_string(vi) + "; fix mesh quality first.");
+        std::vector<int> fid;
+        for (Halfedge he : v.outgoingHalfedges()) fid.push_back(static_cast<int>(he.face().getIndex()));
+        const int d = static_cast<int>(fid.size());
+        const double s = -1.0 / (2.0 * Av);
+        for (int k = 0; k < d; ++k) {
+            Eigen::Vector3d dC = C[fid[(k + 1) % d]] - C[fid[(k - 1 + d) % d]];
+            Eigen::Matrix4d B = s * leftMulImag(dC);
+            for (int a = 0; a < 4; ++a)
+                for (int b = 0; b < 4; ++b)
+                    if (B(a, b) != 0.0)
+                        TD.emplace_back(4 * vi + a, 4 * fid[k] + b, B(a, b));
+        }
+    }
+    Eigen::SparseMatrix<double> D(4 * N, 4 * Fn);
+    D.setFromTriplets(TD.begin(), TD.end());
+    D.makeCompressed();
+    return D;
+}
+
 Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m) {
     using namespace geometrycentral::surface;
 

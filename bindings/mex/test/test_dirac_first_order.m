@@ -77,6 +77,16 @@ assert(norm(Dt.' * WV * Dt - Et, 'fro') < 1e-9, 'D~ᵀW_V D~ != diracFace(1)');
 Uf = kron(ones(nF,1), eye(4));                           % [4F x 4] constant face fields
 assert(max(abs(Dt * Uf), [], 'all') < 1e-9, 'D~ does not kill constant face fields');
 
+%% ---- face-domain (dual) INTRINSIC first-order D~_int : [4V x 4F] ----
+% Centroid (immersion) dual of D~ (face centroids instead of the Gauss map),
+% mirroring diracIntrinsicD on the vertex side.
+DtI = nxr_compute('operators', h, 'diracFaceIntrinsicD');
+assert(isequal(size(DtI), [4*nV, 4*nF]), 'diracFaceIntrinsicD size != [4V, 4F]');
+assert(issparse(DtI) && isreal(DtI), 'diracFaceIntrinsicD must be real sparse');
+assert(max(abs(DtI * Uf), [], 'all') < 1e-9, 'D~_int does not kill constant face fields');
+assert(norm(DtI - nxr_compute('operators', h, 'diracFaceIntrinsicD'), 'fro') == 0, ...
+    'diracFaceIntrinsicD not stable across calls');
+
 nxr_compute('destroy', h);
 fprintf('test_dirac_first_order: ALL PASSED\n');
 end

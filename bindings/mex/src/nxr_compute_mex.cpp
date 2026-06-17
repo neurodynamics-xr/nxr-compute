@@ -1783,6 +1783,9 @@ void cmdVersion(int /*nlhs*/, mxArray** plhs,
 //   nxr_compute('operators', h, 'diracIntrinsicD') % [4F×4V] first-order INTRINSIC
 //                                               % Dirac D_int (immersion/edge-based,
 //                                               % spin-connection root); cached
+//   nxr_compute('operators', h, 'diracFaceIntrinsicD') % [4V×4F] first-order INTRINSIC
+//                                               % face Dirac D̃_int (centroid immersion
+//                                               % dual of diracFaceD); cached
 //
 // All sparse outputs are native MATLAB sparse (real or complex).
 // 'covariant' uses the default Ambient coupling (same as the existing
@@ -1870,10 +1873,13 @@ void cmdOperators(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) 
     } else if (family == "diracIntrinsicD") {
         plhs[0] = eigenSparseToMx(m.operators().diracIntrinsicD());   // [4F×4V], cached first-order INTRINSIC D_int
 
+    } else if (family == "diracFaceIntrinsicD") {
+        plhs[0] = eigenSparseToMx(m.operators().diracFaceIntrinsicD());   // [4V×4F], cached first-order INTRINSIC face D̃_int
+
     } else {
         throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
             "operators: family must be "
-            "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD.");
+            "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD|diracFaceIntrinsicD.");
     }
 }
 

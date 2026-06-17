@@ -179,6 +179,11 @@ public:
     // intrinsic Dirac² (the spin-connection root, scalar part = cotan Laplacian).
     const Eigen::SparseMatrix<double>& diracIntrinsicD() const;
 
+    // diracFaceIntrinsicD(): the first-order INTRINSIC face Dirac D̃_int [4V×4F],
+    // cached, by const-ref. The centroid (immersion) dual of diracFaceD (face centroids
+    // instead of the Gauss map), mirroring diracIntrinsicD on the vertex side. Closed-mesh v1.
+    const Eigen::SparseMatrix<double>& diracFaceIntrinsicD() const;
+
 private:
     Manifold& m_;
 };

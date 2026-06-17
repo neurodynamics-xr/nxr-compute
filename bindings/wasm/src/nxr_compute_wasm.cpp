@@ -348,10 +348,12 @@ public:
                 return sparseToVal(m.operators().diracFaceD());
             } else if (family == "diracIntrinsicD") {
                 return sparseToVal(m.operators().diracIntrinsicD());
+            } else if (family == "diracFaceIntrinsicD") {
+                return sparseToVal(m.operators().diracFaceIntrinsicD());
             }
             throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
                 "operators: family must be "
-                "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD.");
+                "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD|diracFaceIntrinsicD.");
         } catch (const nxr::core::Error& e) {
             rethrowAsJsError(e);
         }

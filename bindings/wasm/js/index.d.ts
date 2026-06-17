@@ -281,7 +281,7 @@ export interface Manifold {
   operators(family: "mass", subtype: "lumped" | "galerkin"): SparseMatrixCOO
   operators(family: "hodge", subtype: "h0" | "h1" | "h2" | "h1inv"): SparseMatrixCOO
   operators(family: "dec"): { d0: SparseMatrixCOO; d1: SparseMatrixCOO }
-  operators(family: "gradient3D" | "diracD" | "diracFaceD" | "diracIntrinsicD"): SparseMatrixCOO
+  operators(family: "gradient3D" | "diracD" | "diracFaceD" | "diracIntrinsicD" | "diracFaceIntrinsicD"): SparseMatrixCOO
   operators(family: "dirac" | "diracFace", tau: number): SparseMatrixCOO
 
   /** Named-operator eigensolve. Assembles the operator AND its natural

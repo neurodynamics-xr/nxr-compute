@@ -83,7 +83,7 @@ enum class GaugeType { Euclidean, LeviCivita, Trivial };
 enum class OperatorId {
     LaplacianCotan, LaplacianGraph, LaplacianConnection, LaplacianCovariant,
     Dec, MassLumped, MassGalerkin, Gradient3D, Dirac, DiracFace,
-    DiracD, DiracFaceD, DiracIntrinsicD
+    DiracD, DiracFaceD, DiracIntrinsicD, DiracFaceIntrinsicD
 };
 
 // ── Compute Context ──────────────────────────────────────────
@@ -185,6 +185,7 @@ private:
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracD_;     // first-order Dirac D [4F×4V]
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracFaceD_; // first-order face Dirac D̃ [4V×4F]
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracIntrinsicD_; // first-order INTRINSIC Dirac D_int [4F×4V]
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracFaceIntrinsicD_; // first-order INTRINSIC face Dirac D̃_int [4V×4F]
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheTwoFormLaplacian_;  // K̃ = d₁⋆₁⁻¹d₁ᵀ (diracFace intrinsic anchor)
 
     // Private cache-fill helpers called by OperatorsFacet::LaplacianView.
@@ -224,6 +225,9 @@ private:
     const Eigen::SparseMatrix<double>& diracFaceExtrinsicBlockCached_();
     // First-order face Dirac D̃ (4V×4F), cached (OperatorId::DiracFaceD). ops::dirac::matrixFace.
     const Eigen::SparseMatrix<double>& diracFaceMatrixCached_();
+    // First-order INTRINSIC face Dirac D̃_int (4V×4F), cached (OperatorId::DiracFaceIntrinsicD).
+    // ops::dirac::matrixFaceIntrinsic (centroid immersion dual of matrixFace).
+    const Eigen::SparseMatrix<double>& diracFaceIntrinsicMatrixCached_();
     // DEC 2-form Laplacian K̃ = d₁⋆₁⁻¹d₁ᵀ ([F×F]) — the diracFace intrinsic anchor.
     // Cached (mesh-fixed; not user-facing, so no OperatorId) so a τ-sweep reuses it.
     const Eigen::SparseMatrix<double>& twoFormLaplacianCached_();
@@ -454,6 +458,11 @@ Eigen::SparseMatrix<double> matrixIntrinsic(Manifold& m);
 // areas). Closed-mesh v1: both throw Error(InvalidInput) on an open boundary
 // (vertex stars must be closed) — exact on closed cortical hemispheres.
 Eigen::SparseMatrix<double> matrixFace(Manifold& m);
+
+// matrixFaceIntrinsic: INTRINSIC face-domain Dirac D̃_int [4V×4F] — the centroid
+// (immersion) dual of matrixFace (face centroids instead of the Gauss map), mirroring
+// how matrixIntrinsic relates to matrix. Geometry-only; closed-mesh v1.
+Eigen::SparseMatrix<double> matrixFaceIntrinsic(Manifold& m);
 Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m);
 }  // namespace dirac
 

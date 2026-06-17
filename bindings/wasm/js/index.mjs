@@ -173,7 +173,7 @@ function makeContextWrapper(raw) {
     // Single named operator as COO sparse — parity with the MEX 'operators'
     // command. `arg` is a subtype string (laplacian/mass/hodge), a numeric tau
     // (dirac/diracFace), or omitted (dec/gradient3D/diracD/diracFaceD/
-    // diracIntrinsicD). Embind needs both args, so undefined → null.
+    // diracIntrinsicD/diracFaceIntrinsicD). Embind needs both args, so undefined → null.
     operators: (family, arg) => raw.operators(family, arg === undefined ? null : arg),
     // Named-operator eigensolve. opts: { operator, subtype?, tau?, mass?, k,
     // sigma?, normalize?, multiplets?, dense? }. Assembles the operator + its

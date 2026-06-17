@@ -259,6 +259,37 @@ static void testDiracFaceMatrixCacheAndBoundary() {
     EXPECT(threw, "diracFaceD() throws on an open boundary");
 }
 
+static void testIntrinsicFaceDirac() {
+    std::cout << "\n=== diracFaceIntrinsicD: D~_int (centroid immersion root) ===\n";
+    std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
+    Manifold m(V.data(), 12, F.data(), 20);
+    const int N = m.nV();   // 12
+    const int Fn = m.nF();  // 20
+
+    const Eigen::SparseMatrix<double>& Dt = m.operators().diracFaceIntrinsicD();
+    EXPECT(Dt.rows() == 4*N && Dt.cols() == 4*Fn, "D~_int is [4V, 4F] = [48, 80]");
+    EXPECT(Dt.norm() > 1e-6, "D~_int is nonzero on a curved mesh");
+
+    // First-order: kills constant face-quaternion fields (telescoping cyclic centroid diffs).
+    Eigen::VectorXd uf(4*Fn);
+    for (int f = 0; f < Fn; ++f) { uf(4*f+0)=0.3; uf(4*f+1)=-0.7; uf(4*f+2)=0.2; uf(4*f+3)=0.5; }
+    EXPECT((Dt * uf).cwiseAbs().maxCoeff() < 1e-10, "D~_int kills constant face fields");
+
+    // Genuine quaternionic coupling (some 4x4 V-F block is non-scalar).
+    Eigen::MatrixXd dD(Dt);
+    bool coupled = false;
+    for (int vi = 0; vi < N && !coupled; ++vi)
+        for (int fj = 0; fj < Fn && !coupled; ++fj) {
+            Eigen::Matrix4d blk = dD.block(4*vi, 4*fj, 4, 4);
+            if (blk.norm() < 1e-12) continue;
+            coupled = (blk - (blk.trace()/4.0)*Eigen::Matrix4d::Identity()).norm() > 1e-10;
+        }
+    EXPECT(coupled, "D~_int has genuine quaternionic coupling (non-scalar blocks)");
+
+    // Cache stability: const-ref returns the same object on repeat.
+    EXPECT(&m.operators().diracFaceIntrinsicD() == &Dt, "D~_int cached (same object)");
+}
+
 int main() {
     testExtrinsicBlockFace();
     testBoundaryThrows();
@@ -267,6 +298,7 @@ int main() {
     testDiracFaceEigenbasis();
     testDiracMatrixFace();
     testDiracFaceMatrixCacheAndBoundary();
+    testIntrinsicFaceDirac();
     std::cout << (g_failures ? "\nFAILURES\n" : "\nALL PASSED\n");
     return g_failures ? 1 : 0;
 }
