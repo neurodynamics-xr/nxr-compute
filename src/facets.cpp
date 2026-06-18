@@ -112,6 +112,8 @@ bool Manifold::isOperatorCached(OperatorId id) const {
         case OperatorId::DiracFaceD:          return (bool)cacheDiracFaceD_;
         case OperatorId::DiracIntrinsicD:     return (bool)cacheDiracIntrinsicD_;
         case OperatorId::DiracFaceIntrinsicD: return (bool)cacheDiracFaceIntrinsicD_;
+        case OperatorId::GradFace:            return (bool)cacheGradFace_;
+        case OperatorId::LapFace:             return (bool)cacheLapFace_;
     }
     return false;
 }
@@ -132,6 +134,8 @@ void Manifold::releaseOperator(OperatorId id) {
         case OperatorId::DiracFaceD:          cacheDiracFaceD_.reset();          break;
         case OperatorId::DiracIntrinsicD:     cacheDiracIntrinsicD_.reset();     break;
         case OperatorId::DiracFaceIntrinsicD: cacheDiracFaceIntrinsicD_.reset();  break;
+        case OperatorId::GradFace:            cacheGradFace_.reset();            break;
+        case OperatorId::LapFace:             cacheLapFace_.reset();             break;
     }
 }
 
@@ -269,6 +273,22 @@ const Eigen::SparseMatrix<double>& Manifold::diracFaceIntrinsicMatrixCached_() {
         cacheDiracFaceIntrinsicD_ = std::make_unique<Eigen::SparseMatrix<double>>(
             ops::dirac::matrixFaceIntrinsic(*this));
     return *cacheDiracFaceIntrinsicD_;
+}
+
+// Barycentric dual-mesh face gradient G̃ [3F×F]. Cached; throws on an open boundary.
+const Eigen::SparseMatrix<double>& Manifold::gradFaceCached_() {
+    if (!cacheGradFace_)
+        cacheGradFace_ = std::make_unique<Eigen::SparseMatrix<double>>(
+            ops::facegrad::gradient(*this));
+    return *cacheGradFace_;
+}
+
+// Face Laplacian K̃ = G̃ᵀ⋆_F G̃ [F×F]. Cached; built from gradFace (never drifts).
+const Eigen::SparseMatrix<double>& Manifold::lapFaceCached_() {
+    if (!cacheLapFace_)
+        cacheLapFace_ = std::make_unique<Eigen::SparseMatrix<double>>(
+            ops::facegrad::laplacian(*this));
+    return *cacheLapFace_;
 }
 
 // K̃ = d₁⋆₁⁻¹d₁ᵀ, the DEC 2-form Laplacian ([F×F]). Cached: depends only on the
@@ -461,6 +481,8 @@ const Eigen::SparseMatrix<double>& OperatorsFacet::diracD() const { return m_.di
 const Eigen::SparseMatrix<double>& OperatorsFacet::diracFaceD() const { return m_.diracFaceMatrixCached_(); }
 const Eigen::SparseMatrix<double>& OperatorsFacet::diracFaceIntrinsicD() const { return m_.diracFaceIntrinsicMatrixCached_(); }
 const Eigen::SparseMatrix<double>& OperatorsFacet::diracIntrinsicD() const { return m_.diracIntrinsicMatrixCached_(); }
+const Eigen::SparseMatrix<double>& OperatorsFacet::gradFace() const { return m_.gradFaceCached_(); }
+const Eigen::SparseMatrix<double>& OperatorsFacet::lapFace()  const { return m_.lapFaceCached_(); }
 
 // MassView: each helper calls through to the independent private Manifold cache-fill.
 // Holds Manifold& m (C1 pattern) — never dangles.

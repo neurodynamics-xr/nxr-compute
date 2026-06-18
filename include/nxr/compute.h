@@ -83,7 +83,7 @@ enum class GaugeType { Euclidean, LeviCivita, Trivial };
 enum class OperatorId {
     LaplacianCotan, LaplacianGraph, LaplacianConnection, LaplacianCovariant,
     Dec, MassLumped, MassGalerkin, Gradient3D, Dirac, DiracFace,
-    DiracD, DiracFaceD, DiracIntrinsicD, DiracFaceIntrinsicD
+    DiracD, DiracFaceD, DiracIntrinsicD, DiracFaceIntrinsicD, GradFace, LapFace
 };
 
 // ── Compute Context ──────────────────────────────────────────
@@ -187,6 +187,8 @@ private:
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracIntrinsicD_; // first-order INTRINSIC Dirac D_int [4F×4V]
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracFaceIntrinsicD_; // first-order INTRINSIC face Dirac D̃_int [4V×4F]
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheTwoFormLaplacian_;  // K̃ = d₁⋆₁⁻¹d₁ᵀ (diracFace intrinsic anchor)
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheGradFace_;   // dual-mesh face gradient G̃ [3F×F]
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheLapFace_;    // face Laplacian K̃ = G̃ᵀ⋆_F G̃ [F×F]
 
     // Private cache-fill helpers called by OperatorsFacet::LaplacianView.
     // These source DIRECTLY from operatorGeometry()'s GC cache without
@@ -233,6 +235,11 @@ private:
     const Eigen::SparseMatrix<double>& twoFormLaplacianCached_();
     // Assemble L̃(τ) = (1−τ)(K̃⊗I₄) + τ·Ẽ by value, K̃ = d₁⋆₁⁻¹d₁ᵀ. τ ∈ [0,1].
     Eigen::SparseMatrix<double> diracFaceFamily_(double tau);
+    // Barycentric dual-mesh face gradient G̃ (3F×F), cached (OperatorId::GradFace).
+    // ops::facegrad::gradient.
+    const Eigen::SparseMatrix<double>& gradFaceCached_();
+    // Face Laplacian K̃ = G̃ᵀ⋆_F G̃ (F×F), cached (OperatorId::LapFace). ops::facegrad::laplacian.
+    const Eigen::SparseMatrix<double>& lapFaceCached_();
 
     friend class facet::OperatorsFacet;
     std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh>             mesh_;
@@ -465,6 +472,23 @@ Eigen::SparseMatrix<double> matrixFace(Manifold& m);
 Eigen::SparseMatrix<double> matrixFaceIntrinsic(Manifold& m);
 Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m);
 }  // namespace dirac
+
+// Face-native (Poincaré-dual) scalar calculus, the dual of the vertex FEM
+// gradient + cotan Laplacian. DOFs live on FACES (dual vertices).
+namespace facegrad {
+// gradient: barycentric dual-mesh gradient of a per-face scalar — a per-face
+// ambient 3-vector field [3F×F]. Green–Gauss / DEC construction:
+//   grad ψ|_f = (1/2A_f) Σ_k (ψ_{g_k} − ψ_f) (l_k × n_f)
+// over face f's three edge-neighbors g_k (l_k = boundary edge vector, l_k × n_f
+// = the outward in-plane edge normal). Σ_k l_k = 0 ⇒ constants annihilated and
+// the self term vanishes; output is tangent to each face. Closed-mesh v1 (every
+// face has exactly 3 edge-neighbors): throws Error(InvalidInput) on a boundary.
+Eigen::SparseMatrix<double> gradient(Manifold& m);
+// laplacian: the face Laplacian K̃ = gradientᵀ ⋆_F gradient [F×F] (⋆_F = face
+// areas), built from THE SAME gradient so the two never drift. Symmetric PSD;
+// kernel = constants (genus-0). The dual of the cotan Laplacian.
+Eigen::SparseMatrix<double> laplacian(Manifold& m);
+}  // namespace facegrad
 
 // ── Factor Cache ─────────────────────────────────────────────
 //

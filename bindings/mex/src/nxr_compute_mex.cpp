@@ -1876,10 +1876,16 @@ void cmdOperators(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) 
     } else if (family == "diracFaceIntrinsicD") {
         plhs[0] = eigenSparseToMx(m.operators().diracFaceIntrinsicD());   // [4V×4F], cached first-order INTRINSIC face D̃_int
 
+    } else if (family == "gradFace") {
+        plhs[0] = eigenSparseToMx(m.operators().gradFace());   // [3F×F], cached barycentric dual face gradient
+
+    } else if (family == "lapFace") {
+        plhs[0] = eigenSparseToMx(m.operators().lapFace());    // [F×F], cached face Laplacian K̃ = G̃ᵀ⋆_F G̃
+
     } else {
         throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
             "operators: family must be "
-            "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD|diracFaceIntrinsicD.");
+            "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD|diracFaceIntrinsicD|gradFace|lapFace.");
     }
 }
 

@@ -87,6 +87,28 @@ assert(max(abs(DtI * Uf), [], 'all') < 1e-9, 'D~_int does not kill constant face
 assert(norm(DtI - nxr_compute('operators', h, 'diracFaceIntrinsicD'), 'fro') == 0, ...
     'diracFaceIntrinsicD not stable across calls');
 
+%% ---- face-native scalar gradient gradFace [3F x F] + Laplacian lapFace [F x F] ----
+% Barycentric dual-mesh gradient of a per-face scalar (Green-Gauss) and its Galerkin
+% face Laplacian. The dual of the vertex FEM gradient + cotan Laplacian.
+G  = nxr_compute('operators', h, 'gradFace');
+Kf = nxr_compute('operators', h, 'lapFace');
+assert(isequal(size(G),  [3*nF, nF]), 'gradFace size != [3F, F]');
+assert(isequal(size(Kf), [nF,   nF]), 'lapFace size != [F, F]');
+assert(issparse(G) && isreal(G) && issparse(Kf) && isreal(Kf), 'gradFace/lapFace must be real sparse');
+% constant precision + symmetry
+assert(norm(G * ones(nF,1)) < 1e-10, 'gradFace does not annihilate constants');
+assert(norm(Kf - Kf.', 'fro') < 1e-10, 'lapFace not symmetric');
+% single source of truth: lapFace == gradFace' W_F gradFace  (W_F = area on each of 3 comps)
+WF3 = kron(spdiags(faceArea, 0, nF, nF), speye(3));      % [3F x 3F]
+assert(norm(Kf - G.' * WF3 * G, 'fro') < 1e-9 * norm(Kf, 'fro'), 'lapFace != gradFace'' W_F gradFace');
+% tangency: each per-face gradient vector is perpendicular to its face normal
+faceN = cross(e1, e2, 2); faceN = faceN ./ sqrt(sum(faceN.^2,2));   % [F x 3]
+psi   = randn(nF,1);  gv = reshape(G*psi, 3, [])';                  % [F x 3]
+assert(max(abs(sum(gv .* faceN, 2))) < 1e-9, 'gradFace output not tangent');
+% kernel is 1-dim (constants) on the closed icosahedron
+assert(abs(eigs(Kf, 1, 'smallestabs')) < 1e-9, 'lapFace smallest eig != 0');
+assert(norm(G - nxr_compute('operators', h, 'gradFace'), 'fro') == 0, 'gradFace not stable across calls');
+
 nxr_compute('destroy', h);
 fprintf('test_dirac_first_order: ALL PASSED\n');
 end

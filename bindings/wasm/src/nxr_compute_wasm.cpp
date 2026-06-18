@@ -350,10 +350,14 @@ public:
                 return sparseToVal(m.operators().diracIntrinsicD());
             } else if (family == "diracFaceIntrinsicD") {
                 return sparseToVal(m.operators().diracFaceIntrinsicD());
+            } else if (family == "gradFace") {
+                return sparseToVal(m.operators().gradFace());
+            } else if (family == "lapFace") {
+                return sparseToVal(m.operators().lapFace());
             }
             throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
                 "operators: family must be "
-                "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD|diracFaceIntrinsicD.");
+                "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD|diracFaceIntrinsicD|gradFace|lapFace.");
         } catch (const nxr::core::Error& e) {
             rethrowAsJsError(e);
         }

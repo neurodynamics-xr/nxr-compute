@@ -184,6 +184,14 @@ public:
     // instead of the Gauss map), mirroring diracIntrinsicD on the vertex side. Closed-mesh v1.
     const Eigen::SparseMatrix<double>& diracFaceIntrinsicD() const;
 
+    // gradFace(): barycentric dual-mesh gradient of a per-face scalar [3F×F], cached.
+    // Green–Gauss / DEC; annihilates constants, output tangent to each face. The dual
+    // of the vertex FEM gradient. Closed-mesh v1.
+    const Eigen::SparseMatrix<double>& gradFace() const;
+    // lapFace(): face Laplacian K̃ = gradFaceᵀ ⋆_F gradFace [F×F], cached. Built from
+    // the same gradFace (never drift); symmetric PSD; kernel = constants (genus-0).
+    const Eigen::SparseMatrix<double>& lapFace() const;
+
 private:
     Manifold& m_;
 };
