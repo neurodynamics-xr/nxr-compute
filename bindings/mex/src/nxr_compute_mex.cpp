@@ -198,6 +198,56 @@ parseCoupling(const mxArray* opts) {
 
 // ── create / destroy ─────────────────────────────────────────
 
+// Validate a triangle mesh BEFORE handing it to geometry-central. geometry-central's
+// ManifoldSurfaceMesh constructor crashes the host process (segfault) on malformed
+// connectivity -- out-of-range or 0-based-underflowing face indices, degenerate faces,
+// non-manifold edges, or inconsistent winding. We reject those here with a clean,
+// catchable nxr:invalidInput error instead, so a bad mesh cannot take down MATLAB.
+// Faces are 0-based at this point (mxToFaceBuffer already converted from MATLAB 1-based).
+static void validateMesh(int nV, int nF, const std::vector<std::int32_t>& faces) {
+    if (nV <= 0 || nF <= 0)
+        throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+            "create: empty mesh (nV=" + std::to_string(nV) + ", nF=" + std::to_string(nF) + ").");
+
+    auto keyOf = [](std::int32_t a, std::int32_t b) -> std::uint64_t {
+        return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(a)) << 32)
+             |  static_cast<std::uint64_t>(static_cast<std::uint32_t>(b));
+    };
+    std::unordered_map<std::uint64_t,int> undEdge;   // undirected edge -> incident-face count
+    std::unordered_map<std::uint64_t,int> dirEdge;   // directed half-edge -> count
+
+    for (int i = 0; i < nF; ++i) {
+        std::int32_t a = faces[3*i], b = faces[3*i+1], c = faces[3*i+2];
+        // (1) index range [0, nV)
+        for (int j = 0; j < 3; ++j) {
+            std::int32_t idx = faces[3*i + j];
+            if (idx < 0 || idx >= nV)
+                throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                    "create: face " + std::to_string(i) + " references vertex " +
+                    std::to_string(idx) + " (valid range [0, " + std::to_string(nV-1) + "]).",
+                    "Face indices must be within the vertex range (MATLAB passes 1-based; the binding converts to 0-based).");
+        }
+        // (2) degenerate triangle (a vertex repeats)
+        if (a == b || b == c || c == a)
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                "create: face " + std::to_string(i) + " is degenerate (a vertex repeats within the triangle).");
+        // (3) edge-manifold + (4) consistent orientation
+        const std::int32_t tri[3][2] = {{a,b},{b,c},{c,a}};
+        for (const auto& e : tri) {
+            std::int32_t u = e[0], v = e[1];
+            std::int32_t lo = (u < v) ? u : v, hi = (u < v) ? v : u;
+            if (++undEdge[keyOf(lo,hi)] > 2)
+                throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                    "create: non-manifold mesh -- an edge is shared by more than two faces.",
+                    "geometry-central's ManifoldSurfaceMesh cannot represent a non-manifold edge.");
+            if (++dirEdge[keyOf(u,v)] > 1)
+                throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                    "create: inconsistent face orientation -- a directed edge appears in two faces with the same winding.",
+                    "Faces must be consistently oriented.");
+        }
+    }
+}
+
 void cmdCreate(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
     if (nrhs < 3 || nrhs > 4) {
         throw std::invalid_argument(
@@ -206,6 +256,9 @@ void cmdCreate(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
     int nV = 0, nF = 0;
     auto verts = mxToVertexBuffer(prhs[1], nV);
     auto faces = mxToFaceBuffer(prhs[2], nF);
+
+    // Guard geometry-central against malformed meshes (segfault -> clean MATLAB error).
+    validateMesh(nV, nF, faces);
 
     bool intrinsicDelaunay = false;
     if (nrhs >= 4) {
