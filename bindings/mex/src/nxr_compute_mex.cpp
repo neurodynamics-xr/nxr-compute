@@ -1541,6 +1541,7 @@ mxArray* buildGeometryStruct(ContextHolder& h, bool withOps = false) {
 //   E.face.normal       [nF x 3]  double
 //   E.face.grid         [nF x 3]  complex double
 //   E.face.centroid     [nF x 3]  double
+//   E.face.area         [nF x 1]  double            (schemaVersion >= 2)
 
 mxArray* buildEmbeddedStruct(ContextHolder& h) {
     nxr::manifold::Manifold& m = *h.ctx;
@@ -1550,7 +1551,7 @@ mxArray* buildEmbeddedStruct(ContextHolder& h) {
 
     const char* topF[] = {"schemaVersion","vertex","face"};
     mxArray* s = mxCreateStructMatrix(1,1,3,topF);
-    mxSetField(s,0,"schemaVersion",scalarToMx(1));
+    mxSetField(s,0,"schemaVersion",scalarToMx(2));
 
     { const char* f[] = {"position","normal","grid"};
       mxArray* g = mxCreateStructMatrix(1,1,3,f);
@@ -1558,11 +1559,12 @@ mxArray* buildEmbeddedStruct(ContextHolder& h) {
       mxSetField(g,0,"normal",   eigenMatrixToMx(vv.normal()));
       mxSetField(g,0,"grid",     eigenComplexMatrixToMx(vv.grid()));
       mxSetField(s,0,"vertex",g); }
-    { const char* f[] = {"normal","grid","centroid"};
-      mxArray* g = mxCreateStructMatrix(1,1,3,f);
+    { const char* f[] = {"normal","grid","centroid","area"};
+      mxArray* g = mxCreateStructMatrix(1,1,4,f);
       mxSetField(g,0,"normal",   eigenMatrixToMx(fv.normal()));
       mxSetField(g,0,"grid",     eigenComplexMatrixToMx(fv.grid()));
       mxSetField(g,0,"centroid", eigenMatrixToMx(fv.centroid()));
+      mxSetField(g,0,"area",     eigenVectorToMx(fv.area()));
       mxSetField(s,0,"face",g); }
 
     return s;

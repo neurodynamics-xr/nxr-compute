@@ -26,6 +26,7 @@ public:
         Eigen::MatrixXd  normal()   const;   // [nF,3]
         Eigen::MatrixXcd grid()     const;   // [nF,3]
         Eigen::MatrixXd  centroid() const;   // [nF,3]
+        Eigen::VectorXd  area()     const;   // [nF]
     };
     VertexView vertex() const { return VertexView{m_}; }
     FaceView   face()   const { return FaceView{m_}; }

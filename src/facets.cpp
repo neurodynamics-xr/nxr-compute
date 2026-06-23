@@ -407,6 +407,7 @@ Eigen::MatrixXcd EmbeddedFacet::VertexView::grid()     const { return m.lightGeo
 Eigen::MatrixXd  EmbeddedFacet::FaceView::normal()     const { return geometry::frames(m).normals; }
 Eigen::MatrixXcd EmbeddedFacet::FaceView::grid()       const { return m.lightGeometry().faceGrid; }
 Eigen::MatrixXd  EmbeddedFacet::FaceView::centroid()   const { return m.lightGeometry().faceCentroids; }
+Eigen::VectorXd  EmbeddedFacet::FaceView::area()       const { return m.lightGeometry().faceAreas; }
 
 Eigen::VectorXd  IntrinsicFacet::VertexView::dualArea() const { return m.lightGeometry().vertexDualAreas; }
 Eigen::VectorXd  IntrinsicFacet::VertexView::angleSum() const { return m.lightGeometry().vertexAngleSums; }
