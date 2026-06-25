@@ -61,10 +61,45 @@ static void test_operator_io_integrity() {
     CHECK(rf && rf->input_field == "immersionFace", "relativeFaceDirac input immersionFace");
 }
 
+static void test_routing() {
+    const FieldDescriptor& scalarV = fieldById("scalarVertex")->descriptor;
+    const FieldDescriptor& tangV   = fieldById("tangentVertex")->descriptor;
+    const FieldDescriptor& immV    = fieldById("immersionVertex")->descriptor;
+
+    bool ok = true;
+    try { requireField(scalarV, "laplaceBeltrami"); } catch (const nxr::core::Error&) { ok = false; }
+    CHECK(ok, "scalarVertex accepted by laplaceBeltrami");
+
+    bool threw = false;
+    try { requireField(tangV, "laplaceBeltrami"); } catch (const nxr::core::Error&) { threw = true; }
+    CHECK(threw, "tangentVertex rejected by laplaceBeltrami");
+
+    threw = false;
+    try { requireField(immV, "flatCovariantLaplacian"); } catch (const nxr::core::Error&) { threw = true; }
+    CHECK(threw, "immersionVertex rejected by ambient operator");
+
+    auto ops = operatorsAccepting(scalarV);
+    bool hasLB = false, hasGL = false;
+    for (auto& id : ops) { if (id == "laplaceBeltrami") hasLB = true; if (id == "graphLaplacian") hasGL = true; }
+    CHECK(hasLB && hasGL, "operatorsAccepting(scalarVertex) includes laplaceBeltrami and graphLaplacian");
+
+    CHECK(componentsPerElement(scalarV) == 1, "scalar components=1");
+    CHECK(componentsPerElement(fieldById("ambientVertexWorld")->descriptor) == 3, "ambient components=3");
+    CHECK(componentsPerElement(immV) == 4, "immersion components=4");
+
+    bool shapeOk = true;
+    try { validateFieldShape(scalarV, 12, /*nV*/12, /*nE*/30, /*nF*/20); } catch (const nxr::core::Error&) { shapeOk = false; }
+    CHECK(shapeOk, "scalarVertex 12 rows valid on 12-vertex mesh");
+    bool shapeThrew = false;
+    try { validateFieldShape(scalarV, 11, 12, 30, 20); } catch (const nxr::core::Error&) { shapeThrew = true; }
+    CHECK(shapeThrew, "scalarVertex wrong row count rejected");
+}
+
 int main() {
     test_scalar_skeleton();
     test_full_catalogue();
     test_operator_io_integrity();
+    test_routing();
     std::cout << (g_failures ? "FIELD REGISTRY TESTS FAILED\n" : "ALL FIELD REGISTRY TESTS PASSED\n");
     return g_failures ? 1 : 0;
 }

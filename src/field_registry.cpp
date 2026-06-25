@@ -66,7 +66,59 @@ fieldsWhere(const std::function<bool(const FieldVariant&)>& pred) {
     return out;
 }
 
-// fieldMatches / requireField / operatorsAccepting / componentsPerElement /
-// validateFieldShape / conversionGraph are implemented in later tasks (not defined yet).
+bool fieldMatches(const FieldDescriptor& f, const FieldDescriptor& expected) {
+    // gauge and nSym are advisory parameters, not match keys.
+    return f.domain       == expected.domain
+        && f.bundle       == expected.bundle
+        && f.field_type   == expected.field_type
+        && f.n_form       == expected.n_form
+        && f.representation == expected.representation;
+}
+
+void requireField(const FieldDescriptor& f, std::string_view operatorId) {
+    const OperatorVariant* op = operatorById(operatorId);
+    if (!op)
+        throw Error(ErrorCode::InvalidInput, "unknown operator id: " + std::string(operatorId),
+                    "check operatorRegistry()");
+    const FieldVariant* expected = fieldById(op->input_field);
+    if (!expected)
+        throw Error(ErrorCode::InvalidInput,
+                    "operator '" + std::string(operatorId) + "' names unknown input_field '" + op->input_field + "'",
+                    "field registry integrity error");
+    if (!fieldMatches(f, expected->descriptor))
+        throw Error(ErrorCode::InvalidInput,
+                    "field not admissible as input of '" + std::string(operatorId) + "' (expected " + op->input_field + ")",
+                    "field bundle/domain/degree/representation mismatch");
+}
+
+std::vector<std::string> operatorsAccepting(const FieldDescriptor& f) {
+    std::vector<std::string> out;
+    for (const auto& op : operatorRegistry()) {
+        const FieldVariant* in = fieldById(op.input_field);
+        if (in && fieldMatches(f, in->descriptor)) out.push_back(op.id);
+    }
+    return out;
+}
+
+int componentsPerElement(const FieldDescriptor& f) {
+    switch (f.bundle) {
+        case Bundle::scalar:    return 1;
+        case Bundle::tangent:   return 1;   // complex coordinate per element (VectorXcd)
+        case Bundle::ambient:   return 3;
+        case Bundle::immersion: return 4;
+    }
+    return 1;
+}
+
+void validateFieldShape(const FieldDescriptor& f, int rows, int nV, int nE, int nF) {
+    int n = (f.domain == Domain::vertex) ? nV : (f.domain == Domain::edge) ? nE : nF;
+    int expected = n * componentsPerElement(f);
+    if (rows != expected)
+        throw Error(ErrorCode::InvalidInput,
+                    "field row count " + std::to_string(rows) + " != expected " + std::to_string(expected),
+                    "rows must equal nElements(domain) * componentsPerElement");
+}
+
+// conversionGraph is implemented in a later task (not defined yet).
 
 } // namespace nxr::manifold::registry
