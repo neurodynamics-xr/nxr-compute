@@ -401,4 +401,50 @@ ConnectionLaplacian assembleTrivialConnectionLaplacian(
     return result;
 }
 
+Eigen::SparseMatrix<std::complex<double>>
+assembleConnectionGradient(Manifold& m, int nSym) {
+    if (nSym <= 0)
+        throw Error(ErrorCode::InvalidInput,
+                    "assembleConnectionGradient: nSym must be > 0",
+                    "Common values: 1 (vector field), 2 (line field).");
+
+    IntrinsicGeometryInterface& geom = m.operatorGeometry();
+    SurfaceMesh& mesh = geom.mesh;
+
+    geom.requireVertexIndices();
+    geom.requireEdgeIndices();
+    geom.requireTransportVectorsAlongHalfedge();
+
+    const int E = static_cast<int>(mesh.nEdges());
+    const int V = static_cast<int>(mesh.nVertices());
+
+    // Per edge e = (i→j) via canonical halfedge he = e.halfedge():
+    //   D[e, j] = +1
+    //   D[e, i] = −ρ[he]^nSym   where ρ = transportVectorsAlongHalfedge[he]
+    //
+    // Identity: (D^H ⋆₁ D)[i,j] = w · conj(−ρ[he]^nSym) · 1
+    //                             = −w · conj(ρ[he]^nSym)
+    //                             = −w · ρ[he.twin()]^nSym   (unit-complex round-trip)
+    // which equals the off-diagonal of assembleVertexCL (transport read from he.twin()).
+    std::vector<Eigen::Triplet<std::complex<double>>> T;
+    T.reserve(2 * E);
+
+    for (Edge e : mesh.edges()) {
+        Halfedge he = e.halfedge();  // canonical orientation: i → j
+        const int i  = static_cast<int>(geom.vertexIndices[he.vertex()]);
+        const int j  = static_cast<int>(geom.vertexIndices[he.next().vertex()]);
+        const int ei = static_cast<int>(geom.edgeIndices[e]);
+
+        Vector2 rho = geom.transportVectorsAlongHalfedge[he].pow(nSym);
+
+        T.emplace_back(ei, j, std::complex<double>( 1.0,    0.0   ));  // +1  at j
+        T.emplace_back(ei, i, std::complex<double>(-rho.x, -rho.y));   // −ρ  at i
+    }
+
+    Eigen::SparseMatrix<std::complex<double>> D(E, V);
+    D.setFromTriplets(T.begin(), T.end());
+    D.makeCompressed();
+    return D;
+}
+
 } // namespace nxr::manifold::ops::laplacian::connection

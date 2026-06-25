@@ -661,6 +661,16 @@ ConnectionLaplacian assembleConnectionLaplacian(
     const ConnectionLaplacianOptions& opts = {}
 );
 
+/** First-order connection gradient d^∇ : tangentVertex [V] (complex) → tangentEdge [E]
+ *  (complex). Per edge e=(i→j) via e.halfedge(): row e has +1 at column j and
+ *  −transportVectorsAlongHalfedge[he].pow(nSym) at column i. Built in the active gauge,
+ *  so (d^∇)ᴴ diag(edgeCotanWeight) d^∇ == the connection Laplacian for the same (nSym,
+ *  gauge). Vertex domain (v1).
+ *
+ *  Throws Error(InvalidInput) for nSym <= 0. */
+Eigen::SparseMatrix<std::complex<double>>
+assembleConnectionGradient(Manifold& m, int nSym = 1);
+
 /** String → enum helpers for binding shells (WASM, addon).
  *  Domain accepts "vertex", "face", "edge". Format accepts "real2N"
  *  / "real" / "complex". Throws Error(InvalidInput) on unknown. */
