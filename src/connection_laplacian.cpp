@@ -408,6 +408,11 @@ assembleConnectionGradient(Manifold& m, int nSym) {
                     "assembleConnectionGradient: nSym must be > 0",
                     "Common values: 1 (vector field), 2 (line field).");
 
+    // v1: Levi-Civita gauge only. operatorGeometry()'s transportVectorsAlongHalfedge
+    // is the LC transport and does not vary with the active gauge, so this gradient is
+    // gauge-independent and squares to leviCivitaConnectionLaplacian. A trivial-gauge
+    // gradient (the φ-corrected root of trivialConnectionLaplacian, mirroring
+    // assembleTrivialConnectionLaplacian's correction) is a deferred follow-up.
     IntrinsicGeometryInterface& geom = m.operatorGeometry();
     SurfaceMesh& mesh = geom.mesh;
 

@@ -188,8 +188,9 @@ static void test_cellD_extrinsic_weitzenbock() {
     S = (2.0 * S).pruned();
     Eigen::SparseMatrix<double> Wref = imagBlock(S, N);
     double dCross = maxAbsDiffReal(W, Wref);
-    std::cout << "  D2 cross-bundle anchor (TAUTOLOGY) maxAbsDiff = " << dCross << "\n";
-    CHECK(dCross < 1e-9, "W == imag block of 2·dirac(0.5) (wiring)");
+    // LOG ONLY — tautological (W IS this block by construction). The genuine
+    // geometric assurance is D4 (independent flat anchor) + D3 (symmetry) below.
+    std::cout << "  D2 cross-bundle anchor (TAUTOLOGY, log-only) maxAbsDiff = " << dCross << "\n";
 
     // (D3) INDEPENDENT: symmetry of the resulting ℝ³ operator.
     Eigen::SparseMatrix<double> Wt = Eigen::SparseMatrix<double>(W.transpose());

@@ -142,7 +142,9 @@ similarly carries no cross-link; this is consistent.)
   `variantIdsFor` no-`default` switch (compile-time completeness).
 - **`OperatorId::ExtrinsicWeitzenbock`** (new enum, replaces the `Gradient3D`
   placeholder on the existing `extrinsicWeitzenbockLaplacian` entry); flip
-  `status: planned → built`; field I/O already `ambientVertexLocal → ambientVertexLocal`.
+  `status: planned → built`; field I/O `ambientVertexWorld → ambientVertexWorld`
+  (the built operator is the world-frame vector part of the squared Dirac; the
+  earlier `ambientVertexLocal` guess was corrected to match the implementation).
   Repoint `variantIdsFor(ExtrinsicWeitzenbock)` to it and drop the placeholder note on
   `Gradient3D`.
 

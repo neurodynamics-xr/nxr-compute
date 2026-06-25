@@ -132,9 +132,9 @@ static void test_cellA_registry() {
     CHECK(lg && lg->square.present && lg->square.isSquaresTo
           && lg->square.target == "leviCivitaConnectionLaplacian", "lg squares_to LC connection L");
     CHECK(lg && lg->input_field == "tangentVertex" && lg->output_field == "tangentEdge", "lg field I/O");
-    const OperatorVariant* tg = operatorById("trivialConnectionGradient");
-    CHECK(tg && tg->square.target == "trivialConnectionLaplacian", "tg squares_to trivial connection L");
-    CHECK(tg && tg->op_id == OperatorId::ConnectionGradient, "tg op_id");
+    // v1 is Levi-Civita gauge only — trivialConnectionGradient is deferred (the
+    // trivial-gauge root needs the phi-correction), so it must NOT be catalogued.
+    CHECK(operatorById("trivialConnectionGradient") == nullptr, "trivialConnectionGradient not catalogued (v1 LC-only)");
 }
 
 int main() {

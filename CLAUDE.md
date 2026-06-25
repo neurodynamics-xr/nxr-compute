@@ -329,10 +329,12 @@ bundle's intrinsic/extrinsic Diracs (design:
 `operators 'connectionGradient' nSym`) is the **first-order Levi-Civita covariant
 gradient `d^∇`** — a complex `[E×V]` operator, the clean √ of the connection
 Laplacian: `(d^∇)ᴴ diag(edgeCotanWeight) d^∇ == connectionLaplacian` (verified
-byte-exact, nSym 1/2, any gauge). nSym-parameterized, built in the active gauge
-(→ registry variants `leviCivitaConnectionGradient` / `trivialConnectionGradient`,
-each `squares_to` its matching connection Laplacian), output is the new field
-variant `tangentEdge` (complex tangent 1-form on edges). **`extrinsicWeitzenbock`**
+byte-exact, nSym 1/2). nSym-parameterized; **Levi-Civita gauge only in v1**
+(`assembleConnectionGradient` reads the LC transport from `operatorGeometry()`, so
+it is gauge-independent) — registry variant `leviCivitaConnectionGradient`,
+`squares_to leviCivitaConnectionLaplacian`. Output is the new field variant
+`tangentEdge` (complex tangent 1-form on edges). The trivial-gauge gradient (the
+φ-corrected root of `trivialConnectionLaplacian`) is a deferred follow-up. **`extrinsicWeitzenbock`**
 (`operators().extrinsicWeitzenbock()`; flipped `planned → built`) is the
 **ambient extrinsic Weitzenböck `Δ₃ + W_extrinsic`** — the real `[3V×3V]`
 **vector (imaginary-quaternion) part of the immersion squared Dirac**

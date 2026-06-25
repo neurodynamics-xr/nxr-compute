@@ -66,7 +66,10 @@ void Manifold::setGauge(GaugeType type, const std::map<int,double>& singularitie
     // rebuilds in the new gauge.
     releaseOperator(OperatorId::LaplacianConnection);
     releaseOperator(OperatorId::LaplacianCovariant);
-    releaseOperator(OperatorId::ConnectionGradient);
+    // NOTE: ConnectionGradient is NOT invalidated here — v1 builds it in the
+    // Levi-Civita gauge only (assembleConnectionGradient reads the LC transport
+    // from operatorGeometry()), so it is gauge-independent. The trivial-gauge
+    // gradient is a deferred follow-up; add the invalidation when it lands.
 }
 
 // ── B2: Lazy DEC / Cholesky cache + gauge() overload bodies ──────────────────
