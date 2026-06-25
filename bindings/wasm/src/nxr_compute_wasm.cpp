@@ -356,10 +356,14 @@ public:
                 return sparseToVal(m.operators().gradFace());
             } else if (family == "lapFace") {
                 return sparseToVal(m.operators().lapFace());
+            } else if (family == "connectionGradient") {
+                // nSym: numeric arg (default 1). Returns complex COO — mirrors 'laplacian'/'connection'.
+                int nSym = hasNum ? static_cast<int>(arg.as<double>()) : 1;
+                return sparseComplexToVal(m.operators().connectionGradient(nSym));
             }
             throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
                 "operators: family must be "
-                "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD|diracFaceIntrinsicD|gradFace|lapFace.");
+                "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD|diracFaceIntrinsicD|gradFace|lapFace|connectionGradient.");
         } catch (const nxr::core::Error& e) {
             rethrowAsJsError(e);
         }

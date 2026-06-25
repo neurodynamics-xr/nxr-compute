@@ -1931,6 +1931,8 @@ static void cmdFieldInfo(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray**
 //   nxr_compute('operators', h, 'hodge',     'h0'|'h1'|'h2'|'h1inv')
 //   nxr_compute('operators', h, 'dec')       → struct {d0, d1}
 //   nxr_compute('operators', h, 'gradient3D')         % [3E×3N] covariant gradient
+//   nxr_compute('operators', h, 'connectionGradient', nSym)
+//                                             % [E×V] complex covariant gradient d^∇
 //   nxr_compute('operators', h, 'dirac', tau)   % [4V×4V] relative-Dirac family,
 //                                               % tau in [0,1] (0=cotan⊗I4, 1=D_N)
 //   nxr_compute('operators', h, 'diracFace', tau)  % [4F×4F] FACE-domain (dual)
@@ -2041,10 +2043,22 @@ void cmdOperators(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) 
     } else if (family == "lapFace") {
         plhs[0] = eigenSparseToMx(m.operators().lapFace());    // [F×F], cached face Laplacian K̃ = G̃ᵀ⋆_F G̃
 
+    } else if (family == "connectionGradient") {
+        // nSym: numeric 4th arg (default 1). Mirrors 'dirac' numeric-arg parsing.
+        int nSym = 1;
+        if (nrhs >= 4) {
+            if (!mxIsNumeric(prhs[3]) && !mxIsLogical(prhs[3]))
+                throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                    "operators connectionGradient: nSym must be a numeric scalar.");
+            nSym = static_cast<int>(getDoubleArg(prhs[3]));
+        }
+        // [E×V] complex sparse — marshal exactly as 'laplacian'/'connection'.
+        plhs[0] = eigenComplexSparseToMx(m.operators().connectionGradient(nSym));
+
     } else {
         throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
             "operators: family must be "
-            "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD|diracFaceIntrinsicD|gradFace|lapFace.");
+            "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD|diracFaceIntrinsicD|gradFace|lapFace|connectionGradient.");
     }
 }
 
