@@ -110,23 +110,29 @@ int componentsPerElement(const FieldDescriptor& f) {
     return 1;
 }
 
-void validateFieldShape(const FieldDescriptor& f, int rows, int nV, int nE, int nF) {
+void validateFieldShape(const FieldDescriptor& f, int totalScalars, int nV, int nE, int nF) {
+    // totalScalars = the FLAT scalar count (VectorXd.size() / rows*cols of a flattened
+    // multi-component field), NOT a 2D matrix's .rows() alone — see header.
     int n = (f.domain == Domain::vertex) ? nV : (f.domain == Domain::edge) ? nE : nF;
     int expected = n * componentsPerElement(f);
-    if (rows != expected)
+    if (totalScalars != expected)
         throw Error(ErrorCode::InvalidInput,
-                    "field row count " + std::to_string(rows) + " != expected " + std::to_string(expected),
-                    "rows must equal nElements(domain) * componentsPerElement");
+                    "field scalar count " + std::to_string(totalScalars) + " != expected " + std::to_string(expected),
+                    "totalScalars must equal nElements(domain) * componentsPerElement");
 }
 
 const std::vector<ConversionEdge>& conversionGraph() {
+    // v1 declares edges + names the existing impl; call-through is deferred. NOTE for a
+    // future v2 traversal: there is an intentional PARALLEL edge for world->local (the
+    // frame lift AND the G·cᵀ leadfield correspondence), and a SELF-LOOP on tangentVertex
+    // (storage reformat, same semantic type) — both need tie-break / cycle guards then.
     static const std::vector<ConversionEdge> edges = {
         { "ambientVertexWorld", "ambientVertexLocal", "differential::liftToFrame", true },
         { "ambientVertexLocal", "ambientVertexWorld", "differential::liftToWorld", true },
-        { "ambientVertexWorld", "ambientVertexLocal", "G.c^T (covariantGradient correspondence)", true },
+        { "ambientVertexWorld", "ambientVertexLocal", "G.c^T (covariantGradient correspondence)", true }, // parallel edge (intentional)
         { "oneFormEdge",        "ambientFaceWorld",   "field::interp::whitney",      true },
         { "scalarVertex",       "ambientFaceWorld",   "field::op::gradient",         true },
-        { "tangentVertex",      "tangentVertex",      "lowerToReal2N (complex<->real2N)", true },
+        { "tangentVertex",      "tangentVertex",      "lowerToReal2N (complex<->real2N)", true }, // self-loop: storage reformat only
     };
     return edges;
 }

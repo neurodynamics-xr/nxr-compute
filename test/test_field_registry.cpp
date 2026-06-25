@@ -84,15 +84,28 @@ static void test_routing() {
     CHECK(hasLB && hasGL, "operatorsAccepting(scalarVertex) includes laplaceBeltrami and graphLaplacian");
 
     CHECK(componentsPerElement(scalarV) == 1, "scalar components=1");
+    CHECK(componentsPerElement(tangV) == 1, "tangent components=1 (one complex per element)");
     CHECK(componentsPerElement(fieldById("ambientVertexWorld")->descriptor) == 3, "ambient components=3");
     CHECK(componentsPerElement(immV) == 4, "immersion components=4");
 
     bool shapeOk = true;
     try { validateFieldShape(scalarV, 12, /*nV*/12, /*nE*/30, /*nF*/20); } catch (const nxr::core::Error&) { shapeOk = false; }
-    CHECK(shapeOk, "scalarVertex 12 rows valid on 12-vertex mesh");
+    CHECK(shapeOk, "scalarVertex 12 scalars valid on 12-vertex mesh");
     bool shapeThrew = false;
     try { validateFieldShape(scalarV, 11, 12, 30, 20); } catch (const nxr::core::Error&) { shapeThrew = true; }
-    CHECK(shapeThrew, "scalarVertex wrong row count rejected");
+    CHECK(shapeThrew, "scalarVertex wrong scalar count rejected");
+    // ambient field: totalScalars = 3 * nV (NOT nV) — locks the flat-count convention.
+    const FieldDescriptor& ambV = fieldById("ambientVertexLocal")->descriptor;
+    bool ambOk = true;
+    try { validateFieldShape(ambV, 3 * 12, 12, 30, 20); } catch (const nxr::core::Error&) { ambOk = false; }
+    CHECK(ambOk, "ambientVertexLocal 3*nV scalars valid");
+    bool ambThrew = false;
+    try { validateFieldShape(ambV, 12, 12, 30, 20); } catch (const nxr::core::Error&) { ambThrew = true; }
+    CHECK(ambThrew, "ambientVertexLocal nV (un-flattened) rejected");
+
+    // fieldsWhere is part of the public API — exercise it.
+    auto immersionFields = fieldsWhere([](const FieldVariant& v){ return v.descriptor.bundle == Bundle::immersion; });
+    CHECK(immersionFields.size() == 2, "fieldsWhere(immersion) == {immersionVertex, immersionFace}");
 }
 
 static void test_conversion_graph() {

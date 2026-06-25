@@ -50,12 +50,17 @@ std::vector<const FieldVariant*>
 
 // ── Routing (implemented in a later task) ──
 // Structural match: domain + bundle + field_type + n_form + representation.
-// gauge and nSym are advisory parameters, NOT match keys.
+// gauge and nSym are advisory parameters, NOT match keys — so e.g. a trivial-gauge
+// tangent field still matches a Levi-Civita connection operator's input. requireField
+// is a bundle/domain/degree/representation gate, not a gauge gate.
 bool fieldMatches(const FieldDescriptor& f, const FieldDescriptor& expected);
 void requireField(const FieldDescriptor& f, std::string_view operatorId);
 std::vector<std::string> operatorsAccepting(const FieldDescriptor& f);
 int componentsPerElement(const FieldDescriptor& f);
-void validateFieldShape(const FieldDescriptor& f, int rows, int nV, int nE, int nF);
+// totalScalars is the FLAT scalar count of the field, i.e. nElements(domain) *
+// componentsPerElement — VectorXd.size(), or rows*cols of a flattened multi-component
+// field. NOT a 2D MatrixXd's .rows() alone (an [nV×3] ambient field has 3*nV scalars).
+void validateFieldShape(const FieldDescriptor& f, int totalScalars, int nV, int nE, int nF);
 
 // ── Conversion graph (implemented in a later task) ──
 const std::vector<ConversionEdge>& conversionGraph();
