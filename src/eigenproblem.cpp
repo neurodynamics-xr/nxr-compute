@@ -5,6 +5,7 @@
 
 #include "nxr/compute.h"
 #include "nxr/facets.h"
+#include "nxr/operator_registry.h"
 
 #include "geometrycentral/surface/manifold_surface_mesh.h"
 #include "geometrycentral/surface/vertex_position_geometry.h"
@@ -12,6 +13,7 @@
 #include <Eigen/Eigenvalues>   // GeneralizedSelfAdjointEigenSolver / SelfAdjointEigenSolver
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <vector>
 
@@ -38,15 +40,37 @@ Eigen::SparseMatrix<double> blockKron(const Eigen::SparseMatrix<double>& M, int 
     return K;
 }
 
+namespace {
+// The vertex FEM mass the registry names as this operator's natural mass.
+// The registry documents the DEFAULT family (e.g. "massGalerkin"); spec.mass remains
+// the caller's lumped/galerkin override (historical behavior preserved). This helper
+// makes the registry the documented source of truth while the construction stays
+// byte-identical — the matrices built are the same as before the refactor.
+Eigen::SparseMatrix<double> naturalVertexMass(Manifold& m, const char* id,
+                                              ops::MassMatrixVariant variant) {
+    // Registry is the documented source of truth for WHICH mass family this operator's
+    // eigenproblem is posed against; the runtime spec.mass picks lumped/galerkin within
+    // that family. Drift-guard: every operator routed here must document a massGalerkin
+    // -family natural mass — assert so a future entry can't silently disagree with the
+    // construction below. Construction is byte-identical to the pre-refactor inline code.
+    const auto* v = registry::operatorById(id);
+    assert(v && v->natural_mass.rfind("massGalerkin", 0) == 0 &&
+           "registry natural_mass disagrees with eigenProblemFor's vertex-mass family");
+    (void)v;  // unused in release (assert compiled out)
+    return (variant == ops::MassMatrixVariant::Lumped)
+               ? m.operators().mass().lumped()
+               : m.operators().mass().galerkin();
+}
+} // namespace
+
 EigenProblem eigenProblemFor(Manifold& m, const EigenOperatorSpec& spec) {
     EigenProblem p;
     p.sigma = -1e-8;
     switch (spec.op) {
         case EigenOperator::LaplacianCotan: {
             p.K = m.operators().laplacian().cotan();
-            p.M = (spec.mass == ops::MassMatrixVariant::Lumped)
-                      ? m.operators().mass().lumped()
-                      : m.operators().mass().galerkin();
+            // Registry documents natural_mass == "massGalerkin" for laplaceBeltrami.
+            p.M = naturalVertexMass(m, "laplaceBeltrami", spec.mass);
             p.blockSize = 1;
             break;
         }
@@ -54,22 +78,22 @@ EigenProblem eigenProblemFor(Manifold& m, const EigenOperatorSpec& spec) {
             p.K = m.operators().laplacian().graph();
             const int n = m.nV();
             p.M.resize(n, n);
-            p.M.setIdentity();              // standard eigenproblem (graph is metric-free)
+            p.M.setIdentity();              // standard eigenproblem; registry natural_mass == "identity" (metric-free)
             p.blockSize = 1;
             break;
         }
         case EigenOperator::Dirac: {
             p.K = m.operators().dirac(spec.tau);              // [4V×4V] (caches E)
-            const Eigen::SparseMatrix<double>& Mv =
-                (spec.mass == ops::MassMatrixVariant::Lumped)
-                    ? m.operators().mass().lumped()
-                    : m.operators().mass().galerkin();
+            // Registry documents natural_mass == "massGalerkin*I4" for relativeDirac.
+            const Eigen::SparseMatrix<double> Mv =
+                naturalVertexMass(m, "relativeDirac", spec.mass);
             p.M = blockKron(Mv, 4);                           // M ⊗ I₄ (vertex-interleaved)
             p.blockSize = 4;
             break;
         }
         case EigenOperator::DiracFace: {
             p.K = m.operators().diracFace(spec.tau);          // [4F×4F]; throws on open boundary
+            // Registry documents natural_mass == "diag(faceArea)*I4" for relativeFaceDirac.
             auto& geom = m.geometry();
             geom.requireFaceAreas();
             const int Fn = m.nF();

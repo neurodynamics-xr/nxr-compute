@@ -23,6 +23,7 @@
 
 #include "nxr/compute.h"
 #include "nxr/facets.h"
+#include "nxr/operator_registry.h"
 #include "marshal.h"
 #include "mex.h"
 
@@ -1817,6 +1818,63 @@ void cmdVersion(int /*nlhs*/, mxArray** plhs,
     plhs[0] = mxCreateString("nxr-compute 0.1.0");
 }
 
+// ── operatorInfo(id) → struct of controlled-vocab metadata strings ─────────
+//
+// nxr_compute('operatorInfo', 'laplaceBeltrami')  →  struct with fields:
+//   id, label, bundle, holonomy, order, role, field_type, domain, singular,
+//   gauge, coupling, natural_mass, graded, tau_presets, status, notes,
+//   squares_to, square_of, relation
+//
+// All string fields. 'graded' is returned as a double scalar (1 or 0) for
+// MATLAB compatibility.  squares_to / square_of / relation are empty strings
+// when no cross-link is present.
+
+void cmdOperatorInfo(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    using namespace nxr::manifold::registry;
+    if (nrhs < 2 || !mxIsChar(prhs[1]))
+        throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+            "operatorInfo requires an id string.");
+    char buf[128];
+    mxGetString(prhs[1], buf, sizeof(buf));
+    const OperatorVariant* v = operatorById(buf);
+    if (!v)
+        throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+            std::string("operatorInfo: unknown operator id: ") + buf);
+
+    const char* fields[] = {
+        "id", "label", "bundle", "holonomy", "order", "role",
+        "field_type", "domain", "singular", "gauge", "coupling",
+        "natural_mass", "graded", "tau_presets", "status", "notes",
+        "squares_to", "square_of", "relation"
+    };
+    mxArray* s = mxCreateStructMatrix(1, 1,
+        static_cast<int>(sizeof(fields) / sizeof(*fields)), fields);
+
+    mxSetField(s, 0, "id",           mxCreateString(v->id.c_str()));
+    mxSetField(s, 0, "label",        mxCreateString(v->label.c_str()));
+    mxSetField(s, 0, "bundle",       mxCreateString(toString(v->bundle)));
+    mxSetField(s, 0, "holonomy",     mxCreateString(toString(v->holonomy)));
+    mxSetField(s, 0, "order",        mxCreateString(toString(v->order)));
+    mxSetField(s, 0, "role",         mxCreateString(toString(v->role)));
+    mxSetField(s, 0, "field_type",   mxCreateString(toString(v->field_type)));
+    mxSetField(s, 0, "domain",       mxCreateString(toString(v->domain)));
+    mxSetField(s, 0, "singular",     mxCreateString(toString(v->singular)));
+    mxSetField(s, 0, "gauge",        mxCreateString(toString(v->gauge)));
+    mxSetField(s, 0, "coupling",     mxCreateString(toString(v->coupling)));
+    mxSetField(s, 0, "natural_mass", mxCreateString(v->natural_mass.c_str()));
+    mxSetField(s, 0, "graded",       mxCreateDoubleScalar(v->graded ? 1.0 : 0.0));
+    mxSetField(s, 0, "tau_presets",  mxCreateString(v->tau_presets.c_str()));
+    mxSetField(s, 0, "status",       mxCreateString(toString(v->status)));
+    mxSetField(s, 0, "notes",        mxCreateString(v->notes.c_str()));
+    mxSetField(s, 0, "squares_to",   mxCreateString(
+        (v->square.present &&  v->square.isSquaresTo) ? v->square.target.c_str() : ""));
+    mxSetField(s, 0, "square_of",    mxCreateString(
+        (v->square.present && !v->square.isSquaresTo) ? v->square.target.c_str() : ""));
+    mxSetField(s, 0, "relation",     mxCreateString(
+        v->square.present ? toString(v->square.relation) : ""));
+    plhs[0] = s;
+}
+
 // ── operators(handle, family[, subtype]) → sparse / struct ───
 //
 // Exposes the OperatorsFacet operators to MATLAB by name so callers
@@ -2022,6 +2080,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "extrinsic")                   cmdExtrinsic(nlhs, plhs, nrhs, prhs);
         else if (cmd == "facets")                      cmdFacets(nlhs, plhs, nrhs, prhs);
         else if (cmd == "version")                 cmdVersion(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "operatorInfo")            cmdOperatorInfo(nlhs, plhs, nrhs, prhs);
         else {
             mexErrMsgIdAndTxt("nxr:unknownCommand",
                 "Unknown command: \"%s\". Available: create, destroy, assembleManifoldOperators, "
@@ -2032,7 +2091,8 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
                 "smoothVertex, compute, computeFreq, "
                 "topology, geometry, gauge, bundle, operators, "
                 "frameTransport, liftToWorld, liftToFrame, "
-                "embedded, intrinsic, extrinsic, facets, version.",
+                "embedded, intrinsic, extrinsic, facets, "
+                "operatorInfo, version.",
                 cmd.c_str());
         }
     } catch (const nxr::core::Error& e) {

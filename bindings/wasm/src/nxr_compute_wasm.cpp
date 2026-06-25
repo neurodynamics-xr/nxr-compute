@@ -25,6 +25,7 @@
 
 #include "nxr/compute.h"
 #include "nxr/facets.h"   // OperatorsFacet definition (operators() command)
+#include "nxr/operator_registry.h"
 
 #include <atomic>
 #include <cstdint>
@@ -1084,6 +1085,44 @@ val solveEigenmodesFromTriplets(
     }
 }
 
+// ── Operator registry metadata ───────────────────────────────
+//
+// Mirrors the MEX 'operatorInfo' command (bindings/mex/src/nxr_compute_mex.cpp).
+// Returns a plain JS object with all OperatorVariant metadata strings. Field
+// names match the MEX struct fields exactly so downstream consumers work
+// identically against either binding.
+emscripten::val operatorInfoJS(std::string id) {
+    using namespace nxr::manifold::registry;
+    const OperatorVariant* v = operatorById(id);
+    if (!v) {
+        try {
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                                   "unknown operator id: " + id);
+        } catch (const nxr::core::Error& e) { rethrowAsJsError(e); }
+    }
+    emscripten::val o = emscripten::val::object();
+    o.set("id",           v->id);
+    o.set("label",        v->label);
+    o.set("bundle",       std::string(toString(v->bundle)));
+    o.set("holonomy",     std::string(toString(v->holonomy)));
+    o.set("order",        std::string(toString(v->order)));
+    o.set("role",         std::string(toString(v->role)));
+    o.set("field_type",   std::string(toString(v->field_type)));
+    o.set("domain",       std::string(toString(v->domain)));
+    o.set("singular",     std::string(toString(v->singular)));
+    o.set("gauge",        std::string(toString(v->gauge)));
+    o.set("coupling",     std::string(toString(v->coupling)));
+    o.set("natural_mass", v->natural_mass);
+    o.set("graded",       v->graded);
+    o.set("tau_presets",  v->tau_presets);
+    o.set("status",       std::string(toString(v->status)));
+    o.set("notes",        v->notes);
+    o.set("squares_to",   v->square.present &&  v->square.isSquaresTo ? v->square.target : std::string());
+    o.set("square_of",    v->square.present && !v->square.isSquaresTo ? v->square.target : std::string());
+    o.set("relation",     v->square.present ? std::string(toString(v->square.relation)) : std::string());
+    return o;
+}
+
 // ── Embind module bindings ───────────────────────────────────
 
 EMSCRIPTEN_BINDINGS(nxr_compute_wasm) {
@@ -1143,4 +1182,5 @@ EMSCRIPTEN_BINDINGS(nxr_compute_wasm) {
     emscripten::function("version", &getVersion);
     emscripten::function("solveEigenmodesFromTriplets",
                          &solveEigenmodesFromTriplets);
+    emscripten::function("operatorInfo", &operatorInfoJS);
 }
