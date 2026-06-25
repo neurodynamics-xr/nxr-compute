@@ -53,6 +53,29 @@ static void test_full_population() {
     CHECK(ew && ew->bundle == Bundle::ambient && ew->holonomy == Holonomy::extrinsic_curved, "Weitzenboeck facets");
 }
 
+static void test_query_and_guard() {
+    auto firstImmersion = operatorsWhere([](const OperatorVariant& v) {
+        return v.bundle == Bundle::immersion && v.order == Order::first;
+    });
+    if (firstImmersion.size() != 4) {
+        std::cerr << "DEBUG firstImmersion count=" << firstImmersion.size() << ": ";
+        for (auto* v : firstImmersion) std::cerr << v->id << " ";
+        std::cerr << "\n";
+    }
+    CHECK(firstImmersion.size() == 4, "4 first-order immersion ops");
+
+    // LJC-trap guard: immersion op rejected where ambient required.
+    bool threw = false;
+    try { requireBundle("relativeDirac", Bundle::ambient); }
+    catch (const nxr::core::Error&) { threw = true; }
+    CHECK(threw, "requireBundle throws on immersion!=ambient");
+
+    bool ok = true;
+    try { requireBundle("flatCovariantLaplacian", Bundle::ambient); }
+    catch (const nxr::core::Error&) { ok = false; }
+    CHECK(ok, "requireBundle passes on ambient==ambient");
+}
+
 static void test_completeness() {
     const OperatorId all[] = {
         OperatorId::LaplacianCotan, OperatorId::LaplacianGraph, OperatorId::LaplacianConnection,
@@ -73,6 +96,7 @@ int main() {
     test_scalar_skeleton();
     test_full_population();
     test_completeness();
+    test_query_and_guard();
     std::cout << (g_failures ? "REGISTRY TESTS FAILED\n" : "ALL REGISTRY TESTS PASSED\n");
     return g_failures ? 1 : 0;
 }
