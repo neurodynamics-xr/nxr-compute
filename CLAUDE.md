@@ -294,6 +294,33 @@ Exposed to consumers as `nxr_compute('operatorInfo', id)` (MEX) and
 `extrinsicWeitzenbockLaplacian` (Δ₃+D_N, ambient sibling of the immersion squared
 Dirac) is catalogued as `status: planned` — metadata only, build is a follow-on.
 
+**Field registry (C++) — the dual of the operator registry.**
+`include/nxr/field_registry.h` / `src/field_registry.cpp` are the single source of
+truth for *field identity + metadata* — the type system for the DATA operators act
+on (design: `docs/superpowers/specs/2026-06-25-field-type-system-design.md`). Each
+field is one `FieldVariant` keyed by a curated `id` (`scalarVertex`, `oneFormEdge`,
+`twoFormFace`, `tangentVertex`, `ambientVertexWorld`/`Local`, `ambientEdge`,
+`ambientFaceWorld`, `immersionVertex`/`Face`) carrying a `FieldDescriptor` over
+controlled vocabularies — `domain` (vertex/edge/face), `bundle`, `field_type`,
+`n_form` (na/zero/one/two DEC degree), `representation` (na / world / local_frame /
+intrinsic_complex / quaternion_interleaved), `gauge`, and `nSym` (n-RoSy order).
+**Frames are coordinate systems, not fields** — they live in the gauge layer and are
+only *referenced* by `representation`/`gauge`, never catalogued as variants. **Time
+is a deferred orthogonal subsystem**: a Field is "a typed payload over a domain",
+never "a vector", so a future temporal container composes over spatial fields without
+reopening the type. The two registries are explicit duals: `OperatorVariant` gains
+`input_field`/`output_field`; `requireField(descriptor, operatorId)` is the inverse
+of `requireBundle` (rejects a field whose descriptor doesn't match the operator's
+declared input); `operatorsAccepting(descriptor)` queries by `fieldMatches` (keyed on
+domain+bundle+field_type+n_form+representation; gauge/nSym advisory).
+`validateFieldShape` checks `rows == nElements(domain)·componentsPerElement`. A
+declared `conversionGraph()` names the existing impl for each representation
+transition (lift world↔local, `G·cᵀ`, whitney, scalar gradient, complex↔real2N) —
+call-through is deferred. API: `fieldById`/`fieldsWhere`; `test_field_registry`
+enforces catalogue completeness + operator I/O cross-reference integrity + routing.
+Exposed as `nxr_compute('fieldInfo', id)` (MEX) and `manifold.fieldInfo(id)` (WASM),
+and `operatorInfo` now surfaces each operator's `input_field`/`output_field`.
+
 ---
 
 ## C++ API Surface

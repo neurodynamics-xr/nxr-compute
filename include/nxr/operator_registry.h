@@ -62,6 +62,8 @@ struct OperatorVariant {
     Status      status     = Status::built;
     OperatorId  op_id;                 // the (possibly shared) enum slot
     std::string notes;
+    std::string input_field;    // Field-variant id consumed (populated post-init)
+    std::string output_field;   // Field-variant id produced
 };
 
 // ── API ──────────────────────────────────────────────────────────────

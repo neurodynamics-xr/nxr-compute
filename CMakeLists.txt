@@ -75,6 +75,7 @@ add_library(nxr_compute STATIC
   src/face_gradient.cpp
   src/eigenproblem.cpp
   src/operator_registry.cpp
+  src/field_registry.cpp
 )
 
 set_source_files_properties(src/operator_registry.cpp PROPERTIES
@@ -173,6 +174,10 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_operator_registry test/test_operator_registry.cpp)
     target_link_libraries(test_operator_registry PRIVATE nxr_compute)
     add_test(NAME test_operator_registry COMMAND test_operator_registry)
+
+    add_executable(test_field_registry test/test_field_registry.cpp)
+    target_link_libraries(test_field_registry PRIVATE nxr_compute)
+    add_test(NAME test_field_registry COMMAND test_field_registry)
 
     add_executable(test_geometry_central_extras test/test_geometry_central_extras.cpp)
     target_link_libraries(test_geometry_central_extras PRIVATE nxr_compute)

@@ -23,6 +23,7 @@
 
 #include "nxr/compute.h"
 #include "nxr/facets.h"
+#include "nxr/field_registry.h"
 #include "nxr/operator_registry.h"
 #include "marshal.h"
 #include "mex.h"
@@ -1845,7 +1846,8 @@ void cmdOperatorInfo(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prh
         "id", "label", "bundle", "holonomy", "order", "role",
         "field_type", "domain", "singular", "gauge", "coupling",
         "natural_mass", "graded", "tau_presets", "status", "notes",
-        "squares_to", "square_of", "relation"
+        "squares_to", "square_of", "relation",
+        "input_field", "output_field"
     };
     mxArray* s = mxCreateStructMatrix(1, 1,
         static_cast<int>(sizeof(fields) / sizeof(*fields)), fields);
@@ -1872,6 +1874,50 @@ void cmdOperatorInfo(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prh
         (v->square.present && !v->square.isSquaresTo) ? v->square.target.c_str() : ""));
     mxSetField(s, 0, "relation",     mxCreateString(
         v->square.present ? toString(v->square.relation) : ""));
+    mxSetField(s, 0, "input_field",  mxCreateString(v->input_field.c_str()));
+    mxSetField(s, 0, "output_field", mxCreateString(v->output_field.c_str()));
+    plhs[0] = s;
+}
+
+// ── fieldInfo(id) → struct of controlled-vocab metadata strings ─────────────
+//
+// nxr_compute('fieldInfo', 'tangentVertex')  →  struct with fields:
+//   id, label, domain, bundle, field_type, n_form, representation, gauge,
+//   nSym, notes
+//
+// All string fields except nSym (returned as double scalar for MATLAB compat).
+// Returns nxr:invalidInput on unknown id.
+
+static void cmdFieldInfo(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) {
+    using namespace nxr::manifold::registry;
+    if (nrhs < 2 || !mxIsChar(prhs[1]))
+        throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+            "fieldInfo requires an id string.");
+    char buf[128];
+    mxGetString(prhs[1], buf, sizeof(buf));
+    const FieldVariant* v = fieldById(buf);
+    if (!v)
+        throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+            std::string("fieldInfo: unknown field id: ") + buf);
+
+    const char* fields[] = {
+        "id", "label", "domain", "bundle", "field_type", "n_form",
+        "representation", "gauge", "nSym", "notes"
+    };
+    mxArray* s = mxCreateStructMatrix(1, 1,
+        static_cast<int>(sizeof(fields) / sizeof(*fields)), fields);
+
+    const FieldDescriptor& d = v->descriptor;
+    mxSetField(s, 0, "id",             mxCreateString(v->id.c_str()));
+    mxSetField(s, 0, "label",          mxCreateString(v->label.c_str()));
+    mxSetField(s, 0, "domain",         mxCreateString(toString(d.domain)));
+    mxSetField(s, 0, "bundle",         mxCreateString(toString(d.bundle)));
+    mxSetField(s, 0, "field_type",     mxCreateString(toString(d.field_type)));
+    mxSetField(s, 0, "n_form",         mxCreateString(toString(d.n_form)));
+    mxSetField(s, 0, "representation", mxCreateString(toString(d.representation)));
+    mxSetField(s, 0, "gauge",          mxCreateString(toString(d.gauge)));
+    mxSetField(s, 0, "nSym",          mxCreateDoubleScalar((double)d.nSym));
+    mxSetField(s, 0, "notes",          mxCreateString(v->notes.c_str()));
     plhs[0] = s;
 }
 
@@ -2081,6 +2127,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
         else if (cmd == "facets")                      cmdFacets(nlhs, plhs, nrhs, prhs);
         else if (cmd == "version")                 cmdVersion(nlhs, plhs, nrhs, prhs);
         else if (cmd == "operatorInfo")            cmdOperatorInfo(nlhs, plhs, nrhs, prhs);
+        else if (cmd == "fieldInfo")               cmdFieldInfo(nlhs, plhs, nrhs, prhs);
         else {
             mexErrMsgIdAndTxt("nxr:unknownCommand",
                 "Unknown command: \"%s\". Available: create, destroy, assembleManifoldOperators, "
@@ -2092,7 +2139,7 @@ void mexFunction(int nlhs, mxArray** plhs, int nrhs, const mxArray** prhs) {
                 "topology, geometry, gauge, bundle, operators, "
                 "frameTransport, liftToWorld, liftToFrame, "
                 "embedded, intrinsic, extrinsic, facets, "
-                "operatorInfo, version.",
+                "operatorInfo, fieldInfo, version.",
                 cmd.c_str());
         }
     } catch (const nxr::core::Error& e) {
