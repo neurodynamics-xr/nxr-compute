@@ -114,7 +114,7 @@ const std::vector<OperatorVariant>& operatorRegistry() {
             { "productCovariantLaplacian",      "ambientVertexLocal","ambientVertexLocal" },
             { "covariantGradient",              "ambientVertexLocal","ambientEdge" },
             { "faceGradient",                   "twoFormFace",       "ambientFaceWorld" },
-            { "extrinsicWeitzenbockLaplacian",  "ambientVertexLocal","ambientVertexLocal" },
+            { "extrinsicWeitzenbockLaplacian",  "ambientVertexWorld","ambientVertexWorld" },
             { "intrinsicDirac",                 "immersionVertex",   "immersionFace" },
             { "extrinsicDirac",                 "immersionVertex",   "immersionFace" },
             { "relativeDirac",                  "immersionVertex",   "immersionVertex" },
