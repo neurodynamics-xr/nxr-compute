@@ -41,7 +41,7 @@ const std::vector<OperatorVariant>& operatorRegistry() {
           Order::second, Role::laplacian, FieldType::real, Domain::vertex, Singular::none, Gauge::na, Coupling::product,
           {}, "", false, "", Status::built, OperatorId::LaplacianCovariant, "" },
         { "covariantGradient", "Covariant gradient (flat transport)", Bundle::ambient, Holonomy::flat,
-          Order::first, Role::gradient, FieldType::real, Domain::vertex, Singular::none, Gauge::na, Coupling::na,
+          Order::first, Role::gradient, FieldType::real, Domain::edge, Singular::none, Gauge::na, Coupling::na,
           squaresTo("flatCovariantLaplacian", Relation::exact), "", false, "", Status::built, OperatorId::Gradient3D, "edge<-vertex" },
         { "faceGradient", "Face gradient (Green-Gauss)", Bundle::ambient, Holonomy::intrinsic_curved,
           Order::first, Role::gradient, FieldType::real, Domain::face, Singular::none, Gauge::na, Coupling::na,
@@ -128,6 +128,9 @@ std::vector<std::string> variantIdsFor(OperatorId op) {
         case OperatorId::Dec:                 return {"d0", "d1", "hodge0", "hodge1", "hodge2", "hodge1inv"};
         case OperatorId::MassLumped:          return {"massLumped"};
         case OperatorId::MassGalerkin:        return {"massGalerkin"};
+        // NOTE: when the follow-on plan adds OperatorId::ExtrinsicWeitzenbock, add its
+        // case here AND repoint the extrinsicWeitzenbockLaplacian table entry's op_id
+        // off the Gradient3D placeholder (not compiler-enforced — see its notes field).
         case OperatorId::Gradient3D:          return {"covariantGradient"};
         case OperatorId::Dirac:               return {"relativeDirac"};
         case OperatorId::DiracFace:           return {"relativeFaceDirac", "faceLaplacian2Form"};

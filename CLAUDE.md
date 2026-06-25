@@ -285,8 +285,11 @@ throws if an `ambient` differentiator is required), and `variantIdsFor(OperatorI
 (a no-`default` switch — compiled with `-Werror=switch` for that TU, so a new
 `OperatorId` can't ship without metadata). `test_operator_registry` enforces both
 completeness *and* the numerical `squares_to` identities (honoring the `relation`
-qualifier). `solve::eigenProblemFor` reads each operator's `natural_mass` from the
-registry. Exposed to consumers as `nxr_compute('operatorInfo', id)` (MEX) and
+qualifier). The registry is the *documented* source of truth for each operator's
+`natural_mass` (the metric its eigenproblem is posed against); `solve::eigenProblemFor`
+honors the caller's `spec.mass` lumped/galerkin override within that family and
+asserts the registry agrees (drift-guard), so the two can't silently diverge.
+Exposed to consumers as `nxr_compute('operatorInfo', id)` (MEX) and
 `manifold.operatorInfo(id)` (WASM) → a struct/object of the metadata strings.
 `extrinsicWeitzenbockLaplacian` (Δ₃+D_N, ambient sibling of the immersion squared
 Dirac) is catalogued as `status: planned` — metadata only, build is a follow-on.

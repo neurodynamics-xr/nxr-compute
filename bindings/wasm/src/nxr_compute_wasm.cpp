@@ -1094,7 +1094,12 @@ val solveEigenmodesFromTriplets(
 emscripten::val operatorInfoJS(std::string id) {
     using namespace nxr::manifold::registry;
     const OperatorVariant* v = operatorById(id);
-    if (!v) throw std::runtime_error("[INVALID_INPUT] unknown operator id: " + id);
+    if (!v) {
+        try {
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                                   "unknown operator id: " + id);
+        } catch (const nxr::core::Error& e) { rethrowAsJsError(e); }
+    }
     emscripten::val o = emscripten::val::object();
     o.set("id",           v->id);
     o.set("label",        v->label);

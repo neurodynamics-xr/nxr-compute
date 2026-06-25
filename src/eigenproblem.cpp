@@ -13,6 +13,7 @@
 #include <Eigen/Eigenvalues>   // GeneralizedSelfAdjointEigenSolver / SelfAdjointEigenSolver
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <vector>
 
@@ -47,9 +48,15 @@ namespace {
 // byte-identical — the matrices built are the same as before the refactor.
 Eigen::SparseMatrix<double> naturalVertexMass(Manifold& m, const char* id,
                                               ops::MassMatrixVariant variant) {
+    // Registry is the documented source of truth for WHICH mass family this operator's
+    // eigenproblem is posed against; the runtime spec.mass picks lumped/galerkin within
+    // that family. Drift-guard: every operator routed here must document a massGalerkin
+    // -family natural mass — assert so a future entry can't silently disagree with the
+    // construction below. Construction is byte-identical to the pre-refactor inline code.
     const auto* v = registry::operatorById(id);
-    // Registry is the source of truth for WHICH family; runtime spec picks lumped/galerkin.
-    (void)v;  // family is massGalerkin for LaplacianCotan and Dirac; documented in registry.
+    assert(v && v->natural_mass.rfind("massGalerkin", 0) == 0 &&
+           "registry natural_mass disagrees with eigenProblemFor's vertex-mass family");
+    (void)v;  // unused in release (assert compiled out)
     return (variant == ops::MassMatrixVariant::Lumped)
                ? m.operators().mass().lumped()
                : m.operators().mass().galerkin();
