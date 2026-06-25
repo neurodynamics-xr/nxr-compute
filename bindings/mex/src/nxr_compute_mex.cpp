@@ -2055,10 +2055,14 @@ void cmdOperators(int /*nlhs*/, mxArray** plhs, int nrhs, const mxArray** prhs) 
         // [E×V] complex sparse — marshal exactly as 'laplacian'/'connection'.
         plhs[0] = eigenComplexSparseToMx(m.operators().connectionGradient(nSym));
 
+    } else if (family == "extrinsicWeitzenbock") {
+        // [3V×3V] real symmetric sparse — ambient extrinsic Weitzenböck, world-frame component-major.
+        plhs[0] = eigenSparseToMx(m.operators().extrinsicWeitzenbock());
+
     } else {
         throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
             "operators: family must be "
-            "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD|diracFaceIntrinsicD|gradFace|lapFace|connectionGradient.");
+            "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD|diracFaceIntrinsicD|gradFace|lapFace|connectionGradient|extrinsicWeitzenbock.");
     }
 }
 

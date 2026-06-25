@@ -360,10 +360,13 @@ public:
                 // nSym: numeric arg (default 1). Returns complex COO — mirrors 'laplacian'/'connection'.
                 int nSym = hasNum ? static_cast<int>(arg.as<double>()) : 1;
                 return sparseComplexToVal(m.operators().connectionGradient(nSym));
+            } else if (family == "extrinsicWeitzenbock") {
+                // [3V×3V] real symmetric sparse — ambient extrinsic Weitzenböck, world-frame component-major.
+                return sparseToVal(m.operators().extrinsicWeitzenbock());
             }
             throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
                 "operators: family must be "
-                "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD|diracFaceIntrinsicD|gradFace|lapFace|connectionGradient.");
+                "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|diracIntrinsicD|diracFaceIntrinsicD|gradFace|lapFace|connectionGradient|extrinsicWeitzenbock.");
         } catch (const nxr::core::Error& e) {
             rethrowAsJsError(e);
         }
