@@ -48,9 +48,23 @@ static void test_full_catalogue() {
     CHECK(of && of->descriptor.domain == Domain::edge && of->descriptor.n_form == NForm::one, "oneFormEdge edge 1-form");
 }
 
+static void test_operator_io_integrity() {
+    for (const auto& op : operatorRegistry()) {
+        CHECK(!op.input_field.empty(),  std::string("operator has input_field: ")  + op.id);
+        CHECK(!op.output_field.empty(), std::string("operator has output_field: ") + op.id);
+        CHECK(fieldById(op.input_field)  != nullptr, std::string("input_field resolves: ")  + op.id + " -> " + op.input_field);
+        CHECK(fieldById(op.output_field) != nullptr, std::string("output_field resolves: ") + op.id + " -> " + op.output_field);
+    }
+    const OperatorVariant* f2 = operatorById("faceLaplacian2Form");
+    const OperatorVariant* rf = operatorById("relativeFaceDirac");
+    CHECK(f2 && f2->input_field == "twoFormFace",   "faceLaplacian2Form input twoFormFace");
+    CHECK(rf && rf->input_field == "immersionFace", "relativeFaceDirac input immersionFace");
+}
+
 int main() {
     test_scalar_skeleton();
     test_full_catalogue();
+    test_operator_io_integrity();
     std::cout << (g_failures ? "FIELD REGISTRY TESTS FAILED\n" : "ALL FIELD REGISTRY TESTS PASSED\n");
     return g_failures ? 1 : 0;
 }
