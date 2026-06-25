@@ -117,6 +117,28 @@ void requireBundle(std::string_view id, Bundle required) {
                     "immersion operators are not valid ambient differentiators (LJC trap)");
 }
 
-// variantIdsFor is intentionally NOT defined in Task 1 — no call site references it yet.
+// No `default:` — adding an OperatorId enumerator without a branch triggers
+// -Wswitch (promoted to error for this TU) so metadata can't be forgotten.
+std::vector<std::string> variantIdsFor(OperatorId op) {
+    switch (op) {
+        case OperatorId::LaplacianCotan:      return {"laplaceBeltrami"};
+        case OperatorId::LaplacianGraph:      return {"graphLaplacian"};
+        case OperatorId::LaplacianConnection: return {"leviCivitaConnectionLaplacian", "trivialConnectionLaplacian"};
+        case OperatorId::LaplacianCovariant:  return {"flatCovariantLaplacian", "productCovariantLaplacian"};
+        case OperatorId::Dec:                 return {"d0", "d1", "hodge0", "hodge1", "hodge2", "hodge1inv"};
+        case OperatorId::MassLumped:          return {"massLumped"};
+        case OperatorId::MassGalerkin:        return {"massGalerkin"};
+        case OperatorId::Gradient3D:          return {"covariantGradient"};
+        case OperatorId::Dirac:               return {"relativeDirac"};
+        case OperatorId::DiracFace:           return {"relativeFaceDirac", "faceLaplacian2Form"};
+        case OperatorId::DiracD:              return {"extrinsicDirac"};
+        case OperatorId::DiracFaceD:          return {"extrinsicFaceDirac"};
+        case OperatorId::DiracIntrinsicD:     return {"intrinsicDirac"};
+        case OperatorId::DiracFaceIntrinsicD: return {"intrinsicFaceDirac"};
+        case OperatorId::GradFace:            return {"faceGradient"};
+        case OperatorId::LapFace:             return {"faceLaplacianGreenGauss"};
+    }
+    return {};   // unreachable; silences control-reaches-end warning
+}
 
 } // namespace nxr::manifold::registry

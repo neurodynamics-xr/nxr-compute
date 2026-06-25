@@ -53,9 +53,26 @@ static void test_full_population() {
     CHECK(ew && ew->bundle == Bundle::ambient && ew->holonomy == Holonomy::extrinsic_curved, "Weitzenboeck facets");
 }
 
+static void test_completeness() {
+    const OperatorId all[] = {
+        OperatorId::LaplacianCotan, OperatorId::LaplacianGraph, OperatorId::LaplacianConnection,
+        OperatorId::LaplacianCovariant, OperatorId::Dec, OperatorId::MassLumped,
+        OperatorId::MassGalerkin, OperatorId::Gradient3D, OperatorId::Dirac, OperatorId::DiracFace,
+        OperatorId::DiracD, OperatorId::DiracFaceD, OperatorId::DiracIntrinsicD,
+        OperatorId::DiracFaceIntrinsicD, OperatorId::GradFace, OperatorId::LapFace,
+    };
+    for (OperatorId op : all) {
+        auto ids = variantIdsFor(op);
+        CHECK(!ids.empty(), "OperatorId has >=1 variant");
+        for (const auto& id : ids)
+            CHECK(operatorById(id) != nullptr, "variantIdsFor id resolves: " + id);
+    }
+}
+
 int main() {
     test_scalar_skeleton();
     test_full_population();
+    test_completeness();
     std::cout << (g_failures ? "REGISTRY TESTS FAILED\n" : "ALL REGISTRY TESTS PASSED\n");
     return g_failures ? 1 : 0;
 }

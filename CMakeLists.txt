@@ -77,6 +77,9 @@ add_library(nxr_compute STATIC
   src/operator_registry.cpp
 )
 
+set_source_files_properties(src/operator_registry.cpp PROPERTIES
+    COMPILE_OPTIONS "-Wswitch;-Werror=switch")
+
 target_include_directories(nxr_compute PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${spectra_SOURCE_DIR}/include
