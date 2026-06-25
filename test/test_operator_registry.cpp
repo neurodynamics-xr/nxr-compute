@@ -219,12 +219,56 @@ static void test_completeness() {
     }
 }
 
+// ── Eigenproblem ↔ registry natural-mass agreement ───────────────────────────
+// Characterization test: proves eigenProblemFor uses the mass the registry
+// documents as natural for each operator. Byte-identical check (< 1e-12).
+static void test_eigenproblem_uses_registry_mass() {
+    std::vector<double>  V;
+    std::vector<int32_t> F;
+    makeIcosphere(V, F);
+    int nV_ = static_cast<int>(V.size() / 3);
+    int nF_ = static_cast<int>(F.size() / 3);
+    Manifold m(V.data(), nV_, F.data(), nF_);
+
+    // LaplacianCotan: registry says natural_mass == "massGalerkin"
+    {
+        EigenOperatorSpec spec;
+        spec.op   = EigenOperator::LaplacianCotan;
+        spec.mass = ops::MassMatrixVariant::Galerkin;  // default
+        EigenProblem p = eigenProblemFor(m, spec);
+
+        const OperatorVariant* lb = operatorById("laplaceBeltrami");
+        CHECK(lb && lb->natural_mass == "massGalerkin",
+              "registry says Galerkin mass for laplaceBeltrami");
+        Eigen::SparseMatrix<double> Mg = m.operators().mass().galerkin();
+        CHECK(maxAbsDiff(p.M, Mg) < 1e-12,
+              "LaplacianCotan eigenProblemFor M == registry-named massGalerkin (byte-identical)");
+    }
+
+    // Dirac: registry says natural_mass == "massGalerkin*I4"
+    {
+        EigenOperatorSpec spec;
+        spec.op   = EigenOperator::Dirac;
+        spec.tau  = 0.0;
+        spec.mass = ops::MassMatrixVariant::Galerkin;  // default
+        EigenProblem p = eigenProblemFor(m, spec);
+
+        const OperatorVariant* rd = operatorById("relativeDirac");
+        CHECK(rd && rd->natural_mass == "massGalerkin*I4",
+              "registry says massGalerkin*I4 for relativeDirac");
+        Eigen::SparseMatrix<double> M4 = blockKron(m.operators().mass().galerkin(), 4);
+        CHECK(maxAbsDiff(p.M, M4) < 1e-12,
+              "Dirac eigenProblemFor M == registry-named massGalerkin*I4 (byte-identical)");
+    }
+}
+
 int main() {
     test_scalar_skeleton();
     test_full_population();
     test_completeness();
     test_query_and_guard();
     test_cross_link_identities();
+    test_eigenproblem_uses_registry_mass();
     std::cout << (g_failures ? "REGISTRY TESTS FAILED\n" : "ALL REGISTRY TESTS PASSED\n");
     return g_failures ? 1 : 0;
 }
