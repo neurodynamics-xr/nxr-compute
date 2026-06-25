@@ -34,6 +34,14 @@ const std::vector<OperatorVariant>& operatorRegistry() {
               Order::second, Role::connection_laplacian, FieldType::complex, Domain::vertex, Singular::chi_defects, Gauge::trivial, Coupling::na,
               {}, "", false, "", Status::built, OperatorId::LaplacianConnection, "Sum singularity index == chi (Gauss-Bonnet)" },
 
+            // ── tangent gradient (complex, nSym) ──
+            { "leviCivitaConnectionGradient", "Levi-Civita connection gradient (d^nabla)", Bundle::tangent, Holonomy::intrinsic_curved,
+              Order::first, Role::gradient, FieldType::complex, Domain::edge, Singular::none, Gauge::levi_civita, Coupling::na,
+              squaresTo("leviCivitaConnectionLaplacian", Relation::exact), "", false, "", Status::built, OperatorId::ConnectionGradient, "edge<-vertex; nSym" },
+            { "trivialConnectionGradient", "Trivial connection gradient (d^nabla)", Bundle::tangent, Holonomy::flat,
+              Order::first, Role::gradient, FieldType::complex, Domain::edge, Singular::chi_defects, Gauge::trivial, Coupling::na,
+              squaresTo("trivialConnectionLaplacian", Relation::exact), "", false, "", Status::built, OperatorId::ConnectionGradient, "edge<-vertex; nSym" },
+
             // ── ambient (real, 3-comp) ──
             { "flatCovariantLaplacian", "Flat covariant Laplacian (ambient)", Bundle::ambient, Holonomy::flat,
               Order::second, Role::laplacian, FieldType::real, Domain::vertex, Singular::none, Gauge::na, Coupling::ambient,
@@ -100,6 +108,8 @@ const std::vector<OperatorVariant>& operatorRegistry() {
             { "faceLaplacian2Form",             "twoFormFace",       "twoFormFace" },
             { "leviCivitaConnectionLaplacian",  "tangentVertex",     "tangentVertex" },
             { "trivialConnectionLaplacian",     "tangentVertex",     "tangentVertex" },
+            { "leviCivitaConnectionGradient",   "tangentVertex",     "tangentEdge" },
+            { "trivialConnectionGradient",      "tangentVertex",     "tangentEdge" },
             { "flatCovariantLaplacian",         "ambientVertexLocal","ambientVertexLocal" },
             { "productCovariantLaplacian",      "ambientVertexLocal","ambientVertexLocal" },
             { "covariantGradient",              "ambientVertexLocal","ambientEdge" },
@@ -176,7 +186,7 @@ std::vector<std::string> variantIdsFor(OperatorId op) {
         case OperatorId::DiracFaceIntrinsicD: return {"intrinsicFaceDirac"};
         case OperatorId::GradFace:            return {"faceGradient"};
         case OperatorId::LapFace:             return {"faceLaplacianGreenGauss"};
-        case OperatorId::ConnectionGradient:  return {"connectionGradient"};
+        case OperatorId::ConnectionGradient:  return {"leviCivitaConnectionGradient", "trivialConnectionGradient"};
     }
     return {};   // unreachable; silences control-reaches-end warning
 }
