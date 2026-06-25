@@ -95,11 +95,26 @@ static void test_routing() {
     CHECK(shapeThrew, "scalarVertex wrong row count rejected");
 }
 
+static void test_conversion_graph() {
+    const auto& edges = conversionGraph();
+    CHECK(!edges.empty(), "conversion graph non-empty");
+    for (const auto& e : edges) {
+        CHECK(fieldById(e.from) != nullptr, std::string("conversion from resolves: ") + e.from);
+        CHECK(fieldById(e.to)   != nullptr, std::string("conversion to resolves: ")   + e.to);
+        if (e.implemented) CHECK(!e.impl.empty(), std::string("implemented edge names impl: ") + e.from + "->" + e.to);
+    }
+    bool hasLift = false;
+    for (const auto& e : edges)
+        if (e.from == "ambientVertexWorld" && e.to == "ambientVertexLocal" && e.implemented) hasLift = true;
+    CHECK(hasLift, "world->local lift edge present and implemented");
+}
+
 int main() {
     test_scalar_skeleton();
     test_full_catalogue();
     test_operator_io_integrity();
     test_routing();
+    test_conversion_graph();
     std::cout << (g_failures ? "FIELD REGISTRY TESTS FAILED\n" : "ALL FIELD REGISTRY TESTS PASSED\n");
     return g_failures ? 1 : 0;
 }

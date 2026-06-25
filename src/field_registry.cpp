@@ -119,6 +119,16 @@ void validateFieldShape(const FieldDescriptor& f, int rows, int nV, int nE, int 
                     "rows must equal nElements(domain) * componentsPerElement");
 }
 
-// conversionGraph is implemented in a later task (not defined yet).
+const std::vector<ConversionEdge>& conversionGraph() {
+    static const std::vector<ConversionEdge> edges = {
+        { "ambientVertexWorld", "ambientVertexLocal", "differential::liftToFrame", true },
+        { "ambientVertexLocal", "ambientVertexWorld", "differential::liftToWorld", true },
+        { "ambientVertexWorld", "ambientVertexLocal", "G.c^T (covariantGradient correspondence)", true },
+        { "oneFormEdge",        "ambientFaceWorld",   "field::interp::whitney",      true },
+        { "scalarVertex",       "ambientFaceWorld",   "field::op::gradient",         true },
+        { "tangentVertex",      "tangentVertex",      "lowerToReal2N (complex<->real2N)", true },
+    };
+    return edges;
+}
 
 } // namespace nxr::manifold::registry
