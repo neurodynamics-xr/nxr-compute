@@ -74,6 +74,7 @@ add_library(nxr_compute STATIC
   src/dirac_operator.cpp
   src/face_gradient.cpp
   src/eigenproblem.cpp
+  src/operator_registry.cpp
 )
 
 target_include_directories(nxr_compute PUBLIC
@@ -165,6 +166,10 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_mass_variants test/test_mass_variants.cpp)
     target_link_libraries(test_mass_variants PRIVATE nxr_compute)
     add_test(NAME test_mass_variants COMMAND test_mass_variants)
+
+    add_executable(test_operator_registry test/test_operator_registry.cpp)
+    target_link_libraries(test_operator_registry PRIVATE nxr_compute)
+    add_test(NAME test_operator_registry COMMAND test_operator_registry)
 
     add_executable(test_geometry_central_extras test/test_geometry_central_extras.cpp)
     target_link_libraries(test_geometry_central_extras PRIVATE nxr_compute)
