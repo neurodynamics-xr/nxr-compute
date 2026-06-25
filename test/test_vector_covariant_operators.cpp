@@ -8,6 +8,7 @@
  */
 
 #include "nxr/compute.h"
+#include "nxr/facets.h"
 
 #include <Eigen/Sparse>
 #include <complex>
@@ -146,10 +147,47 @@ static void test_cellC_invalid_nsym() {
     CHECK(threw, "nSym=0 throws Error(InvalidInput)");
 }
 
+// ── Cell A2: facet accessor — same matrix as free function, cached per nSym ──
+static void test_cellA_facet_accessor() {
+    std::vector<double>   V;
+    std::vector<int32_t>  F;
+    generateIcosphere(V, F);
+
+    nxr::manifold::Manifold m(V.data(), static_cast<int>(V.size()) / 3,
+                              F.data(), static_cast<int>(F.size()) / 3);
+
+    const auto& G1 = m.operators().connectionGradient(1);
+    CHECK(G1.rows() == m.nE() && G1.cols() == m.nV(),
+          "connectionGradient(1) shape [E×V]");
+    CHECK(m.isOperatorCached(nxr::manifold::OperatorId::ConnectionGradient),
+          "cached after access");
+
+    // Second call must return the same object (pointer identity).
+    const auto& G1b = m.operators().connectionGradient(1);
+    CHECK(&G1 == &G1b, "same cached ref for same nSym");
+
+    // Release + check no longer cached.
+    m.releaseOperator(nxr::manifold::OperatorId::ConnectionGradient);
+    CHECK(!m.isOperatorCached(nxr::manifold::OperatorId::ConnectionGradient),
+          "released");
+
+    // nSym=2 must produce a different (cached) matrix.
+    const auto& G2 = m.operators().connectionGradient(2);
+    CHECK(G2.rows() == m.nE() && G2.cols() == m.nV(),
+          "connectionGradient(2) shape [E×V]");
+    CHECK(m.isOperatorCached(nxr::manifold::OperatorId::ConnectionGradient),
+          "cached after nSym=2 access");
+    std::cout << "  Cell A2 facet accessor: OK (nV=" << m.nV()
+              << " nE=" << m.nE() << ")\n";
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 int main() {
     std::cout << "── Cell A: squares to connection Laplacian ──\n";
     test_cellA_squares_to();
+
+    std::cout << "── Cell A2: facet accessor + cache ──\n";
+    test_cellA_facet_accessor();
 
     std::cout << "── Cell B: shape ──\n";
     test_cellB_shape();

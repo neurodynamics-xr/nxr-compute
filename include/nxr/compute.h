@@ -83,7 +83,8 @@ enum class GaugeType { Euclidean, LeviCivita, Trivial };
 enum class OperatorId {
     LaplacianCotan, LaplacianGraph, LaplacianConnection, LaplacianCovariant,
     Dec, MassLumped, MassGalerkin, Gradient3D, Dirac, DiracFace,
-    DiracD, DiracFaceD, DiracIntrinsicD, DiracFaceIntrinsicD, GradFace, LapFace
+    DiracD, DiracFaceD, DiracIntrinsicD, DiracFaceIntrinsicD, GradFace, LapFace,
+    ConnectionGradient
 };
 
 // ── Compute Context ──────────────────────────────────────────
@@ -189,6 +190,8 @@ private:
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheTwoFormLaplacian_;  // K̃ = d₁⋆₁⁻¹d₁ᵀ (diracFace intrinsic anchor)
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheGradFace_;   // dual-mesh face gradient G̃ [3F×F]
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheLapFace_;    // face Laplacian K̃ = G̃ᵀ⋆_F G̃ [F×F]
+    std::unique_ptr<Eigen::SparseMatrix<std::complex<double>>>           cacheConnectionGradient_; // d^∇ [E×V] complex, built in active gauge
+    int                                                                  cachedConnectionGradientNSym_ = -1; // rebuild on nSym change
 
     // Private cache-fill helpers called by OperatorsFacet::LaplacianView.
     // These source DIRECTLY from operatorGeometry()'s GC cache without

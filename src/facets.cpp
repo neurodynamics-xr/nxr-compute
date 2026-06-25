@@ -66,6 +66,7 @@ void Manifold::setGauge(GaugeType type, const std::map<int,double>& singularitie
     // rebuilds in the new gauge.
     releaseOperator(OperatorId::LaplacianConnection);
     releaseOperator(OperatorId::LaplacianCovariant);
+    releaseOperator(OperatorId::ConnectionGradient);
 }
 
 // ── B2: Lazy DEC / Cholesky cache + gauge() overload bodies ──────────────────
@@ -114,6 +115,7 @@ bool Manifold::isOperatorCached(OperatorId id) const {
         case OperatorId::DiracFaceIntrinsicD: return (bool)cacheDiracFaceIntrinsicD_;
         case OperatorId::GradFace:            return (bool)cacheGradFace_;
         case OperatorId::LapFace:             return (bool)cacheLapFace_;
+        case OperatorId::ConnectionGradient:  return (bool)cacheConnectionGradient_;
     }
     return false;
 }
@@ -136,6 +138,10 @@ void Manifold::releaseOperator(OperatorId id) {
         case OperatorId::DiracFaceIntrinsicD: cacheDiracFaceIntrinsicD_.reset();  break;
         case OperatorId::GradFace:            cacheGradFace_.reset();            break;
         case OperatorId::LapFace:             cacheLapFace_.reset();             break;
+        case OperatorId::ConnectionGradient:
+            cacheConnectionGradient_.reset();
+            cachedConnectionGradientNSym_ = -1;
+            break;
     }
 }
 
@@ -476,6 +482,17 @@ OperatorsFacet::LaplacianView::covariant(
 // dec(): returns the lazily-cached DECOperators bundle via Manifold::decOperators().
 const ops::DECOperators& OperatorsFacet::dec() const { return m_.decOperators(); }
 const Eigen::SparseMatrix<double>& OperatorsFacet::gradient3D() const { return m_.gradient3DCached_(); }
+
+const Eigen::SparseMatrix<std::complex<double>>&
+OperatorsFacet::connectionGradient(int nSym) const {
+    if (!m_.cacheConnectionGradient_ || m_.cachedConnectionGradientNSym_ != nSym) {
+        m_.cacheConnectionGradient_ = std::make_unique<Eigen::SparseMatrix<std::complex<double>>>(
+            ops::laplacian::connection::assembleConnectionGradient(m_, nSym));
+        m_.cachedConnectionGradientNSym_ = nSym;
+    }
+    return *m_.cacheConnectionGradient_;
+}
+
 Eigen::SparseMatrix<double> OperatorsFacet::dirac(double tau) const { return m_.diracFamily_(tau); }
 Eigen::SparseMatrix<double> OperatorsFacet::diracFace(double tau) const { return m_.diracFaceFamily_(tau); }
 const Eigen::SparseMatrix<double>& OperatorsFacet::diracD() const { return m_.diracMatrixCached_(); }

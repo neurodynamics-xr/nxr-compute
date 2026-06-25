@@ -176,6 +176,7 @@ std::vector<std::string> variantIdsFor(OperatorId op) {
         case OperatorId::DiracFaceIntrinsicD: return {"intrinsicFaceDirac"};
         case OperatorId::GradFace:            return {"faceGradient"};
         case OperatorId::LapFace:             return {"faceLaplacianGreenGauss"};
+        case OperatorId::ConnectionGradient:  return {"connectionGradient"};
     }
     return {};   // unreachable; silences control-reaches-end warning
 }
