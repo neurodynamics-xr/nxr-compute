@@ -30,6 +30,9 @@ const std::vector<FieldVariant>& fieldRegistry() {
         { "tangentFace", "Tangent field (face)",
           desc(Domain::face, Bundle::tangent, FieldType::complex, NForm::na, Representation::intrinsic_complex, Gauge::levi_civita),
           "n-RoSy via nSym" },
+        { "tangentEdge", "Tangent 1-form (edge)",
+          desc(Domain::edge, Bundle::tangent, FieldType::complex, NForm::na, Representation::intrinsic_complex, Gauge::levi_civita),
+          "complex tangent 1-form on edges; connectionGradient output" },
         // ambient (R^3)
         { "ambientVertexWorld", "Ambient vector (vertex, world)",
           desc(Domain::vertex, Bundle::ambient, FieldType::real, NForm::na, Representation::world),

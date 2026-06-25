@@ -66,6 +66,10 @@ void Manifold::setGauge(GaugeType type, const std::map<int,double>& singularitie
     // rebuilds in the new gauge.
     releaseOperator(OperatorId::LaplacianConnection);
     releaseOperator(OperatorId::LaplacianCovariant);
+    // NOTE: ConnectionGradient is NOT invalidated here — v1 builds it in the
+    // Levi-Civita gauge only (assembleConnectionGradient reads the LC transport
+    // from operatorGeometry()), so it is gauge-independent. The trivial-gauge
+    // gradient is a deferred follow-up; add the invalidation when it lands.
 }
 
 // ── B2: Lazy DEC / Cholesky cache + gauge() overload bodies ──────────────────
@@ -106,6 +110,7 @@ bool Manifold::isOperatorCached(OperatorId id) const {
         case OperatorId::MassLumped:          return (bool)cacheMassLumped_;
         case OperatorId::MassGalerkin:        return (bool)cacheMassGalerkin_;
         case OperatorId::Gradient3D:          return (bool)cacheGradient3D_;
+        case OperatorId::ExtrinsicWeitzenbock: return (bool)cacheExtrinsicWeitzenbock_;
         case OperatorId::Dirac:               return (bool)cacheDirac_;
         case OperatorId::DiracFace:           return (bool)cacheDiracFace_;
         case OperatorId::DiracD:              return (bool)cacheDiracD_;
@@ -114,6 +119,7 @@ bool Manifold::isOperatorCached(OperatorId id) const {
         case OperatorId::DiracFaceIntrinsicD: return (bool)cacheDiracFaceIntrinsicD_;
         case OperatorId::GradFace:            return (bool)cacheGradFace_;
         case OperatorId::LapFace:             return (bool)cacheLapFace_;
+        case OperatorId::ConnectionGradient:  return (bool)cacheConnectionGradient_;
     }
     return false;
 }
@@ -128,6 +134,7 @@ void Manifold::releaseOperator(OperatorId id) {
         case OperatorId::MassLumped:          cacheMassLumped_.reset();          break;
         case OperatorId::MassGalerkin:        cacheMassGalerkin_.reset();        break;
         case OperatorId::Gradient3D:          cacheGradient3D_.reset();          break;
+        case OperatorId::ExtrinsicWeitzenbock: cacheExtrinsicWeitzenbock_.reset(); break;
         case OperatorId::Dirac:               cacheDirac_.reset();               break;
         case OperatorId::DiracFace:           cacheDiracFace_.reset();           break;
         case OperatorId::DiracD:              cacheDiracD_.reset();              break;
@@ -136,6 +143,10 @@ void Manifold::releaseOperator(OperatorId id) {
         case OperatorId::DiracFaceIntrinsicD: cacheDiracFaceIntrinsicD_.reset();  break;
         case OperatorId::GradFace:            cacheGradFace_.reset();            break;
         case OperatorId::LapFace:             cacheLapFace_.reset();             break;
+        case OperatorId::ConnectionGradient:
+            cacheConnectionGradient_.reset();
+            cachedConnectionGradientNSym_ = -1;
+            break;
     }
 }
 
@@ -188,6 +199,13 @@ const Eigen::SparseMatrix<double>& Manifold::gradient3DCached_() {
         cacheGradient3D_ = std::make_unique<Eigen::SparseMatrix<double>>(
             differential::covariantGradient(*this));
     return *cacheGradient3D_;
+}
+
+const Eigen::SparseMatrix<double>& Manifold::extrinsicWeitzenbockCached_() {
+    if (!cacheExtrinsicWeitzenbock_)
+        cacheExtrinsicWeitzenbock_ = std::make_unique<Eigen::SparseMatrix<double>>(
+            differential::assembleExtrinsicWeitzenbock(*this));
+    return *cacheExtrinsicWeitzenbock_;
 }
 
 const Eigen::SparseMatrix<double>& Manifold::diracExtrinsicBlockCached_() {
@@ -476,6 +494,18 @@ OperatorsFacet::LaplacianView::covariant(
 // dec(): returns the lazily-cached DECOperators bundle via Manifold::decOperators().
 const ops::DECOperators& OperatorsFacet::dec() const { return m_.decOperators(); }
 const Eigen::SparseMatrix<double>& OperatorsFacet::gradient3D() const { return m_.gradient3DCached_(); }
+const Eigen::SparseMatrix<double>& OperatorsFacet::extrinsicWeitzenbock() const { return m_.extrinsicWeitzenbockCached_(); }
+
+const Eigen::SparseMatrix<std::complex<double>>&
+OperatorsFacet::connectionGradient(int nSym) const {
+    if (!m_.cacheConnectionGradient_ || m_.cachedConnectionGradientNSym_ != nSym) {
+        m_.cacheConnectionGradient_ = std::make_unique<Eigen::SparseMatrix<std::complex<double>>>(
+            ops::laplacian::connection::assembleConnectionGradient(m_, nSym));
+        m_.cachedConnectionGradientNSym_ = nSym;
+    }
+    return *m_.cacheConnectionGradient_;
+}
+
 Eigen::SparseMatrix<double> OperatorsFacet::dirac(double tau) const { return m_.diracFamily_(tau); }
 Eigen::SparseMatrix<double> OperatorsFacet::diracFace(double tau) const { return m_.diracFaceFamily_(tau); }
 const Eigen::SparseMatrix<double>& OperatorsFacet::diracD() const { return m_.diracMatrixCached_(); }

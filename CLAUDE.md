@@ -321,6 +321,30 @@ enforces catalogue completeness + operator I/O cross-reference integrity + routi
 Exposed as `nxr_compute('fieldInfo', id)` (MEX) and `manifold.fieldInfo(id)` (WASM),
 and `operatorInfo` now surfaces each operator's `input_field`/`output_field`.
 
+**Vector-bundle covariant operators (the two filled cells).** The vector/tangent
+side of the intrinsic/extrinsic/flat grid is now complete, matching the spinor
+bundle's intrinsic/extrinsic Diracs (design:
+`docs/superpowers/specs/2026-06-25-vector-covariant-operators-design.md`).
+**`connectionGradient`** (`operators().connectionGradient(nSym)`; MEX/WASM
+`operators 'connectionGradient' nSym`) is the **first-order Levi-Civita covariant
+gradient `d^∇`** — a complex `[E×V]` operator, the clean √ of the connection
+Laplacian: `(d^∇)ᴴ diag(edgeCotanWeight) d^∇ == connectionLaplacian` (verified
+byte-exact, nSym 1/2). nSym-parameterized; **Levi-Civita gauge only in v1**
+(`assembleConnectionGradient` reads the LC transport from `operatorGeometry()`, so
+it is gauge-independent) — registry variant `leviCivitaConnectionGradient`,
+`squares_to leviCivitaConnectionLaplacian`. Output is the new field variant
+`tangentEdge` (complex tangent 1-form on edges). The trivial-gauge gradient (the
+φ-corrected root of `trivialConnectionLaplacian`) is a deferred follow-up. **`extrinsicWeitzenbock`**
+(`operators().extrinsicWeitzenbock()`; flipped `planned → built`) is the
+**ambient extrinsic Weitzenböck `Δ₃ + W_extrinsic`** — the real `[3V×3V]`
+**vector (imaginary-quaternion) part of the immersion squared Dirac**
+`2·dirac(0.5) = Δ₄ + D_N`, in **world-frame component-major** layout (so its field
+I/O is `ambientVertexWorld`, and its flat part is byte-exactly `kron(I₃,cotanL)`;
+the `2·flat − product` algebraic shortcut is NOT geometric and does not reproduce
+it). It annihilates world-constant fields (the first-order Dirac kills constant
+quaternions); its curvature sensitivity is the nonzero extrinsic matrix term, not
+a constant-field response.
+
 ---
 
 ## C++ API Surface

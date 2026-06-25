@@ -71,6 +71,7 @@ add_library(nxr_compute STATIC
   src/graph_laplacian.cpp
   src/facets.cpp
   src/covariant_differential.cpp
+  src/extrinsic_weitzenbock.cpp
   src/dirac_operator.cpp
   src/face_gradient.cpp
   src/eigenproblem.cpp
@@ -238,4 +239,8 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_face_gradient test/test_face_gradient.cpp)
     target_link_libraries(test_face_gradient PRIVATE nxr_compute)
     add_test(NAME test_face_gradient COMMAND test_face_gradient)
+
+    add_executable(test_vector_covariant_operators test/test_vector_covariant_operators.cpp)
+    target_link_libraries(test_vector_covariant_operators PRIVATE nxr_compute)
+    add_test(NAME test_vector_covariant_operators COMMAND test_vector_covariant_operators)
 endif()

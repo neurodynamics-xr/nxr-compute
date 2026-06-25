@@ -83,7 +83,8 @@ enum class GaugeType { Euclidean, LeviCivita, Trivial };
 enum class OperatorId {
     LaplacianCotan, LaplacianGraph, LaplacianConnection, LaplacianCovariant,
     Dec, MassLumped, MassGalerkin, Gradient3D, Dirac, DiracFace,
-    DiracD, DiracFaceD, DiracIntrinsicD, DiracFaceIntrinsicD, GradFace, LapFace
+    DiracD, DiracFaceD, DiracIntrinsicD, DiracFaceIntrinsicD, GradFace, LapFace,
+    ConnectionGradient, ExtrinsicWeitzenbock
 };
 
 // ── Compute Context ──────────────────────────────────────────
@@ -180,6 +181,7 @@ private:
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheMassLumped_;
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheMassGalerkin_;
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheGradient3D_;
+    std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheExtrinsicWeitzenbock_; // Δ₃+W_ext [3V×3V], world-frame
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDirac_;      // extrinsic block E
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracFace_;  // face extrinsic block Ẽ
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheDiracD_;     // first-order Dirac D [4F×4V]
@@ -189,6 +191,8 @@ private:
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheTwoFormLaplacian_;  // K̃ = d₁⋆₁⁻¹d₁ᵀ (diracFace intrinsic anchor)
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheGradFace_;   // dual-mesh face gradient G̃ [3F×F]
     std::unique_ptr<Eigen::SparseMatrix<double>>                         cacheLapFace_;    // face Laplacian K̃ = G̃ᵀ⋆_F G̃ [F×F]
+    std::unique_ptr<Eigen::SparseMatrix<std::complex<double>>>           cacheConnectionGradient_; // d^∇ [E×V] complex, built in active gauge
+    int                                                                  cachedConnectionGradientNSym_ = -1; // rebuild on nSym change
 
     // Private cache-fill helpers called by OperatorsFacet::LaplacianView.
     // These source DIRECTLY from operatorGeometry()'s GC cache without
@@ -212,6 +216,10 @@ private:
     // Covariant gradient G (3E x 3N) — differential::covariantGradient(*this), cached
     // (mesh-only; depends on the frames, not the gauge or any parameter).
     const Eigen::SparseMatrix<double>& gradient3DCached_();
+
+    // Extrinsic vector Weitzenböck Δ₃ + W_ext (3V×3V), cached (OperatorId::ExtrinsicWeitzenbock).
+    // The imaginary (vector) block of the immersion squared Dirac 2·dirac(0.5).
+    const Eigen::SparseMatrix<double>& extrinsicWeitzenbockCached_();
 
     // Relative-Dirac extrinsic block E (4V×4V), cached (OperatorId::Dirac).
     const Eigen::SparseMatrix<double>& diracExtrinsicBlockCached_();
@@ -660,6 +668,16 @@ ConnectionLaplacian assembleConnectionLaplacian(
     Manifold& m,
     const ConnectionLaplacianOptions& opts = {}
 );
+
+/** First-order connection gradient d^∇ : tangentVertex [V] (complex) → tangentEdge [E]
+ *  (complex). Per edge e=(i→j) via e.halfedge(): row e has +1 at column j and
+ *  −transportVectorsAlongHalfedge[he].pow(nSym) at column i. Built in the active gauge,
+ *  so (d^∇)ᴴ diag(edgeCotanWeight) d^∇ == the connection Laplacian for the same (nSym,
+ *  gauge). Vertex domain (v1).
+ *
+ *  Throws Error(InvalidInput) for nSym <= 0. */
+Eigen::SparseMatrix<std::complex<double>>
+assembleConnectionGradient(Manifold& m, int nSym = 1);
 
 /** String → enum helpers for binding shells (WASM, addon).
  *  Domain accepts "vertex", "face", "edge". Format accepts "real2N"
@@ -1664,6 +1682,24 @@ Eigen::MatrixXd liftToFrame(Manifold& m, const Eigen::MatrixXd& Lworld);
 // oriented edge e: i->j, the covariant difference is delta_e = L_j - P_ij L_i. G has a +I3
 // block at vertex j and a -P_ij block at vertex i. A Cartesian-constant field has G*L = 0.
 Eigen::SparseMatrix<double> covariantGradient(Manifold& m);
+
+// Extrinsic vector Weitzenböck Δ₃ + W_extrinsic on the ambient (ℝ³) bundle, a
+// [3V×3V] real symmetric sparse matrix in WORLD-frame component-major layout
+// (row/col index = c·N + v, c = world x/y/z). It is, by construction, the
+// imaginary (vector) block of the immersion SQUARED Dirac
+//   S = 2·dirac(0.5) = dirac(0) + dirac(1) = Δ₄ + D_N   (the [4V×4V] real
+// vertex-interleaved 4v+c operator), extracting the quaternion components
+// c ∈ {1,2,3} and dropping the scalar (c=0) border. This is the principled,
+// geometrically-meaningful construction: the imaginary quaternion axes (x,y,z)
+// ARE the ambient world axes the Dirac normals (Gauss map) are expressed in, so
+// no per-vertex basis change is needed. Its "flat part" (the component-diagonal
+// piece coming from dirac(0)=cotanL⊗I₄) is exactly kron(I₃, cotanLaplacian); the
+// extra coupling is the extrinsic curvature endomorphism W_ext (the imag block
+// of D_N), which vanishes on a developable/flat region (constant normals) and is
+// nonzero on curved regions. Like the first-order Dirac, S annihilates GLOBALLY-
+// constant world fields (D kills constant quaternions), so W_ext is detected as a
+// nonzero MATRIX difference from the flat anchor, not as a constant-field response.
+Eigen::SparseMatrix<double> assembleExtrinsicWeitzenbock(Manifold& m);
 
 } // namespace nxr::manifold::differential
 

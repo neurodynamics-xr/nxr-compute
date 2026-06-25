@@ -176,7 +176,7 @@ static void test_full_population() {
     const OperatorVariant* gl = operatorById("graphLaplacian");
     CHECK(gl && gl->holonomy == Holonomy::combinatorial, "graph L combinatorial");
     const OperatorVariant* ew = operatorById("extrinsicWeitzenbockLaplacian");
-    CHECK(ew && ew->status == Status::planned, "Weitzenboeck planned");
+    CHECK(ew && ew->status == Status::built, "Weitzenboeck built");
     CHECK(ew && ew->bundle == Bundle::ambient && ew->holonomy == Holonomy::extrinsic_curved, "Weitzenboeck facets");
 }
 

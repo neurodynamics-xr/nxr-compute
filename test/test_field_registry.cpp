@@ -46,6 +46,10 @@ static void test_full_catalogue() {
           "immersionVertex immersion+quaternion");
     const FieldVariant* of = fieldById("oneFormEdge");
     CHECK(of && of->descriptor.domain == Domain::edge && of->descriptor.n_form == NForm::one, "oneFormEdge edge 1-form");
+
+    const FieldVariant* te = fieldById("tangentEdge");
+    CHECK(te && te->descriptor.domain == Domain::edge && te->descriptor.bundle == Bundle::tangent
+          && te->descriptor.field_type == FieldType::complex, "tangentEdge edge/tangent/complex");
 }
 
 static void test_operator_io_integrity() {
@@ -122,12 +126,24 @@ static void test_conversion_graph() {
     CHECK(hasLift, "world->local lift edge present and implemented");
 }
 
+static void test_cellA_registry() {
+    const OperatorVariant* lg = operatorById("leviCivitaConnectionGradient");
+    CHECK(lg && lg->op_id == OperatorId::ConnectionGradient, "leviCivitaConnectionGradient op_id");
+    CHECK(lg && lg->square.present && lg->square.isSquaresTo
+          && lg->square.target == "leviCivitaConnectionLaplacian", "lg squares_to LC connection L");
+    CHECK(lg && lg->input_field == "tangentVertex" && lg->output_field == "tangentEdge", "lg field I/O");
+    // v1 is Levi-Civita gauge only — trivialConnectionGradient is deferred (the
+    // trivial-gauge root needs the phi-correction), so it must NOT be catalogued.
+    CHECK(operatorById("trivialConnectionGradient") == nullptr, "trivialConnectionGradient not catalogued (v1 LC-only)");
+}
+
 int main() {
     test_scalar_skeleton();
     test_full_catalogue();
     test_operator_io_integrity();
     test_routing();
     test_conversion_graph();
+    test_cellA_registry();
     std::cout << (g_failures ? "FIELD REGISTRY TESTS FAILED\n" : "ALL FIELD REGISTRY TESTS PASSED\n");
     return g_failures ? 1 : 0;
 }
