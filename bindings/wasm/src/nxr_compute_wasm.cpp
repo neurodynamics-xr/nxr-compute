@@ -26,6 +26,7 @@
 #include "nxr/compute.h"
 #include "nxr/facets.h"   // OperatorsFacet definition (operators() command)
 #include "nxr/operator_registry.h"
+#include "nxr/field_registry.h"
 
 #include <atomic>
 #include <cstdint>
@@ -1120,6 +1121,38 @@ emscripten::val operatorInfoJS(std::string id) {
     o.set("squares_to",   v->square.present &&  v->square.isSquaresTo ? v->square.target : std::string());
     o.set("square_of",    v->square.present && !v->square.isSquaresTo ? v->square.target : std::string());
     o.set("relation",     v->square.present ? std::string(toString(v->square.relation)) : std::string());
+    o.set("input_field",  v->input_field);
+    o.set("output_field", v->output_field);
+    return o;
+}
+
+// ── Field registry metadata ──────────────────────────────────
+//
+// Mirrors the MEX 'fieldInfo' command (bindings/mex/src/nxr_compute_mex.cpp).
+// Returns a plain JS object with all FieldVariant metadata strings. Field
+// names match the MEX struct fields exactly so downstream consumers work
+// identically against either binding.
+emscripten::val fieldInfoJS(std::string id) {
+    using namespace nxr::manifold::registry;
+    const FieldVariant* v = fieldById(id);
+    if (!v) {
+        try {
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                                   "unknown field id: " + id);
+        } catch (const nxr::core::Error& e) { rethrowAsJsError(e); }
+    }
+    const FieldDescriptor& d = v->descriptor;
+    emscripten::val o = emscripten::val::object();
+    o.set("id",             v->id);
+    o.set("label",          v->label);
+    o.set("domain",         std::string(toString(d.domain)));
+    o.set("bundle",         std::string(toString(d.bundle)));
+    o.set("field_type",     std::string(toString(d.field_type)));
+    o.set("n_form",         std::string(toString(d.n_form)));
+    o.set("representation", std::string(toString(d.representation)));
+    o.set("gauge",          std::string(toString(d.gauge)));
+    o.set("nSym",           d.nSym);
+    o.set("notes",          v->notes);
     return o;
 }
 
@@ -1183,4 +1216,5 @@ EMSCRIPTEN_BINDINGS(nxr_compute_wasm) {
     emscripten::function("solveEigenmodesFromTriplets",
                          &solveEigenmodesFromTriplets);
     emscripten::function("operatorInfo", &operatorInfoJS);
+    emscripten::function("fieldInfo", &fieldInfoJS);
 }
