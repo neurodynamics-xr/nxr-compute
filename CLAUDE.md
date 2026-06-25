@@ -263,6 +263,34 @@ invalidated by `setGauge`; covariant cache keys on coupling. The MEX `operators`
 stays embedded-sourced under `intrinsicDelaunay` (only the *operators* swap to the certified-
 PSD Delaunay metric) — Phase-3 deferral, documented on `IntrinsicFacet`.
 
+**Operator registry (C++).** `include/nxr/operator_registry.h` /
+`src/operator_registry.cpp` are the single source of truth for *operator
+identity + metadata* (design:
+`docs/superpowers/specs/2026-06-25-operator-registry-metadata-design.md`). Each
+operator is one `OperatorVariant` keyed by a stable curated `id` string
+(`laplaceBeltrami`, `leviCivitaConnectionLaplacian`, `trivialConnectionLaplacian`,
+`flatCovariantLaplacian`, `relativeDirac`, `intrinsicDirac`, …) carrying a human
+`label` plus **controlled-vocabulary** facets — `bundle` (scalar / tangent /
+ambient / **immersion**), `holonomy` (flat / combinatorial / intrinsic_curved /
+extrinsic_curved / graded), `order` (zeroth / first / second), `role`,
+`field_type` (real / complex / quaternion), `domain`, `singular`, `gauge`,
+`coupling` — and a `square_of`/`squares_to` cross-link with a
+`relation: exact | principal_part` qualifier. The curated `id` *resolves* to a
+`(OperatorId, gauge, coupling, domain, τ)` address, so the disambiguation rows
+that share one `OperatorId` (Levi-Civita vs trivial connection L; flat/ambient vs
+product covariant L) are first-class entries — the `OperatorId` enum itself is
+unchanged. API: `operatorById(id)`, `operatorsWhere(pred)`,
+`requireBundle(id, Bundle)` (the **LJC-trap guard** — an `immersion` operator
+throws if an `ambient` differentiator is required), and `variantIdsFor(OperatorId)`
+(a no-`default` switch — compiled with `-Werror=switch` for that TU, so a new
+`OperatorId` can't ship without metadata). `test_operator_registry` enforces both
+completeness *and* the numerical `squares_to` identities (honoring the `relation`
+qualifier). `solve::eigenProblemFor` reads each operator's `natural_mass` from the
+registry. Exposed to consumers as `nxr_compute('operatorInfo', id)` (MEX) and
+`manifold.operatorInfo(id)` (WASM) → a struct/object of the metadata strings.
+`extrinsicWeitzenbockLaplacian` (Δ₃+D_N, ambient sibling of the immersion squared
+Dirac) is catalogued as `status: planned` — metadata only, build is a follow-on.
+
 ---
 
 ## C++ API Surface
