@@ -13,9 +13,43 @@ static FieldDescriptor desc(Domain d, Bundle b, FieldType ft, NForm nf,
 
 const std::vector<FieldVariant>& fieldRegistry() {
     static const std::vector<FieldVariant> table = {
+        // scalar / DEC forms
         { "scalarVertex", "Scalar (0-form, vertex)",
           desc(Domain::vertex, Bundle::scalar, FieldType::real, NForm::zero, Representation::na),
           "vertex function / 0-form" },
+        { "oneFormEdge", "1-form (edge)",
+          desc(Domain::edge, Bundle::scalar, FieldType::real, NForm::one, Representation::na),
+          "DEC 1-form" },
+        { "twoFormFace", "2-form (face)",
+          desc(Domain::face, Bundle::scalar, FieldType::real, NForm::two, Representation::na),
+          "per-face scalar / 2-form" },
+        // tangent
+        { "tangentVertex", "Tangent field (vertex)",
+          desc(Domain::vertex, Bundle::tangent, FieldType::complex, NForm::na, Representation::intrinsic_complex, Gauge::levi_civita),
+          "n-RoSy via nSym" },
+        { "tangentFace", "Tangent field (face)",
+          desc(Domain::face, Bundle::tangent, FieldType::complex, NForm::na, Representation::intrinsic_complex, Gauge::levi_civita),
+          "n-RoSy via nSym" },
+        // ambient (R^3)
+        { "ambientVertexWorld", "Ambient vector (vertex, world)",
+          desc(Domain::vertex, Bundle::ambient, FieldType::real, NForm::na, Representation::world),
+          "R^3 global Cartesian (e.g. leadfield)" },
+        { "ambientVertexLocal", "Ambient vector (vertex, local frame)",
+          desc(Domain::vertex, Bundle::ambient, FieldType::real, NForm::na, Representation::local_frame, Gauge::levi_civita),
+          "R^3 in per-vertex frame [a;b;c]" },
+        { "ambientEdge", "Ambient vector (edge, local frame)",
+          desc(Domain::edge, Bundle::ambient, FieldType::real, NForm::na, Representation::local_frame, Gauge::levi_civita),
+          "covariant-difference output (3E)" },
+        { "ambientFaceWorld", "Ambient vector (face, world)",
+          desc(Domain::face, Bundle::ambient, FieldType::real, NForm::na, Representation::world),
+          "R^3 per face (gradient/whitney output)" },
+        // immersion (quaternion)
+        { "immersionVertex", "Immersion spinor (vertex)",
+          desc(Domain::vertex, Bundle::immersion, FieldType::quaternion, NForm::na, Representation::quaternion_interleaved),
+          "4v+c shape-spinor" },
+        { "immersionFace", "Immersion spinor (face)",
+          desc(Domain::face, Bundle::immersion, FieldType::quaternion, NForm::na, Representation::quaternion_interleaved),
+          "4f+c shape-spinor" },
     };
     return table;
 }
