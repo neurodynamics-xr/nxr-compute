@@ -107,6 +107,7 @@ bool Manifold::isOperatorCached(OperatorId id) const {
         case OperatorId::MassLumped:          return (bool)cacheMassLumped_;
         case OperatorId::MassGalerkin:        return (bool)cacheMassGalerkin_;
         case OperatorId::Gradient3D:          return (bool)cacheGradient3D_;
+        case OperatorId::ExtrinsicWeitzenbock: return (bool)cacheExtrinsicWeitzenbock_;
         case OperatorId::Dirac:               return (bool)cacheDirac_;
         case OperatorId::DiracFace:           return (bool)cacheDiracFace_;
         case OperatorId::DiracD:              return (bool)cacheDiracD_;
@@ -130,6 +131,7 @@ void Manifold::releaseOperator(OperatorId id) {
         case OperatorId::MassLumped:          cacheMassLumped_.reset();          break;
         case OperatorId::MassGalerkin:        cacheMassGalerkin_.reset();        break;
         case OperatorId::Gradient3D:          cacheGradient3D_.reset();          break;
+        case OperatorId::ExtrinsicWeitzenbock: cacheExtrinsicWeitzenbock_.reset(); break;
         case OperatorId::Dirac:               cacheDirac_.reset();               break;
         case OperatorId::DiracFace:           cacheDiracFace_.reset();           break;
         case OperatorId::DiracD:              cacheDiracD_.reset();              break;
@@ -194,6 +196,13 @@ const Eigen::SparseMatrix<double>& Manifold::gradient3DCached_() {
         cacheGradient3D_ = std::make_unique<Eigen::SparseMatrix<double>>(
             differential::covariantGradient(*this));
     return *cacheGradient3D_;
+}
+
+const Eigen::SparseMatrix<double>& Manifold::extrinsicWeitzenbockCached_() {
+    if (!cacheExtrinsicWeitzenbock_)
+        cacheExtrinsicWeitzenbock_ = std::make_unique<Eigen::SparseMatrix<double>>(
+            differential::assembleExtrinsicWeitzenbock(*this));
+    return *cacheExtrinsicWeitzenbock_;
 }
 
 const Eigen::SparseMatrix<double>& Manifold::diracExtrinsicBlockCached_() {
@@ -482,6 +491,7 @@ OperatorsFacet::LaplacianView::covariant(
 // dec(): returns the lazily-cached DECOperators bundle via Manifold::decOperators().
 const ops::DECOperators& OperatorsFacet::dec() const { return m_.decOperators(); }
 const Eigen::SparseMatrix<double>& OperatorsFacet::gradient3D() const { return m_.gradient3DCached_(); }
+const Eigen::SparseMatrix<double>& OperatorsFacet::extrinsicWeitzenbock() const { return m_.extrinsicWeitzenbockCached_(); }
 
 const Eigen::SparseMatrix<std::complex<double>>&
 OperatorsFacet::connectionGradient(int nSym) const {

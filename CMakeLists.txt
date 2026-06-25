@@ -71,6 +71,7 @@ add_library(nxr_compute STATIC
   src/graph_laplacian.cpp
   src/facets.cpp
   src/covariant_differential.cpp
+  src/extrinsic_weitzenbock.cpp
   src/dirac_operator.cpp
   src/face_gradient.cpp
   src/eigenproblem.cpp

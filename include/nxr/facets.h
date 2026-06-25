@@ -154,6 +154,12 @@ public:
     // covariant difference of a 3-vector cortical field (differential::covariantGradient).
     const Eigen::SparseMatrix<double>& gradient3D() const;
 
+    // extrinsicWeitzenbock(): the ambient (ℝ³) extrinsic vector Weitzenböck
+    // Δ₃ + W_ext [3V×3V], cached. World-frame component-major (c·N+v). The
+    // imaginary (vector) block of the immersion squared Dirac 2·dirac(0.5);
+    // ambient sibling of dirac(1). See differential::assembleExtrinsicWeitzenbock.
+    const Eigen::SparseMatrix<double>& extrinsicWeitzenbock() const;
+
     // dirac(tau): the relative-Dirac family L(τ) = (1−τ)(cotanL⊗I₄) + τ·E, a
     // [4V×4V] real symmetric sparse matrix, returned BY VALUE (τ-dependent blend).
     // τ=0 ⇒ block cotan-Laplacian; τ=1 ⇒ pure relative Dirac E. τ ∈ [0,1].

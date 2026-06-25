@@ -57,8 +57,8 @@ const std::vector<OperatorVariant>& operatorRegistry() {
               squaresTo("faceLaplacianGreenGauss", Relation::exact), "", false, "", Status::built, OperatorId::GradFace, "" },
             { "extrinsicWeitzenbockLaplacian", "Extrinsic Weitzenbock Laplacian (D3+D_N)", Bundle::ambient, Holonomy::extrinsic_curved,
               Order::second, Role::laplacian, FieldType::real, Domain::vertex, Singular::none, Gauge::na, Coupling::na,
-              {}, "", false, "", Status::planned, OperatorId::Gradient3D,
-              "PLANNED: flatCovariantLaplacian + W_extrinsic; assembly throws NotImplemented until built (follow-on plan). op_id placeholder until its own OperatorId is added." },
+              {}, "", false, "", Status::built, OperatorId::ExtrinsicWeitzenbock,
+              "imag (vector) block of the immersion squared Dirac 2*dirac(0.5)=D4+D_N; world-frame component-major. Flat part == kron(I3,cotanL)." },
 
             // ── immersion (quaternion, 4-comp) ──
             { "intrinsicDirac", "Intrinsic Dirac (1st-order)", Bundle::immersion, Holonomy::intrinsic_curved,
@@ -174,10 +174,8 @@ std::vector<std::string> variantIdsFor(OperatorId op) {
         case OperatorId::Dec:                 return {"d0", "d1", "hodge0", "hodge1", "hodge2", "hodge1inv"};
         case OperatorId::MassLumped:          return {"massLumped"};
         case OperatorId::MassGalerkin:        return {"massGalerkin"};
-        // NOTE: when the follow-on plan adds OperatorId::ExtrinsicWeitzenbock, add its
-        // case here AND repoint the extrinsicWeitzenbockLaplacian table entry's op_id
-        // off the Gradient3D placeholder (not compiler-enforced — see its notes field).
         case OperatorId::Gradient3D:          return {"covariantGradient"};
+        case OperatorId::ExtrinsicWeitzenbock: return {"extrinsicWeitzenbockLaplacian"};
         case OperatorId::Dirac:               return {"relativeDirac"};
         case OperatorId::DiracFace:           return {"relativeFaceDirac", "faceLaplacian2Form"};
         case OperatorId::DiracD:              return {"extrinsicDirac"};
