@@ -79,8 +79,18 @@ add_library(nxr_compute STATIC
   src/field_registry.cpp
 )
 
-set_source_files_properties(src/operator_registry.cpp PROPERTIES
-    COMPILE_OPTIONS "-Wswitch;-Werror=switch")
+# Treat an unhandled enumerator in a no-default switch as an error for the
+# operator-registry TU (so a new OperatorId can't ship without metadata).
+# GCC/Clang: -Werror=switch. MSVC: C4062 is the no-default analogue; promote
+# it to an error with /we4062. The flags are mutually exclusive — cl.exe parses
+# "/Wswitch" as "/W<arg>" and fails with D8021.
+if(MSVC)
+    set_source_files_properties(src/operator_registry.cpp PROPERTIES
+        COMPILE_OPTIONS "/we4062")
+else()
+    set_source_files_properties(src/operator_registry.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wswitch;-Werror=switch")
+endif()
 
 target_include_directories(nxr_compute PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
