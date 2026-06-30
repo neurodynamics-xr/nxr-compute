@@ -1181,6 +1181,22 @@ Napi::Value ComputeStripePatternFreq(const Napi::CallbackInfo& info) {
     });
 }
 
+// ─── frames(handle) → { e1, e2, normals } (per-face tangent frames) ───
+// Mirrors ContextWrapper::frames. Each field is a row-major [nF×3] Float64Array.
+Napi::Value Frames(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);
+    if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        FaceFrames f = frames(*holder->manifold);
+        auto obj = Napi::Object::New(env);
+        obj.Set("e1",      matrixToFloat64Array(env, f.e1));
+        obj.Set("e2",      matrixToFloat64Array(env, f.e2));
+        obj.Set("normals", matrixToFloat64Array(env, f.normals));
+        return obj;
+    });
+}
+
 // ─── Module Init ─────────────────────────────────────────────
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -1215,6 +1231,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     // Stripe patterns
     exports.Set("compute",     Napi::Function::New(env, ComputeStripePattern));
     exports.Set("computeFreq", Napi::Function::New(env, ComputeStripePatternFreq));
+    exports.Set("frames", Napi::Function::New(env, Frames));
     return exports;
 }
 

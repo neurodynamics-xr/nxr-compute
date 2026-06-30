@@ -220,9 +220,9 @@ function makeManifoldContext(rawCtx) {
     density(region, field)  { return stubWarn('measure.density') },
     curvature()             { return addon.curvatures(rawCtx) },
     normal(type = 0)        { return addon.normals(rawCtx, type) },
-    /** frames is exposed in the WASM binding but not in
-     *  the addon yet — see surface-delta note above. */
-    frame:                  notWired('measure.frame'),
+    /** Per-face tangent frames { e1, e2, normals }, each [nF×3] row-major
+     *  Float64Array. Parity with WASM `manifold.frames()`. */
+    frame() { return addon.frames(rawCtx) },
   }
 
   // ── uv ────────────────────────────────────────────────────────
