@@ -275,6 +275,13 @@ function makeManifoldContext(rawCtx) {
      *  a numeric tau/nSym, or omitted. */
     operators(family, arg) { return addon.operators(rawCtx, family, arg) },
 
+    /** Named-operator eigensolve (async — runs in a libuv worker, parity with
+     *  WASM `manifold.eigs` but Promise-returning like addon `solve.eigen`).
+     *  opts: { operator, subtype?, tau?, mass?, k, sigma?, normalize?,
+     *  multiplets?, dense? } → { eigenvectors, eigenvalues, k, nConverged,
+     *  blockSize }. */
+    async eigs(opts) { return addon.eigs(rawCtx, opts) },
+
     // Six-group nested namespace
     solve,
     operator: operator_,

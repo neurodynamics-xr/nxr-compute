@@ -591,6 +591,132 @@ private:
     std::string errorHint_;
 };
 
+// AsyncWorker for the named-operator eigensolve. opts are parsed into an
+// EigenOperatorSpec on the JS thread (in Eigs); this worker only runs the
+// off-thread solve and marshals the result. Result shape matches WASM's
+// eigs ({eigenvectors, eigenvalues, k, nConverged} + blockSize).
+class EigsWorker : public Napi::AsyncWorker {
+public:
+    EigsWorker(Napi::Env env, ContextHolder* holder, solve_ns::EigenOperatorSpec spec,
+               int k, double sigma, bool normalize, bool multiplets, bool dense,
+               int blockSize, Napi::Value ctxVal)
+        : Napi::AsyncWorker(env), deferred(Napi::Promise::Deferred::New(env)),
+          holder_(holder), spec_(spec), k_(k), sigma_(sigma),
+          normalize_(normalize), multiplets_(multiplets), dense_(dense),
+          blockSize_(blockSize) {
+        ctxRef_ = Napi::Persistent(ctxVal);   // pin handle for worker lifetime
+    }
+
+    void Execute() override {
+        try {
+            result_ = solve_ns::eigenOperator(*holder_->manifold, spec_, k_, sigma_,
+                                              normalize_, multiplets_, dense_);
+        } catch (const nxr::core::Error& e) {
+            errorCode_ = std::string(nxr::core::errorCodeName(e.code()));
+            errorHint_ = std::string(e.hint());
+            SetError(e.what());
+        } catch (const std::exception& e) {
+            errorCode_ = "INTERNAL_ERROR";
+            SetError(e.what());
+        }
+    }
+
+    void OnOK() override {
+        Napi::Env env = Env();
+        auto obj = Napi::Object::New(env);
+        obj.Set("eigenvectors", matrixToFloat64Array(env, result_.eigenvectors));
+        obj.Set("eigenvalues",  toFloat64Array(env, result_.eigenvalues));
+        obj.Set("k",            Napi::Number::New(env, result_.k));
+        obj.Set("nConverged",   Napi::Number::New(env, result_.nConverged));
+        obj.Set("blockSize",    Napi::Number::New(env, blockSize_));
+        deferred.Resolve(obj);
+    }
+
+    void OnError(const Napi::Error& e) override {
+        Napi::Env env = Env();
+        Napi::Error err = Napi::Error::New(env, e.Message());
+        if (!errorCode_.empty()) err.Set("code", Napi::String::New(env, errorCode_));
+        if (!errorHint_.empty()) err.Set("hint", Napi::String::New(env, errorHint_));
+        deferred.Reject(err.Value());
+    }
+
+    Napi::Promise GetPromise() { return deferred.Promise(); }
+
+private:
+    Napi::Promise::Deferred deferred;
+    Napi::Reference<Napi::Value> ctxRef_;
+    ContextHolder* holder_;
+    solve_ns::EigenOperatorSpec spec_;
+    int k_; double sigma_; bool normalize_, multiplets_, dense_;
+    int blockSize_;
+    EigenResult result_;
+    std::string errorCode_, errorHint_;
+};
+
+// ─── eigs(handle, opts) → Promise<{eigenvectors,eigenvalues,k,nConverged,blockSize}> ───
+// Async (matches addon solve()/hodge()). Mirrors ContextWrapper::eigs opts
+// parsing; the operator AND its natural generalized mass are assembled C++-side.
+Napi::Value Eigs(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);
+    if (!holder) return env.Null();
+    // Reject (not throw) on validation error so the caller's await/.catch is uniform.
+    auto fail = [&](const std::string& codeName, const std::string& msg, const std::string& hint) -> Napi::Value {
+        auto d = Napi::Promise::Deferred::New(env);
+        Napi::Error err = Napi::Error::New(env, "[" + codeName + "] " + msg);
+        err.Set("code", Napi::String::New(env, codeName));
+        if (!hint.empty()) err.Set("hint", Napi::String::New(env, hint));
+        d.Reject(err.Value());
+        return d.Promise();
+    };
+    try {
+        if (info.Length() < 2 || !info[1].IsObject())
+            return fail("INVALID_INPUT", "eigs(handle, opts): opts must be an object.", "");
+        Napi::Object opts = info[1].As<Napi::Object>();
+        if (!opts.Has("operator"))
+            return fail("INVALID_INPUT", "eigs: expected { operator, k, ... }.", "");
+
+        solve_ns::EigenOperatorSpec spec;
+        int blockSize = 1;
+        const std::string op = opts.Get("operator").As<Napi::String>().Utf8Value();
+        if (op == "laplacian") {
+            const std::string sub = opts.Has("subtype") ? opts.Get("subtype").As<Napi::String>().Utf8Value() : "";
+            if      (sub == "cotan") spec.op = solve_ns::EigenOperator::LaplacianCotan;
+            else if (sub == "graph") spec.op = solve_ns::EigenOperator::LaplacianGraph;
+            else return fail("INVALID_INPUT", "eigs laplacian: subtype must be cotan|graph.", "");
+        } else if (op == "cotan") {
+            spec.op = solve_ns::EigenOperator::LaplacianCotan;
+        } else if (op == "graph") {
+            spec.op = solve_ns::EigenOperator::LaplacianGraph;
+        } else if (op == "dirac") {
+            spec.op = solve_ns::EigenOperator::Dirac; blockSize = 4;
+        } else if (op == "diracFace") {
+            spec.op = solve_ns::EigenOperator::DiracFace; blockSize = 4;
+        } else {
+            return fail("INVALID_INPUT", "eigs: operator must be laplacian|cotan|graph|dirac|diracFace.", "");
+        }
+
+        if (opts.Has("tau"))  spec.tau  = opts.Get("tau").As<Napi::Number>().DoubleValue();
+        if (opts.Has("mass")) spec.mass = parseMassMatrixVariant(opts.Get("mass").As<Napi::String>().Utf8Value());
+        if (!opts.Has("k")) return fail("INVALID_INPUT", "eigs: k is required.", "");
+
+        const int    k          = opts.Get("k").As<Napi::Number>().Int32Value();
+        const double sigma      = opts.Has("sigma")      ? opts.Get("sigma").As<Napi::Number>().DoubleValue()     : -1e-8;
+        const bool   normalize  = opts.Has("normalize")  ? opts.Get("normalize").As<Napi::Boolean>().Value()      : true;
+        const bool   multiplets = opts.Has("multiplets") ? opts.Get("multiplets").As<Napi::Boolean>().Value()     : false;
+        const bool   dense      = opts.Has("dense")      ? opts.Get("dense").As<Napi::Boolean>().Value()          : false;
+
+        auto* worker = new EigsWorker(env, holder, spec, k, sigma, normalize,
+                                      multiplets, dense, blockSize, info[0]);
+        worker->Queue();
+        return worker->GetPromise();
+    } catch (const nxr::core::Error& e) {
+        return fail(std::string(nxr::core::errorCodeName(e.code())), e.what(), std::string(e.hint()));
+    } catch (const std::exception& e) {
+        return fail("INTERNAL_ERROR", e.what(), "");
+    }
+}
+
 Napi::Value SolveEigenmodes(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
@@ -1306,6 +1432,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     // Registry metadata lookups (handle-free)
     exports.Set("operatorInfo", Napi::Function::New(env, OperatorInfo));
     exports.Set("fieldInfo",    Napi::Function::New(env, FieldInfo));
+    exports.Set("eigs", Napi::Function::New(env, Eigs));
     return exports;
 }
 
