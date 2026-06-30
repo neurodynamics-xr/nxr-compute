@@ -96,7 +96,7 @@ coordinate system for MEG leadfield analysis (design:
 | `nxr_compute('geometry', h)` | light per-element geometry; frames are the complex `grid` (`c = e1+i·e2`, normal = `real×imag`); curvature is the 2-RoSy deviatoric `q` + `meanCurvature` |
 | `nxr_compute('gauge', h, type[, opts])` | gauge as a transform of the Levi-Civita grid: `euclidean`/`levi-civita`/`trivial`. Returns `vertex.rotation` [V×1] AND `face.rotation` [F×1] (identity except `trivial`, which also carries singularities). Rotations are COMBING multipliers: `rotation .* grid` is the combed (trivially-parallel) frame and `real(rotation .* grid)` is the trivial parallel field on that domain — i.e. the *conjugate* of the accumulated transport coefficient (anchored byte-exact to `directionField`'s `vertexVectors`/`directionVectors`) |
 | `nxr_compute('bundle', h, gaugeType[, opts])` | `{Topology, Geometry, Gauge}` in one call |
-| `nxr_compute('operators', h, family[, subtype])` | a single named operator as native sparse — `laplacian` (`cotan`/`graph`/`connection`/`covariant`), `mass` (`lumped`/`galerkin`), `hodge` (`h0`/`h1`/`h2`/`h1inv`), `dec` (struct `{d0,d1}`), `gradient3D` (the covariant gradient `G`, `[3E×3N]`, cached), `dirac` (the relative-Dirac family `L(τ) = (1−τ)·cotan⊗I₄ + τ·D_N`, real `[4V×4V]`, `τ∈[0,1]`; the 4th arg is a numeric `τ`, not a string subtype), `diracFace` (the FACE-domain dual relative-Dirac family `L̃(τ) = (1−τ)·K̃⊗I₄ + τ·Ẽ`, real `[4F×4F]`, `τ∈[0,1]` numeric; exact face normals, face-supported eigenbasis), `diracD` (the *first-order* rectangular Dirac `D`, real `[4F×4V]`, cached, τ-free — `DᵀW_F D == dirac(1)`), `diracFaceD` (the first-order face-domain dual Dirac `D̃`, real `[4V×4F]`, cached — `D̃ᵀW_V D̃ == diracFace(1)`; throws on open boundary, like `diracFace`); `connection` is complex. Same matrix the internal solvers use (single source of truth). **WASM parity:** the WASM/Embind `Manifold` exposes the identical surface as `manifold.operators(family, arg)` (`bindings/wasm/src/nxr_compute_wasm.cpp`) — `arg` is the subtype string, a numeric `τ`, or omitted; outputs are COO (`{row,col,data,rows,cols,nnz}`; complex COO with `realData`/`imagData` for `connection`; `{d0,d1}` for `dec`). The N-API addon does **not** expose this surface. |
+| `nxr_compute('operators', h, family[, subtype])` | a single named operator as native sparse — `laplacian` (`cotan`/`graph`/`connection`/`covariant`), `mass` (`lumped`/`galerkin`), `hodge` (`h0`/`h1`/`h2`/`h1inv`), `dec` (struct `{d0,d1}`), `gradient3D` (the covariant gradient `G`, `[3E×3N]`, cached), `dirac` (the relative-Dirac family `L(τ) = (1−τ)·cotan⊗I₄ + τ·D_N`, real `[4V×4V]`, `τ∈[0,1]`; the 4th arg is a numeric `τ`, not a string subtype), `diracFace` (the FACE-domain dual relative-Dirac family `L̃(τ) = (1−τ)·K̃⊗I₄ + τ·Ẽ`, real `[4F×4F]`, `τ∈[0,1]` numeric; exact face normals, face-supported eigenbasis), `diracD` (the *first-order* rectangular Dirac `D`, real `[4F×4V]`, cached, τ-free — `DᵀW_F D == dirac(1)`), `diracFaceD` (the first-order face-domain dual Dirac `D̃`, real `[4V×4F]`, cached — `D̃ᵀW_V D̃ == diracFace(1)`; throws on open boundary, like `diracFace`); `connection` is complex. Same matrix the internal solvers use (single source of truth). **WASM parity:** the WASM/Embind `Manifold` exposes the identical surface as `manifold.operators(family, arg)` (`bindings/wasm/src/nxr_compute_wasm.cpp`) — `arg` is the subtype string, a numeric `τ`, or omitted; outputs are COO (`{row,col,data,rows,cols,nnz}`; complex COO with `realData`/`imagData` for `connection`; `{d0,d1}` for `dec`). The N-API addon now exposes the same surface (`bindings/node/index.mjs` → `nxr.operators` / `manifoldContext.operators`), with one intentional difference: the addon's named-operator eigensolve `eigs` is **async** (returns a Promise, matching the addon's own `solve()`), whereas WASM's `eigs` is synchronous. |
 | `nxr_compute('frameTransport', h, i, j)` | `3×3` orthogonal `Fⱼᵀ Fᵢ` — flat full-frame transport between any two vertex frames (1-based `i,j`) |
 | `nxr_compute('liftToWorld', h, Lloc)` / `('liftToFrame', h, Lworld)` | `[nV×3]` local↔Cartesian frame lift (inverse of `G·cᵀ`) |
 
@@ -289,8 +289,9 @@ qualifier). The registry is the *documented* source of truth for each operator's
 `natural_mass` (the metric its eigenproblem is posed against); `solve::eigenProblemFor`
 honors the caller's `spec.mass` lumped/galerkin override within that family and
 asserts the registry agrees (drift-guard), so the two can't silently diverge.
-Exposed to consumers as `nxr_compute('operatorInfo', id)` (MEX) and
-`manifold.operatorInfo(id)` (WASM) → a struct/object of the metadata strings.
+Exposed to consumers as `nxr_compute('operatorInfo', id)` (MEX),
+`manifold.operatorInfo(id)` (WASM), and `nxr.operatorInfo(id)` (N-API addon)
+→ a struct/object of the metadata strings.
 `extrinsicWeitzenbockLaplacian` (Δ₃+D_N, ambient sibling of the immersion squared
 Dirac) is catalogued as `status: planned` — metadata only, build is a follow-on.
 
@@ -318,7 +319,8 @@ declared `conversionGraph()` names the existing impl for each representation
 transition (lift world↔local, `G·cᵀ`, whitney, scalar gradient, complex↔real2N) —
 call-through is deferred. API: `fieldById`/`fieldsWhere`; `test_field_registry`
 enforces catalogue completeness + operator I/O cross-reference integrity + routing.
-Exposed as `nxr_compute('fieldInfo', id)` (MEX) and `manifold.fieldInfo(id)` (WASM),
+Exposed as `nxr_compute('fieldInfo', id)` (MEX), `manifold.fieldInfo(id)` (WASM),
+and `nxr.fieldInfo(id)` (N-API addon),
 and `operatorInfo` now surfaces each operator's `input_field`/`output_field`.
 
 **Vector-bundle covariant operators (the two filled cells).** The vector/tangent
