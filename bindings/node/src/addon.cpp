@@ -12,6 +12,7 @@
 
 #include <napi.h>
 #include "nxr/compute.h"
+#include "nxr/facets.h"   // OperatorsFacet definition (operators() command)
 
 #include <cstring>
 #include <memory>
@@ -150,6 +151,7 @@ static Napi::Object sparseToCOO(Napi::Env env, const Eigen::SparseMatrix<double>
     result.Set("data", dataArr);
     result.Set("rows", Napi::Number::New(env, M.rows()));
     result.Set("cols", Napi::Number::New(env, M.cols()));
+    result.Set("nnz", Napi::Number::New(env, nnz));
     return result;
 }
 
@@ -190,6 +192,7 @@ static Napi::Object sparseComplexToCOO(Napi::Env env,
     result.Set("imagData",  imagArr);
     result.Set("rows",      Napi::Number::New(env, M.rows()));
     result.Set("cols",      Napi::Number::New(env, M.cols()));
+    result.Set("nnz",       Napi::Number::New(env, nnz));
     return result;
 }
 
@@ -385,6 +388,86 @@ Napi::Value AssembleConnectionLaplacian(const Napi::CallbackInfo& info) {
         result.Set("regularization", Napi::Number::New(env, cl.regularization));
         result.Set("format",         Napi::String::New(env, formatStr));
         return result;
+    });
+}
+
+// ─── operators(handle, family, arg) → COO / complex-COO / {d0,d1} ───
+// Mirrors ContextWrapper::operators (bindings/wasm/src/nxr_compute_wasm.cpp).
+// Same family/subtype dispatch, same arg rules (string subtype | numeric
+// tau/nSym | undefined), same error messages — single source of truth is the
+// Manifold operators facet, so outputs are byte-identical to the WASM binding.
+Napi::Value Operators(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);            // info[0] = External handle
+    if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        if (info.Length() < 2 || !info[1].IsString())
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                "operators(handle, family, arg): family must be a string.");
+        const std::string family = info[1].As<Napi::String>().Utf8Value();
+        const Napi::Value arg = info.Length() > 2 ? info[2] : env.Undefined();
+        const bool        hasNum = arg.IsNumber();
+        const double      num    = hasNum ? arg.As<Napi::Number>().DoubleValue() : 0.0;
+        const std::string sub    = arg.IsString() ? arg.As<Napi::String>().Utf8Value() : "";
+        Manifold& m = *holder->manifold;
+
+        if (family == "laplacian") {
+            if (sub == "cotan")      return sparseToCOO(env, m.operators().laplacian().cotan());
+            if (sub == "graph")      return sparseToCOO(env, m.operators().laplacian().graph());
+            if (sub == "connection") return sparseComplexToCOO(env, m.operators().laplacian().connection());
+            if (sub == "covariant")  return sparseToCOO(env, m.operators().laplacian().covariant(CovariantCoupling::Ambient));
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                "operators laplacian: subtype must be cotan|graph|connection|covariant.");
+        } else if (family == "mass") {
+            if (sub == "lumped")   return sparseToCOO(env, m.operators().mass().lumped());
+            if (sub == "galerkin") return sparseToCOO(env, m.operators().mass().galerkin());
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                "operators mass: subtype must be lumped|galerkin.");
+        } else if (family == "hodge") {
+            if (sub == "h0")    return sparseToCOO(env, m.operators().hodge().h0());
+            if (sub == "h1")    return sparseToCOO(env, m.operators().hodge().h1());
+            if (sub == "h2")    return sparseToCOO(env, m.operators().hodge().h2());
+            if (sub == "h1inv") return sparseToCOO(env, m.operators().hodge().h1inv());
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                "operators hodge: subtype must be h0|h1|h2|h1inv.");
+        } else if (family == "dec") {
+            const auto& dec = m.operators().dec();
+            auto obj = Napi::Object::New(env);
+            obj.Set("d0", sparseToCOO(env, dec.d0));
+            obj.Set("d1", sparseToCOO(env, dec.d1));
+            return obj;
+        } else if (family == "gradient3D") {
+            return sparseToCOO(env, m.operators().gradient3D());
+        } else if (family == "dirac") {
+            if (!hasNum) throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                "operators dirac: expected a numeric tau, operators('dirac', tau).");
+            return sparseToCOO(env, m.operators().dirac(num));
+        } else if (family == "diracFace") {
+            if (!hasNum) throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                "operators diracFace: expected a numeric tau, operators('diracFace', tau).");
+            return sparseToCOO(env, m.operators().diracFace(num));
+        } else if (family == "diracD") {
+            return sparseToCOO(env, m.operators().diracD());
+        } else if (family == "diracFaceD") {
+            return sparseToCOO(env, m.operators().diracFaceD());
+        } else if (family == "diracIntrinsicD") {
+            return sparseToCOO(env, m.operators().diracIntrinsicD());
+        } else if (family == "diracFaceIntrinsicD") {
+            return sparseToCOO(env, m.operators().diracFaceIntrinsicD());
+        } else if (family == "gradFace") {
+            return sparseToCOO(env, m.operators().gradFace());
+        } else if (family == "lapFace") {
+            return sparseToCOO(env, m.operators().lapFace());
+        } else if (family == "connectionGradient") {
+            int nSym = hasNum ? static_cast<int>(num) : 1;
+            return sparseComplexToCOO(env, m.operators().connectionGradient(nSym));
+        } else if (family == "extrinsicWeitzenbock") {
+            return sparseToCOO(env, m.operators().extrinsicWeitzenbock());
+        }
+        throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+            "operators: family must be "
+            "laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|diracFaceD|"
+            "diracIntrinsicD|diracFaceIntrinsicD|gradFace|lapFace|connectionGradient|extrinsicWeitzenbock.");
     });
 }
 
@@ -1105,6 +1188,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("assembleManifoldOperators", Napi::Function::New(env, AssembleMeshOperators));
     exports.Set("assembleDECOperators", Napi::Function::New(env, AssembleDECOperators));
     exports.Set("assembleConnectionLaplacian", Napi::Function::New(env, AssembleConnectionLaplacian));
+    exports.Set("operators", Napi::Function::New(env, Operators));
     exports.Set("solve", Napi::Function::New(env, SolveEigenmodes));
     exports.Set("poisson", Napi::Function::New(env, SolvePoisson));
     exports.Set("heat", Napi::Function::New(env, ComputeGeodesicDistance));

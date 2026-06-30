@@ -268,6 +268,13 @@ function makeManifoldContext(rawCtx) {
     nE: () => mesh().nE,
     nF: () => mesh().nF,
 
+    /** Named native-sparse operator (parity with WASM `manifold.operators`).
+     *  family ∈ laplacian|mass|hodge|dec|gradient3D|dirac|diracFace|diracD|
+     *  diracFaceD|diracIntrinsicD|diracFaceIntrinsicD|gradFace|lapFace|
+     *  connectionGradient|extrinsicWeitzenbock. `arg` is a subtype string,
+     *  a numeric tau/nSym, or omitted. */
+    operators(family, arg) { return addon.operators(rawCtx, family, arg) },
+
     // Six-group nested namespace
     solve,
     operator: operator_,
