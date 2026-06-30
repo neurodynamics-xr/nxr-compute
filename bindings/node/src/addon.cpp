@@ -13,6 +13,8 @@
 #include <napi.h>
 #include "nxr/compute.h"
 #include "nxr/facets.h"   // OperatorsFacet definition (operators() command)
+#include "nxr/operator_registry.h"
+#include "nxr/field_registry.h"
 
 #include <cstring>
 #include <memory>
@@ -1197,6 +1199,75 @@ Napi::Value Frames(const Napi::CallbackInfo& info) {
     });
 }
 
+// ─── operatorInfo(id) → operator-registry metadata (handle-free) ───
+// Mirrors operatorInfoJS (wasm). Field names match the MEX/WASM struct exactly.
+Napi::Value OperatorInfo(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        if (info.Length() < 1 || !info[0].IsString())
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                "operatorInfo(id): id must be a string.");
+        const std::string id = info[0].As<Napi::String>().Utf8Value();
+        using namespace nxr::manifold::registry;
+        const OperatorVariant* v = operatorById(id);
+        if (!v) throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+            "unknown operator id: " + id);
+        auto o = Napi::Object::New(env);
+        auto S = [&](const char* k, const std::string& val) { o.Set(k, Napi::String::New(env, val)); };
+        S("id",           v->id);
+        S("label",        v->label);
+        S("bundle",       toString(v->bundle));
+        S("holonomy",     toString(v->holonomy));
+        S("order",        toString(v->order));
+        S("role",         toString(v->role));
+        S("field_type",   toString(v->field_type));
+        S("domain",       toString(v->domain));
+        S("singular",     toString(v->singular));
+        S("gauge",        toString(v->gauge));
+        S("coupling",     toString(v->coupling));
+        S("natural_mass", v->natural_mass);
+        o.Set("graded",   Napi::Boolean::New(env, v->graded));
+        S("tau_presets",  v->tau_presets);
+        S("status",       toString(v->status));
+        S("notes",        v->notes);
+        S("squares_to",   v->square.present &&  v->square.isSquaresTo ? v->square.target : std::string());
+        S("square_of",    v->square.present && !v->square.isSquaresTo ? v->square.target : std::string());
+        S("relation",     v->square.present ? std::string(toString(v->square.relation)) : std::string());
+        S("input_field",  v->input_field);
+        S("output_field", v->output_field);
+        return o;
+    });
+}
+
+// ─── fieldInfo(id) → field-registry metadata (handle-free) ───
+Napi::Value FieldInfo(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        if (info.Length() < 1 || !info[0].IsString())
+            throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+                "fieldInfo(id): id must be a string.");
+        const std::string id = info[0].As<Napi::String>().Utf8Value();
+        using namespace nxr::manifold::registry;
+        const FieldVariant* v = fieldById(id);
+        if (!v) throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
+            "unknown field id: " + id);
+        const FieldDescriptor& d = v->descriptor;
+        auto o = Napi::Object::New(env);
+        auto S = [&](const char* k, const std::string& val) { o.Set(k, Napi::String::New(env, val)); };
+        S("id",             v->id);
+        S("label",          v->label);
+        S("domain",         toString(d.domain));
+        S("bundle",         toString(d.bundle));
+        S("field_type",     toString(d.field_type));
+        S("n_form",         toString(d.n_form));
+        S("representation", toString(d.representation));
+        S("gauge",          toString(d.gauge));
+        o.Set("nSym",       Napi::Number::New(env, d.nSym));
+        S("notes",          v->notes);
+        return o;
+    });
+}
+
 // ─── Module Init ─────────────────────────────────────────────
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -1232,6 +1303,9 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("compute",     Napi::Function::New(env, ComputeStripePattern));
     exports.Set("computeFreq", Napi::Function::New(env, ComputeStripePatternFreq));
     exports.Set("frames", Napi::Function::New(env, Frames));
+    // Registry metadata lookups (handle-free)
+    exports.Set("operatorInfo", Napi::Function::New(env, OperatorInfo));
+    exports.Set("fieldInfo",    Napi::Function::New(env, FieldInfo));
     return exports;
 }
 
