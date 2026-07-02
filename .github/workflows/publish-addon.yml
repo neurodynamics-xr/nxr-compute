@@ -52,10 +52,11 @@ jobs:
             arch: arm64
             label: macOS Apple Silicon (arm64)
             artifact: addon-electron41-macos-arm64
-          - os: macos-13
-            arch: x64
-            label: macOS Intel (x64)
-            artifact: addon-electron41-macos-x64
+          # macOS Intel (macos-13) intentionally omitted: cortical-flow
+          # targets Apple Silicon only, and GitHub's macos-13 runner pool
+          # is chronically starved (a validation run sat queued >30 min
+          # without ever allocating). Re-add an `os: macos-13 / arch: x64`
+          # leg here if an Intel build ever becomes a shipped target.
           - os: windows-2022
             arch: x64
             label: Windows (x64)
@@ -194,8 +195,8 @@ jobs:
           echo "packaged $COUNT platform zip(s)"
           if [ "$COUNT" -lt 1 ]; then
             echo "ERROR: no addon artifacts to package"; exit 1
-          elif [ "$COUNT" -ne 4 ]; then
-            echo "::warning::expected 4 platform zips (macOS arm64/x64, Win x64, Linux x64), got $COUNT (partial release)"
+          elif [ "$COUNT" -ne 3 ]; then
+            echo "::warning::expected 3 platform zips (macOS arm64, Win x64, Linux x64), got $COUNT (partial release)"
           fi
 
       - name: Upload zips as workflow artifacts
@@ -221,7 +222,6 @@ jobs:
             download the one matching your Electron app's target:
 
             - `nxr-compute-node-electron41-macos-arm64-*.zip` — macOS Apple Silicon
-            - `nxr-compute-node-electron41-macos-x64-*.zip` — macOS Intel
             - `nxr-compute-node-electron41-win-x64-*.zip` — Windows x64
             - `nxr-compute-node-electron41-linux-x64-*.zip` — Linux x64
 
