@@ -121,7 +121,13 @@ function expectNotWired(label, fn) {
     else { failures++; console.error(`  ✗ ${label} — wrong code: ${e.code}, msg=${e.message}`) }
   }
 }
-expectNotWired('measure.frame',         () => mctx.measure.frame())
+// measure.frame() was un-stubbed (per-face tangent frames) — assert it
+// now WORKS rather than throws. Full shape/orthonormality coverage lives
+// in scripts/_smoke-addon-frames.mjs; here we just confirm it's wired.
+const frame = mctx.measure.frame()
+check(frame.e1.length === 20 * 3 && frame.e2.length === 20 * 3 && frame.normals.length === 20 * 3,
+      'measure.frame() → { e1, e2, normals } each [20×3]')
+
 expectNotWired('uv.bff',                () => mctx.uv.bff())
 expectNotWired('operator.star0',        () => mctx.operator.star0())
 expectNotWired('operator.star2',        () => mctx.operator.star2())
