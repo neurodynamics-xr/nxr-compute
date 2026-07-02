@@ -76,11 +76,13 @@ jobs:
           node-version: 20
 
       - name: Install dependencies (cmake-js, node-addon-api, electron)
-        # `npm ci` provides cmake-js + node-addon-api (the addon's
+        # `npm install` (not `npm ci`) because package-lock.json is
+        # deliberately gitignored — there is no committed lockfile in the
+        # checkout. Provides cmake-js + node-addon-api (the addon's
         # CMakeLists includes node_modules/node-addon-api). Electron is
         # installed so ELECTRON_RUN_AS_NODE can load the shipping ABI.
         run: |
-          npm ci
+          npm install
           npm install --no-save electron@${{ env.ELECTRON_VERSION }}
 
       - name: Install Electron runtime libraries (Linux only)
