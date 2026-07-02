@@ -1,0 +1,239 @@
+name: Publish Node addon (Electron)
+
+# Separate from publish-mex.yml and publish-wasm.yml on purpose.
+#
+# Unlike WASM (one platform-independent binary) the N-API addon is a
+# native `.node` locked to a specific (platform × arch × runtime-ABI).
+# So this is structurally the MEX problem — a build matrix + a packaging
+# job — except the matrix axis is the *runtime ABI*, not the MATLAB
+# release.
+#
+# The consumer is cortical-flow's Electron renderer
+# (bindings/node/CMakeLists.txt), which pins `electron: ^41.1.1`. A
+# `.node` built against plain Node's ABI will not load inside Electron,
+# so every leg builds against the Electron 41 runtime and is smoke-tested
+# under Electron's own Node (ELECTRON_RUN_AS_NODE — no display, exercises
+# the actual shipping binary).
+#
+# Ships under its own `node-v*` tag so its release cadence is decoupled
+# from the MEX `v*` and WASM `wasm-v*` releases. When Electron bumps its
+# major, bump ELECTRON_VERSION below and cut a new `node-v*`.
+#
+# NOTE: the WASM byte-parity test (bindings/node/test/test_parity_wasm.mjs)
+# is deliberately NOT part of this publication gate — it is an in-repo
+# cross-binding check that needs a WASM build present. The official addon
+# build is addon-only; its gate is the self-contained addon smoke scripts.
+
+on:
+  push:
+    tags:
+      - 'node-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The Electron version whose ABI the shipped .node targets. cortical-flow
+  # pins ^41.1.1; the ABI (NODE_MODULE_VERSION) is stable across the 41.x
+  # line, so a binary built here loads under any Electron 41 consumer.
+  ELECTRON_VERSION: 41.1.1
+
+jobs:
+  build:
+    name: Build addon (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30          # bound a hung leg so it fails fast
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+            label: macOS Apple Silicon (arm64)
+            artifact: addon-electron41-macos-arm64
+          - os: macos-13
+            arch: x64
+            label: macOS Intel (x64)
+            artifact: addon-electron41-macos-x64
+          - os: windows-2022
+            arch: x64
+            label: Windows (x64)
+            artifact: addon-electron41-win-x64
+          - os: ubuntu-22.04
+            arch: x64
+            label: Linux (x64)
+            artifact: addon-electron41-linux-x64
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Node (build tooling — cmake-js, node-addon-api)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies (cmake-js, node-addon-api, electron)
+        # `npm ci` provides cmake-js + node-addon-api (the addon's
+        # CMakeLists includes node_modules/node-addon-api). Electron is
+        # installed so ELECTRON_RUN_AS_NODE can load the shipping ABI.
+        run: |
+          npm ci
+          npm install --no-save electron@${{ env.ELECTRON_VERSION }}
+
+      - name: Install Electron runtime libraries (Linux only)
+        # The electron binary is dynamically linked against these even in
+        # ELECTRON_RUN_AS_NODE mode (the loader resolves them at process
+        # start regardless of whether a window opens).
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+            libgtk-3-0 libgbm1 libasound2 libxshmfence1 libdrm2
+
+      - name: Build addon against Electron ${{ env.ELECTRON_VERSION }}
+        # Same cmake tree as scripts/build.sh (builds nxr_compute + the
+        # addon), but targets the Electron runtime instead of host Node.
+        run: >
+          npx cmake-js build --directory . --out build --config Release
+          --runtime electron --runtime-version ${{ env.ELECTRON_VERSION }}
+          --arch ${{ matrix.arch }}
+
+      - name: Locate + stage the built .node
+        # cmake-js drops it under build/Release/ (or build/bin/Release on
+        # some generators). Copy to the repo root, where index.mjs and the
+        # smoke scripts expect nxr_compute_addon.node.
+        shell: bash
+        run: |
+          ADDON=$(find build -name 'nxr_compute_addon.node' | head -1)
+          if [ -z "$ADDON" ]; then
+            echo "ERROR: nxr_compute_addon.node not found under build/"; exit 1
+          fi
+          cp "$ADDON" nxr_compute_addon.node
+          ls -la nxr_compute_addon.node
+          file nxr_compute_addon.node || true
+
+      - name: Smoke test under Electron (ELECTRON_RUN_AS_NODE)
+        # Runs the shipping Electron-ABI binary through Electron's own Node
+        # — no Chromium window, no display needed. Plain `node` here would
+        # ERR_DLOPEN_FAILED on the ABI mismatch. Each script is
+        # self-contained (imports only the addon; no WASM).
+        shell: bash
+        env:
+          ELECTRON_RUN_AS_NODE: '1'
+        run: |
+          for s in registry operators eigs frames manifold errors; do
+            echo "── smoke: _smoke-addon-$s.mjs ──"
+            npx electron "scripts/_smoke-addon-$s.mjs"
+          done
+
+      - name: Upload addon artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: nxr_compute_addon.node
+          if-no-files-found: error
+
+  package:
+    name: Package release zips
+    needs: build
+    if: ${{ !cancelled() }}      # package whatever built, even if a leg failed/timed out
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout (for index.mjs + README)
+        uses: actions/checkout@v4
+
+      - name: Download all addon artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: addon-electron41-*
+          path: artifacts/
+
+      - name: Assemble per-platform zips
+        id: zips
+        run: |
+          REF_NAME="${GITHUB_REF_NAME:-manual}"
+          COUNT=0
+          for dir in artifacts/addon-electron41-*; do
+            [ -d "$dir" ] || continue
+            PLATFORM="${dir#artifacts/addon-electron41-}"        # e.g. macos-arm64
+            STAGE="nxr-compute-node-electron41-${PLATFORM}"
+            mkdir -p "$STAGE"
+            cp "$dir/nxr_compute_addon.node" "$STAGE/"
+            # The ESM shim the addon expects to sit beside (optional for
+            # consumers that require the .node directly via a TS service).
+            cp bindings/node/index.mjs "$STAGE/"
+            cat > "$STAGE/README.md" <<EOF
+          # nxr-compute Node addon — Electron 41 (${PLATFORM})
+
+          Native N-API binary built against the Electron 41 ABI. Loads in
+          an Electron 41.x renderer/main process; it will NOT load in plain
+          Node (wrong NODE_MODULE_VERSION).
+
+          ## Use
+
+          Point the loader at the binary:
+
+              process.env.NXR_COMPUTE_ADDON_PATH = '/abs/path/to/nxr_compute_addon.node'
+
+          then `import { initNxrCompute } from './index.mjs'`. Or `require`
+          the `.node` directly from your Electron service.
+          EOF
+            ZIP="${STAGE}-${REF_NAME}.zip"
+            zip -r "$ZIP" "$STAGE"
+            echo "  built $ZIP"
+            COUNT=$((COUNT+1))
+          done
+          echo "packaged $COUNT platform zip(s)"
+          if [ "$COUNT" -lt 1 ]; then
+            echo "ERROR: no addon artifacts to package"; exit 1
+          elif [ "$COUNT" -ne 4 ]; then
+            echo "::warning::expected 4 platform zips (macOS arm64/x64, Win x64, Linux x64), got $COUNT (partial release)"
+          fi
+
+      - name: Upload zips as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nxr-compute-node-zips
+          path: nxr-compute-node-electron41-*.zip
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/node-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: nxr-compute-node-electron41-*.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          body: |
+            ## Node N-API addon (Electron 41) — ${{ github.ref_name }}
+
+            Native addon built against the **Electron 41** ABI
+            (`electron@${{ env.ELECTRON_VERSION }}`). One zip per platform —
+            download the one matching your Electron app's target:
+
+            - `nxr-compute-node-electron41-macos-arm64-*.zip` — macOS Apple Silicon
+            - `nxr-compute-node-electron41-macos-x64-*.zip` — macOS Intel
+            - `nxr-compute-node-electron41-win-x64-*.zip` — Windows x64
+            - `nxr-compute-node-electron41-linux-x64-*.zip` — Linux x64
+
+            ### Use
+
+            The binary loads in an Electron 41.x process only (it will not
+            load in plain Node — different ABI). Point the loader at it:
+
+            ```js
+            process.env.NXR_COMPUTE_ADDON_PATH = '/abs/path/to/nxr_compute_addon.node'
+            import { initNxrCompute } from './index.mjs'
+            const nxr = await initNxrCompute()
+            ```
+
+            or `require` the `.node` directly from your Electron service.
+
+            ---
