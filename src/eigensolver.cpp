@@ -6,6 +6,8 @@
 #include <Spectra/MatOp/SymShiftInvert.h>
 #include <Spectra/MatOp/SparseCholesky.h>
 
+#include <Eigen/IterativeLinearSolvers>   // ConjugateGradient (matrix-free shift-invert)
+
 #include <iostream>
 #include <algorithm>
 #include <numeric>
@@ -296,12 +298,114 @@ EigenResult eigenCholeskySmallest(const Eigen::SparseMatrix<double>& A,
     return r;
 }
 
+// ── Matrix-free shift-invert operator: y = (A - σB)⁻¹ x via ConjugateGradient ──
+//
+// The direct SymShiftInvert factorizes (A - σB) with SimplicialLLT — intractable
+// fill-in on a dense pencil (the smoothed connectome has ~800 nnz/row). This op
+// instead forms S = A - σB (a plain sparse sum, no fill-in) and applies its
+// inverse per Lanczos step with CG: S is SPD for σ below the (PSD) spectrum, so
+// CG needs only SpMV. Interface matches SymShiftInvert (set_shift + perform_op),
+// so it drops into SymGEigsShiftSolver / CancelProgressOp unchanged.
+class ShiftInvertCG {
+public:
+    using Scalar = double;
+
+    ShiftInvertCG(const Eigen::SparseMatrix<double>& A,
+                  const Eigen::SparseMatrix<double>& B)
+        : A_(A), B_(B), n_(A.rows()) {}
+
+    Eigen::Index rows() const { return n_; }
+    Eigen::Index cols() const { return n_; }
+
+    void set_shift(const Scalar& sigma) {
+        S_ = A_ - sigma * B_;      // SPD for σ below the spectrum; same sparsity as A∪B
+        cg_.compute(S_);           // builds the incomplete-Cholesky preconditioner — NO full factorization
+        cg_.setTolerance(1e-10);
+        cg_.setMaxIterations(std::max<Eigen::Index>(2000, 4 * n_));
+    }
+
+    void perform_op(const Scalar* x_in, Scalar* y_out) const {
+        Eigen::Map<const Eigen::VectorXd> x(x_in, n_);
+        Eigen::Map<Eigen::VectorXd>       y(y_out, n_);
+        y = cg_.solve(x);
+    }
+
+private:
+    const Eigen::SparseMatrix<double>& A_;
+    const Eigen::SparseMatrix<double>& B_;
+    Eigen::Index                       n_;
+    Eigen::SparseMatrix<double>        S_;
+    // IncompleteCholesky (IC0, no fill) captures the elliptic stiffness structure so CG
+    // converges in tens of iterations rather than thousands — essential on the dense,
+    // ill-conditioned connectome pencil. Far cheaper than a full Cholesky (no fill-in).
+    Eigen::ConjugateGradient<Eigen::SparseMatrix<double>, Eigen::Lower | Eigen::Upper,
+                             Eigen::IncompleteCholesky<double>> cg_;
+};
+
+// Iterative (matrix-free) counterpart of eigen(): same generalized shift-invert
+// eigensolve for the k smallest modes, but the inner (A - σB)⁻¹ is applied by CG
+// (ShiftInvertCG) rather than a direct factorization. Mirrors eigen()'s extraction.
+EigenResult eigenCG(
+    const Eigen::SparseMatrix<double>& A,
+    const Eigen::SparseMatrix<double>& B,
+    int k, double sigma, bool normalize,
+    const CancellationToken& cancel, const ProgressObserver& progress
+) {
+    const int n = static_cast<int>(A.rows());
+    if (k < 1)     throw Error(ErrorCode::EigensolveInvalidK, "eigenCG: k must be >= 1");
+    if (k > n - 1) throw Error(ErrorCode::EigensolveInvalidK, "eigenCG: k must be < N");
+
+    const int ncv = std::min(std::max(2 * k + 1, 20), n);
+    constexpr int kMaxIter = 1000;
+    const int totalEstimate = kMaxIter * ncv;
+
+    if (cancel.requested())
+        throw Error(ErrorCode::Cancelled, "Eigensolve cancelled before iterative solve");
+
+    ShiftInvertCG innerOp(A, B);
+    CancelProgressOp<ShiftInvertCG> opShift(innerOp, cancel, progress, totalEstimate);
+    Spectra::SparseSymMatProd<double> opB(B);
+
+    Spectra::SymGEigsShiftSolver<
+        CancelProgressOp<ShiftInvertCG>,
+        Spectra::SparseSymMatProd<double>,
+        Spectra::GEigsMode::ShiftInvert
+    > solver(opShift, opB, k, ncv, sigma);
+
+    solver.init();
+    int nconv = solver.compute(Spectra::SortRule::LargestMagn, kMaxIter, 1e-10);
+
+    if (solver.info() != Spectra::CompInfo::Successful &&
+        solver.info() != Spectra::CompInfo::NotConverging)
+        throw Error(ErrorCode::EigensolveNotConverged,
+            "eigenCG: iterative shift-invert did not converge");
+
+    Eigen::VectorXd evals = solver.eigenvalues();
+    Eigen::MatrixXd evecs = solver.eigenvectors();
+    std::vector<int> idx(evals.size());
+    std::iota(idx.begin(), idx.end(), 0);
+    std::sort(idx.begin(), idx.end(), [&](int a, int b){ return evals(a) < evals(b); });
+
+    EigenResult r;
+    r.eigenvalues.resize(evals.size());
+    r.eigenvectors.resize(evecs.rows(), evecs.cols());
+    for (int i = 0; i < static_cast<int>(evals.size()); i++) {
+        r.eigenvalues(i) = evals(idx[i]);
+        r.eigenvectors.col(i) = evecs.col(idx[i]);
+    }
+    r.k = static_cast<int>(evals.size());
+    r.nConverged = nconv;
+    if (normalize)
+        r.eigenvectors = ::nxr::manifold::solve::normalize(r.eigenvectors, B);
+    return r;
+}
+
 } // namespace
 
 EigenResult eigenSmallest(
     const Eigen::SparseMatrix<double>& A_in,
     const Eigen::SparseMatrix<double>& B_in,
-    int k, bool normalize,
+    int k, bool normalize, bool iterative,
     const CancellationToken& cancel, const ProgressObserver& progress
 ) {
     // Symmetrize (no-op to ~1e-16 for symmetric operators; forces the Lanczos path).
@@ -313,12 +417,16 @@ EigenResult eigenSmallest(
         const double sigmas[2] = { -1e-7 * lmax, -1e-4 * lmax };
         for (double sigma : sigmas) {
             try {
-                return eigen(A, B, k, sigma, normalize, /*removeDC=*/false, cancel, progress);
+                return iterative
+                    ? eigenCG(A, B, k, sigma, normalize, cancel, progress)
+                    : eigen(A, B, k, sigma, normalize, /*removeDC=*/false, cancel, progress);
             } catch (const Error& e) {
                 if (e.code() != ErrorCode::EigensolveNotConverged) throw;  // k-range etc: don't retry
             }
         }
     }
+    // Last resort factors only the SPD mass B (never the dense A), so it is safe
+    // for both the direct and iterative callers.
     return eigenCholeskySmallest(A, B, k, normalize);
 }
 

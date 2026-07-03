@@ -807,6 +807,11 @@ EigenResult eigen(
  * SmallestMagn. Returns M-orthonormal (if normalize), ascending. Reuses eigen()
  * per shift rung; the last resort factors only the SPD B (never the singular A).
  *
+ * When `iterative` is true, the shift-invert inner solve applies (A - σB)⁻¹
+ * matrix-free via ConjugateGradient (SPD, SpMV-only) instead of a direct
+ * SimplicialLLT factorization — required for dense pencils (e.g. the smoothed
+ * connectome) whose Cholesky fill-in is intractable without SuiteSparse.
+ *
  * Throws Error(EigensolveInvalidK) on k < 1 or k > N-1.
  * Throws Error(EigensolveNotConverged) only if every rung fails.
  */
@@ -815,6 +820,7 @@ EigenResult eigenSmallest(
     const Eigen::SparseMatrix<double>& B,
     int k,
     bool normalize                     = true,
+    bool iterative                     = false,
     const CancellationToken& cancel    = {},
     const ProgressObserver& progress   = {}
 );

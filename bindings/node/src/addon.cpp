@@ -686,17 +686,19 @@ private:
 class PencilEigsWorker : public Napi::AsyncWorker {
 public:
     PencilEigsWorker(Napi::Env env, Eigen::SparseMatrix<double> A, Eigen::SparseMatrix<double> B,
-                     int k, bool hasSigma, double sigma, bool normalize)
+                     int k, bool hasSigma, double sigma, bool normalize, bool iterative)
         : Napi::AsyncWorker(env), deferred(Napi::Promise::Deferred::New(env)),
           A_(std::move(A)), B_(std::move(B)), k_(k), hasSigma_(hasSigma),
-          sigma_(sigma), normalize_(normalize) {}
+          sigma_(sigma), normalize_(normalize), iterative_(iterative) {}
 
     void Execute() override {
         try {
-            if (hasSigma_)
+            // A fixed sigma is a direct single-shift escape hatch; the iterative
+            // flag always runs the laddered matrix-free path (eigenSmallest).
+            if (hasSigma_ && !iterative_)
                 result_ = solve_ns::eigen(A_, B_, k_, sigma_, normalize_, /*removeDC=*/false);
             else
-                result_ = solve_ns::eigenSmallest(A_, B_, k_, normalize_);
+                result_ = solve_ns::eigenSmallest(A_, B_, k_, normalize_, iterative_);
         } catch (const nxr::core::Error& e) {
             errorCode_ = std::string(nxr::core::errorCodeName(e.code()));
             errorHint_ = std::string(e.hint());
@@ -714,6 +716,7 @@ public:
         obj.Set("eigenvalues", toFloat64Array(env, result_.eigenvalues));
         obj.Set("k", Napi::Number::New(env, result_.k));
         obj.Set("nConverged", Napi::Number::New(env, result_.nConverged));
+        obj.Set("mode", Napi::String::New(env, iterative_ ? "iterative" : "direct"));
         deferred.Resolve(obj);
     }
 
@@ -734,6 +737,7 @@ private:
     bool hasSigma_;
     double sigma_;
     bool normalize_;
+    bool iterative_;
     EigenResult result_;
     std::string errorCode_, errorHint_;
 };
@@ -767,8 +771,14 @@ Napi::Value EigsPencil(const Napi::CallbackInfo& info) {
         const bool hasSigma  = opts.Has("sigma");
         const double sigma   = hasSigma ? opts.Get("sigma").As<Napi::Number>().DoubleValue() : 0.0;
         const bool normalize = opts.Has("normalize") ? opts.Get("normalize").As<Napi::Boolean>().Value() : true;
+        // Dense pencils (e.g. the smoothed connectome, ~800 nnz/row) explode a direct
+        // Cholesky factorization; route them to the matrix-free CG shift-invert. Caller
+        // may override with an explicit `iterative` flag; else auto-select by density.
+        const bool iterative = opts.Has("iterative")
+            ? opts.Get("iterative").As<Napi::Boolean>().Value()
+            : (A.rows() > 0 && A.nonZeros() / A.rows() > 64);
 
-        auto* worker = new PencilEigsWorker(env, std::move(A), std::move(B), k, hasSigma, sigma, normalize);
+        auto* worker = new PencilEigsWorker(env, std::move(A), std::move(B), k, hasSigma, sigma, normalize, iterative);
         worker->Queue();
         return worker->GetPromise();
     } catch (const Napi::Error& e) {
