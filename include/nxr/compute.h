@@ -800,6 +800,26 @@ EigenResult eigen(
 );
 
 /**
+ * The k smallest generalized eigenpairs of a pre-assembled symmetric pencil
+ * (A, B) with B SPD, ported from Brainstorm's bst_eigs_smallest: estimate the
+ * spectrum scale lmax (largest-magnitude, Cholesky mode on B), then a relative
+ * shift ladder — σ=-1e-7·lmax → σ=-1e-4·lmax → last-resort Cholesky-mode
+ * SmallestMagn. Returns M-orthonormal (if normalize), ascending. Reuses eigen()
+ * per shift rung; the last resort factors only the SPD B (never the singular A).
+ *
+ * Throws Error(EigensolveInvalidK) on k < 1 or k > N-1.
+ * Throws Error(EigensolveNotConverged) only if every rung fails.
+ */
+EigenResult eigenSmallest(
+    const Eigen::SparseMatrix<double>& A,
+    const Eigen::SparseMatrix<double>& B,
+    int k,
+    bool normalize                     = true,
+    const CancellationToken& cancel    = {},
+    const ProgressObserver& progress   = {}
+);
+
+/**
  * M-orthonormalize an eigenvector basis: U' * M * U = I.
  * Cholesky-whitening fast path with eigen-decomposition fallback.
  * Typically called via `eigen(..., normalize=true)`; this standalone

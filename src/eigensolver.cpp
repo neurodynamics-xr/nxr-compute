@@ -1,6 +1,7 @@
 #include "nxr/compute.h"
 
 #include <Spectra/SymGEigsShiftSolver.h>
+#include <Spectra/SymGEigsSolver.h>
 #include <Spectra/MatOp/SparseSymMatProd.h>
 #include <Spectra/MatOp/SymShiftInvert.h>
 #include <Spectra/MatOp/SparseCholesky.h>
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <numeric>
 #include <chrono>
+#include <cmath>
 
 namespace nxr::manifold::solve {
 
@@ -229,6 +231,95 @@ EigenResult eigen(
     }
 
     return result;
+}
+
+namespace {
+
+// Coarse largest-magnitude estimate via Cholesky mode (factors only SPD B).
+// Returns 0 on any failure so the caller falls through to the smallest path.
+double estimateLmax(const Eigen::SparseMatrix<double>& A,
+                    const Eigen::SparseMatrix<double>& B) {
+    try {
+        int n = static_cast<int>(A.rows());
+        int ncv = std::min(std::max(2 * 1 + 1, 20), n);
+        Spectra::SparseSymMatProd<double> opA(A);
+        Spectra::SparseCholesky<double>   opB(B);
+        Spectra::SymGEigsSolver<
+            Spectra::SparseSymMatProd<double>,
+            Spectra::SparseCholesky<double>,
+            Spectra::GEigsMode::Cholesky> est(opA, opB, 1, ncv);
+        est.init();
+        est.compute(Spectra::SortRule::LargestMagn, 300, 1e-2);
+        if (est.info() == Spectra::CompInfo::Successful)
+            return std::abs(est.eigenvalues()(0));
+    } catch (...) { /* fall through */ }
+    return 0.0;
+}
+
+// Last-resort smallest-magnitude solve via Cholesky mode (no A factorization).
+// Mirrors eigen()'s sort-ascending + optional M-normalize extraction.
+EigenResult eigenCholeskySmallest(const Eigen::SparseMatrix<double>& A,
+                                  const Eigen::SparseMatrix<double>& B,
+                                  int k, bool normalize) {
+    int n = static_cast<int>(A.rows());
+    int ncv = std::min(std::max(2 * k + 1, 20), n);
+    Spectra::SparseSymMatProd<double> opA(A);
+    Spectra::SparseCholesky<double>   opB(B);
+    Spectra::SymGEigsSolver<
+        Spectra::SparseSymMatProd<double>,
+        Spectra::SparseCholesky<double>,
+        Spectra::GEigsMode::Cholesky> solver(opA, opB, k, ncv);
+    solver.init();
+    int nconv = solver.compute(Spectra::SortRule::SmallestMagn, 1000, 1e-10);
+    if (solver.info() != Spectra::CompInfo::Successful &&
+        solver.info() != Spectra::CompInfo::NotConverging)
+        throw Error(ErrorCode::EigensolveNotConverged,
+            "eigenSmallest: Cholesky-mode last resort failed");
+
+    Eigen::VectorXd evals = solver.eigenvalues();
+    Eigen::MatrixXd evecs = solver.eigenvectors();
+    std::vector<int> idx(evals.size());
+    std::iota(idx.begin(), idx.end(), 0);
+    std::sort(idx.begin(), idx.end(), [&](int a, int b){ return evals(a) < evals(b); });
+
+    EigenResult r;
+    r.eigenvalues.resize(evals.size());
+    r.eigenvectors.resize(evecs.rows(), evecs.cols());
+    for (int i = 0; i < static_cast<int>(evals.size()); i++) {
+        r.eigenvalues(i) = evals(idx[i]);
+        r.eigenvectors.col(i) = evecs.col(idx[i]);
+    }
+    r.k = static_cast<int>(evals.size());
+    r.nConverged = nconv;
+    if (normalize)
+        r.eigenvectors = ::nxr::manifold::solve::normalize(r.eigenvectors, B);
+    return r;
+}
+
+} // namespace
+
+EigenResult eigenSmallest(
+    const Eigen::SparseMatrix<double>& A_in,
+    const Eigen::SparseMatrix<double>& B_in,
+    int k, bool normalize,
+    const CancellationToken& cancel, const ProgressObserver& progress
+) {
+    // Symmetrize (no-op to ~1e-16 for symmetric operators; forces the Lanczos path).
+    Eigen::SparseMatrix<double> A = (A_in + Eigen::SparseMatrix<double>(A_in.transpose())) * 0.5;
+    Eigen::SparseMatrix<double> B = (B_in + Eigen::SparseMatrix<double>(B_in.transpose())) * 0.5;
+
+    const double lmax = estimateLmax(A, B);
+    if (std::isfinite(lmax) && lmax > 0.0) {
+        const double sigmas[2] = { -1e-7 * lmax, -1e-4 * lmax };
+        for (double sigma : sigmas) {
+            try {
+                return eigen(A, B, k, sigma, normalize, /*removeDC=*/false, cancel, progress);
+            } catch (const Error& e) {
+                if (e.code() != ErrorCode::EigensolveNotConverged) throw;  // k-range etc: don't retry
+            }
+        }
+    }
+    return eigenCholeskySmallest(A, B, k, normalize);
 }
 
 } // namespace nxr::manifold::solve

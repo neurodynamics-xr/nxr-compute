@@ -157,6 +157,33 @@ static Napi::Object sparseToCOO(Napi::Env env, const Eigen::SparseMatrix<double>
     return result;
 }
 
+// JS COO object {row:Int32Array, col:Int32Array, data:Float64Array, rows, cols}
+// → Eigen sparse via setFromTriplets. Inverse of sparseToCOO. Throws (JS) on
+// length mismatch or out-of-bounds indices.
+static Eigen::SparseMatrix<double> cooToSparse(Napi::Env env, Napi::Object coo, const char* name) {
+    if (!coo.Has("row") || !coo.Has("col") || !coo.Has("data") || !coo.Has("rows") || !coo.Has("cols"))
+        throw Napi::Error::New(env, std::string(name) + ": expected {row,col,data,rows,cols}");
+    const int rows = coo.Get("rows").As<Napi::Number>().Int32Value();
+    const int cols = coo.Get("cols").As<Napi::Number>().Int32Value();
+    auto row = coo.Get("row").As<Napi::Int32Array>();
+    auto col = coo.Get("col").As<Napi::Int32Array>();
+    auto data = coo.Get("data").As<Napi::Float64Array>();
+    const size_t nnz = data.ElementLength();
+    if (row.ElementLength() != nnz || col.ElementLength() != nnz)
+        throw Napi::Error::New(env, std::string(name) + ": row/col/data length mismatch");
+    std::vector<Eigen::Triplet<double>> T;
+    T.reserve(nnz);
+    for (size_t i = 0; i < nnz; i++) {
+        const int r = row[i], c = col[i];
+        if (r < 0 || r >= rows || c < 0 || c >= cols)
+            throw Napi::Error::New(env, std::string(name) + ": index out of bounds");
+        T.emplace_back(r, c, data[i]);
+    }
+    Eigen::SparseMatrix<double> M(rows, cols);
+    M.setFromTriplets(T.begin(), T.end());
+    return M;
+}
+
 // Convert a complex sparse matrix to COO with parallel real/imag value arrays.
 // Layout matches `sparseToCOO` for compatibility with the JS-side flatten
 // convention (CLAUDE.md §11), but exposes complex values as two parallel
@@ -652,6 +679,104 @@ private:
     EigenResult result_;
     std::string errorCode_, errorHint_;
 };
+
+// AsyncWorker for the pre-assembled pencil eigensolve. A,B are ingested on the
+// JS thread (in EigsPencil); this worker runs the laddered eigenSmallest (or a
+// single-shift eigen when sigma is supplied). Ctx-free — no ContextHolder.
+class PencilEigsWorker : public Napi::AsyncWorker {
+public:
+    PencilEigsWorker(Napi::Env env, Eigen::SparseMatrix<double> A, Eigen::SparseMatrix<double> B,
+                     int k, bool hasSigma, double sigma, bool normalize)
+        : Napi::AsyncWorker(env), deferred(Napi::Promise::Deferred::New(env)),
+          A_(std::move(A)), B_(std::move(B)), k_(k), hasSigma_(hasSigma),
+          sigma_(sigma), normalize_(normalize) {}
+
+    void Execute() override {
+        try {
+            if (hasSigma_)
+                result_ = solve_ns::eigen(A_, B_, k_, sigma_, normalize_, /*removeDC=*/false);
+            else
+                result_ = solve_ns::eigenSmallest(A_, B_, k_, normalize_);
+        } catch (const nxr::core::Error& e) {
+            errorCode_ = std::string(nxr::core::errorCodeName(e.code()));
+            errorHint_ = std::string(e.hint());
+            SetError(e.what());
+        } catch (const std::exception& e) {
+            errorCode_ = "INTERNAL_ERROR";
+            SetError(e.what());
+        }
+    }
+
+    void OnOK() override {
+        Napi::Env env = Env();
+        auto obj = Napi::Object::New(env);
+        obj.Set("eigenvectors", matrixToFloat64Array(env, result_.eigenvectors)); // [n·k] row-major
+        obj.Set("eigenvalues", toFloat64Array(env, result_.eigenvalues));
+        obj.Set("k", Napi::Number::New(env, result_.k));
+        obj.Set("nConverged", Napi::Number::New(env, result_.nConverged));
+        deferred.Resolve(obj);
+    }
+
+    void OnError(const Napi::Error& e) override {
+        Napi::Env env = Env();
+        Napi::Error err = Napi::Error::New(env, e.Message());
+        if (!errorCode_.empty()) err.Set("code", Napi::String::New(env, errorCode_));
+        if (!errorHint_.empty()) err.Set("hint", Napi::String::New(env, errorHint_));
+        deferred.Reject(err.Value());
+    }
+
+    Napi::Promise GetPromise() { return deferred.Promise(); }
+
+private:
+    Napi::Promise::Deferred deferred;
+    Eigen::SparseMatrix<double> A_, B_;
+    int k_;
+    bool hasSigma_;
+    double sigma_;
+    bool normalize_;
+    EigenResult result_;
+    std::string errorCode_, errorHint_;
+};
+
+// ─── eigsPencil(A, B, opts) → Promise<{eigenvectors,eigenvalues,k,nConverged}> ───
+// Ctx-free: solves a caller-provided symmetric pencil (A,B) for the k smallest
+// eigenpairs. opts = { k, sigma?, normalize? }. sigma present → single fixed
+// shift (bypass ladder); absent → laddered eigenSmallest.
+Napi::Value EigsPencil(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto fail = [&](const std::string& code, const std::string& msg) -> Napi::Value {
+        auto d = Napi::Promise::Deferred::New(env);
+        Napi::Error err = Napi::Error::New(env, "[" + code + "] " + msg);
+        err.Set("code", Napi::String::New(env, code));
+        d.Reject(err.Value());
+        return d.Promise();
+    };
+    try {
+        if (info.Length() < 3 || !info[0].IsObject() || !info[1].IsObject() || !info[2].IsObject())
+            return fail("INVALID_INPUT", "eigsPencil(A, B, opts): A, B, opts must be objects.");
+        Eigen::SparseMatrix<double> A = cooToSparse(env, info[0].As<Napi::Object>(), "eigsPencil A");
+        Eigen::SparseMatrix<double> B = cooToSparse(env, info[1].As<Napi::Object>(), "eigsPencil B");
+        Napi::Object opts = info[2].As<Napi::Object>();
+        if (A.rows() != A.cols() || B.rows() != B.cols() || A.rows() != B.rows())
+            return fail("INVALID_INPUT", "eigsPencil: A and B must be square and the same size.");
+        if (!opts.Has("k")) return fail("INVALID_INPUT", "eigsPencil: k is required.");
+        const int n = static_cast<int>(A.rows());
+        const int k = opts.Get("k").As<Napi::Number>().Int32Value();
+        if (k < 1 || k > n - 1)
+            return fail("INVALID_INPUT", "eigsPencil: k must be in [1, N-1].");
+        const bool hasSigma  = opts.Has("sigma");
+        const double sigma   = hasSigma ? opts.Get("sigma").As<Napi::Number>().DoubleValue() : 0.0;
+        const bool normalize = opts.Has("normalize") ? opts.Get("normalize").As<Napi::Boolean>().Value() : true;
+
+        auto* worker = new PencilEigsWorker(env, std::move(A), std::move(B), k, hasSigma, sigma, normalize);
+        worker->Queue();
+        return worker->GetPromise();
+    } catch (const Napi::Error& e) {
+        return fail("INVALID_INPUT", e.Message());
+    } catch (const std::exception& e) {
+        return fail("INTERNAL_ERROR", e.what());
+    }
+}
 
 // ─── eigs(handle, opts) → Promise<{eigenvectors,eigenvalues,k,nConverged,blockSize}> ───
 // Async (matches addon solve()/hodge()). Mirrors ContextWrapper::eigs opts
@@ -1433,6 +1558,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("operatorInfo", Napi::Function::New(env, OperatorInfo));
     exports.Set("fieldInfo",    Napi::Function::New(env, FieldInfo));
     exports.Set("eigs", Napi::Function::New(env, Eigs));
+    exports.Set("eigsPencil", Napi::Function::New(env, EigsPencil));
     return exports;
 }
 
