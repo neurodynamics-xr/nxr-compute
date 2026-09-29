@@ -30,6 +30,7 @@
 // storage) so MATLAB users get U(:,k) for mode k contiguously.
 // See native/CLAUDE.md §11 for the binding contract.
 
+#include <limits>
 #include <Eigen/Core>
 #include <Eigen/Sparse>
 #include <memory>
@@ -788,11 +789,22 @@ struct EigenResult {
  * Throws Error(EigensolveNotConverged) on Spectra failure with
  *                                          no partial result.
  */
+/**
+ * THE DEFAULT SHIFT: none — solve by the scale-aware SHIFT LADDER (`eigenSmallest`: σ = −1e-7·λmax, then −1e-4·λmax).
+ *
+ * The old default, a FIXED σ = −1e-8, sits on the operator's null space (the Laplacian's constant, the relative Dirac's four
+ * constant quaternions) whatever the spectrum's scale: K − σM is nearly singular and the shift-invert Lanczos returns the low
+ * spectrum wrong. Measured 2026-09-29 on a real cortex hemisphere (10 242 vertices): the cotan Laplacian's λ₃ came back 337.4
+ * for 317.2, low modes mixed, every mode's residual 0.4–1.6; the relative Dirac's first vector per quartet at 2e-4 — while
+ * the ladder gives residuals ~1e-11 on the same pencils. An EXPLICIT σ is still honoured as a fixed shift.
+ */
+inline constexpr double kShiftLadder = std::numeric_limits<double>::quiet_NaN();
+
 EigenResult eigen(
     const Eigen::SparseMatrix<double>& K,
     const Eigen::SparseMatrix<double>& M,
     int k,
-    double sigma                       = -1e-8,
+    double sigma                       = kShiftLadder,
     bool normalize                     = false,
     bool removeDC                      = false,
     const CancellationToken& cancel    = {},
@@ -891,7 +903,7 @@ EigenResult eigenOperator(
     Manifold& m,
     const EigenOperatorSpec& spec,
     int k,
-    double sigma                       = -1e-8,
+    double sigma                       = kShiftLadder,
     bool normalize                     = true,
     bool reconstructMultiplets         = false,
     bool dense                         = false,

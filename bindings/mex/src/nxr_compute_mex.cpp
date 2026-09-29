@@ -328,7 +328,7 @@ void cmdSolveEigenmodes(int /*nlhs*/, mxArray** plhs,
         ContextHolder& h = getHolder(prhs[1]);
         auto& ops = ensureOps(h);
         int k = getIntArg(prhs[2]);
-        double sigma = (nrhs >= 4) ? getDoubleArg(prhs[3]) : -1e-8;
+        double sigma = (nrhs >= 4) ? getDoubleArg(prhs[3]) : nxr::manifold::solve::kShiftLadder;
         auto result = nxr::manifold::solve::eigen(
             ops.cotanLaplacian, ops.mass, k, sigma,
             /*normalize=*/false, /*removeDC=*/false, makeCtrlCToken());
@@ -343,7 +343,7 @@ void cmdSolveEigenmodes(int /*nlhs*/, mxArray** plhs,
     auto K = mxToEigenSparse(prhs[1]);
     auto M = mxToEigenSparse(prhs[2]);
     int k = getIntArg(prhs[3]);
-    double sigma = (nrhs >= 5) ? getDoubleArg(prhs[4]) : -1e-8;
+    double sigma = (nrhs >= 5) ? getDoubleArg(prhs[4]) : nxr::manifold::solve::kShiftLadder;
 
     // Ctrl-C polling lives entirely in the token; nxr-compute doesn't know about MATLAB.
     auto result = nxr::manifold::solve::eigen(K, M, k, sigma,
@@ -425,7 +425,7 @@ void cmdPrecompute(int /*nlhs*/, mxArray** plhs,
         ContextHolder& h = getHolder(prhs[1]);
         auto& ops = ensureOps(h);
         int k = getIntArg(prhs[2]);
-        auto eig = nxr::manifold::solve::eigen(ops.cotanLaplacian, ops.mass, k, -1e-8,
+        auto eig = nxr::manifold::solve::eigen(ops.cotanLaplacian, ops.mass, k, nxr::manifold::solve::kShiftLadder,
             /*normalize=*/true, /*removeDC=*/true, makeCtrlCToken());
         h.eigCache = std::make_unique<nxr::manifold::solve::EigenResult>(eig);
         plhs[0] = eigenResultToStruct(eig);
@@ -442,7 +442,7 @@ void cmdPrecompute(int /*nlhs*/, mxArray** plhs,
 
     nxr::manifold::Manifold m(verts.data(), nV, faces.data(), nF);
     auto ops = nxr::manifold::ops::assembleManifoldOperators(m);
-    auto eig = nxr::manifold::solve::eigen(ops.cotanLaplacian, ops.mass, k, -1e-8,
+    auto eig = nxr::manifold::solve::eigen(ops.cotanLaplacian, ops.mass, k, nxr::manifold::solve::kShiftLadder,
         /*normalize=*/true, /*removeDC=*/true, makeCtrlCToken());
 
     plhs[0] = eigenResultToStruct(eig);

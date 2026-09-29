@@ -575,7 +575,7 @@ public:
 
             result_ = solve::eigen(
                 holder_->ops->cotanLaplacian, holder_->ops->mass, k_,
-                -1e-8, /*normalize=*/true, /*removeDC=*/true, cancel, progress);
+                solve_ns::kShiftLadder, /*normalize=*/true, /*removeDC=*/true, cancel, progress);
             // Cache on the holder so time-varying generators can reuse
             // without round-tripping the eigenmode arrays through IPC.
             holder_->eigenmodes = std::make_shared<EigenResult>(result_);
@@ -836,7 +836,7 @@ Napi::Value Eigs(const Napi::CallbackInfo& info) {
         if (!opts.Has("k")) return fail("INVALID_INPUT", "eigs: k is required.", "");
 
         const int    k          = opts.Get("k").As<Napi::Number>().Int32Value();
-        const double sigma      = opts.Has("sigma")      ? opts.Get("sigma").As<Napi::Number>().DoubleValue()     : -1e-8;
+        const double sigma      = opts.Has("sigma")      ? opts.Get("sigma").As<Napi::Number>().DoubleValue()     : solve_ns::kShiftLadder;
         const bool   normalize  = opts.Has("normalize")  ? opts.Get("normalize").As<Napi::Boolean>().Value()      : true;
         const bool   multiplets = opts.Has("multiplets") ? opts.Get("multiplets").As<Napi::Boolean>().Value()     : false;
         const bool   dense      = opts.Has("dense")      ? opts.Get("dense").As<Napi::Boolean>().Value()          : false;

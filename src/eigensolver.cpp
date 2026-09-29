@@ -78,6 +78,11 @@ EigenResult eigen(
     const CancellationToken& cancel,
     const ProgressObserver& progress
 ) {
+    /* NO SHIFT GIVEN (kShiftLadder): the scale-aware ladder, never a fixed shift on the null space (compute.h) */
+    if (std::isnan(sigma)) {
+        EigenResult r = eigenSmallest(K, M, k, normalize, cancel, progress);
+        return removeDC ? ::nxr::manifold::solve::removeDC(r) : r;
+    }
     int n = static_cast<int>(K.rows());
 
     // Validate inputs — caught before any expensive factorization.

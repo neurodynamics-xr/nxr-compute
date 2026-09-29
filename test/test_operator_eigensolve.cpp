@@ -59,15 +59,23 @@ static void testBlockKronAndProblem() {
 }
 
 static void testCotanMatchesDirect() {
-    std::cout << "\n=== eigenOperator(cotan) == eigen(cotanL, mass) ===\n";
+    std::cout << "\n=== eigenOperator(cotan): the shift ladder vs the dense solve (and the old fixed σ = -1e-8) ===\n";
     std::vector<double> V; std::vector<int32_t> F; icosphere(V, F);
     Manifold m(V.data(), 12, F.data(), 20);
 
+    /* THE DEFAULT (no σ) is the scale-aware shift ladder; the truth is the dense generalized solve */
     solve::EigenResult a = solve::eigenOperator(m, {solve::EigenOperator::LaplacianCotan}, 6);
-    solve::EigenResult b = solve::eigen(m.operators().laplacian().cotan(),
+    solve::EigenResult d = solve::eigenOperator(m, {solve::EigenOperator::LaplacianCotan}, 6,
+                                                solve::kShiftLadder, true, false, /*dense=*/true);
+    solve::EigenResult f = solve::eigen(m.operators().laplacian().cotan(),
                                         m.operators().mass().galerkin(), 6, -1e-8, true);
-    EXPECT((a.eigenvalues - b.eigenvalues).cwiseAbs().maxCoeff() < 1e-9,
-           "named-operator cotan eigenvalues match the direct eigensolve");
+    const double eLadder = (a.eigenvalues - d.eigenvalues).cwiseAbs().maxCoeff();
+    const double eFixed  = (f.eigenvalues - d.eigenvalues).cwiseAbs().maxCoeff();
+    std::cout << "  max |λ − λ_dense|: ladder " << eLadder << " · fixed σ=-1e-8 " << eFixed << "\n";
+    EXPECT(eLadder < 1e-9, "named-operator cotan eigenvalues (the shift ladder) match the dense solve");
+    /* an explicit σ is still honoured as a fixed shift: the result is the direct shift-invert's, whatever it gives */
+    solve::EigenResult g = solve::eigenOperator(m, {solve::EigenOperator::LaplacianCotan}, 6, -1e-8);
+    EXPECT((g.eigenvalues - f.eigenvalues).cwiseAbs().maxCoeff() < 1e-12, "an explicit sigma is still a fixed shift");
 }
 
 // Largest deviation of any 4-consecutive eigenvalue group from constant.
