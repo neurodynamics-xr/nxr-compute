@@ -398,8 +398,8 @@ const api = {
   ...addon,
 
   /** Six-group nested namespace over the same compute context. */
-  createManifoldContext(vertices, faces) {
-    const rawCtx = addon.createContext(asF64(vertices), asI32(faces))
+  createManifoldContext(vertices, faces, options) {
+    const rawCtx = addon.createContext(asF64(vertices), asI32(faces), options)
     return makeManifoldContext(rawCtx)
   },
 
