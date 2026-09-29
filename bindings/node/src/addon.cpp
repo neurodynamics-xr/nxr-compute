@@ -1450,6 +1450,26 @@ Napi::Value Frames(const Napi::CallbackInfo& info) {
     });
 }
 
+// ─── vertexFrames(ctx) → { e1, e2, normals }, each [nV×3] ───
+// The per-VERTEX tangent frame = geometry-central's vertexTangentBasis (e1 = basisX,
+// e2 = n × e1, n = vertex normal): the gauge the VERTEX connection Laplacian and its
+// eigenvectors are written in. A connection coordinate z = a + ib at vertex i is the
+// tangent vector a·e1_i + b·e2_i. Parity with MEX 'vertexFrames' and WASM
+// `manifold.vertexFrames()`.
+Napi::Value VertexFramesJS(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);
+    if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        nxr::manifold::geometry::VertexFrames f = nxr::manifold::geometry::vertexFrames(*holder->manifold);
+        auto obj = Napi::Object::New(env);
+        obj.Set("e1",      matrixToFloat64Array(env, f.e1));
+        obj.Set("e2",      matrixToFloat64Array(env, f.e2));
+        obj.Set("normals", matrixToFloat64Array(env, f.normals));
+        return obj;
+    });
+}
+
 // ─── operatorInfo(id) → operator-registry metadata (handle-free) ───
 // Mirrors operatorInfoJS (wasm). Field names match the MEX/WASM struct exactly.
 Napi::Value OperatorInfo(const Napi::CallbackInfo& info) {
@@ -1554,6 +1574,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("compute",     Napi::Function::New(env, ComputeStripePattern));
     exports.Set("computeFreq", Napi::Function::New(env, ComputeStripePatternFreq));
     exports.Set("frames", Napi::Function::New(env, Frames));
+    exports.Set("vertexFrames", Napi::Function::New(env, VertexFramesJS));
     // Registry metadata lookups (handle-free)
     exports.Set("operatorInfo", Napi::Function::New(env, OperatorInfo));
     exports.Set("fieldInfo",    Napi::Function::New(env, FieldInfo));

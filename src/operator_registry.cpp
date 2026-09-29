@@ -29,10 +29,10 @@ const std::vector<OperatorVariant>& operatorRegistry() {
             // ── tangent (complex, nSym) ──
             { "leviCivitaConnectionLaplacian", "Levi-Civita connection (Bochner) Laplacian", Bundle::tangent, Holonomy::intrinsic_curved,
               Order::second, Role::connection_laplacian, FieldType::complex, Domain::vertex, Singular::none, Gauge::levi_civita, Coupling::na,
-              {}, "", false, "", Status::built, OperatorId::LaplacianConnection, "domain in {vertex,face,edge}" },
+              {}, "massLumped*I2", false, "", Status::built, OperatorId::LaplacianConnection, "domain in {vertex,face,edge}; real2N BLOCK [re; im]; mass LUMPED — galerkin*I2 couples frames without transport" },
             { "trivialConnectionLaplacian", "Trivial connection Laplacian", Bundle::tangent, Holonomy::flat,
               Order::second, Role::connection_laplacian, FieldType::complex, Domain::vertex, Singular::chi_defects, Gauge::trivial, Coupling::na,
-              {}, "", false, "", Status::built, OperatorId::LaplacianConnection, "Sum singularity index == chi (Gauss-Bonnet)" },
+              {}, "massLumped*I2", false, "", Status::built, OperatorId::LaplacianConnection, "Sum singularity index == chi (Gauss-Bonnet); mass LUMPED as leviCivitaConnectionLaplacian" },
 
             // ── tangent gradient (complex, nSym) ──
             { "leviCivitaConnectionGradient", "Levi-Civita connection gradient (d^nabla)", Bundle::tangent, Holonomy::intrinsic_curved,

@@ -432,6 +432,17 @@ public:
         }
     }
 
+    /** Per-VERTEX tangent frames — the vertex connection Laplacian's gauge
+     *  (geometry-central vertexTangentBasis). Parity with node/MEX 'vertexFrames'. */
+    val vertexFrames() {
+        auto f = nxr::manifold::geometry::vertexFrames(*ctx_);
+        val obj = val::object();
+        obj.set("e1",      eigenMatrixToVal(f.e1));
+        obj.set("e2",      eigenMatrixToVal(f.e2));
+        obj.set("normals", eigenMatrixToVal(f.normals));
+        return obj;
+    }
+
     val frames() {
         auto frames = nxr::manifold::geometry::frames(*ctx_);
         val obj = val::object();
@@ -1179,6 +1190,7 @@ EMSCRIPTEN_BINDINGS(nxr_compute_wasm) {
         .function("operators",   &ContextWrapper::operators)
         .function("eigs",        &ContextWrapper::eigs)
         .function("frames",      &ContextWrapper::frames)
+        .function("vertexFrames", &ContextWrapper::vertexFrames)
         .function("normals",   &ContextWrapper::normals)
         // Spectral
         .function("solve",        &ContextWrapper::solve)

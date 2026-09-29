@@ -245,6 +245,16 @@ static void test_eigenproblem_uses_registry_mass() {
               "LaplacianCotan eigenProblemFor M == registry-named massGalerkin (byte-identical)");
     }
 
+    // Connection Laplacian: registry says natural_mass == "massLumped*I2" — a tangent field's coordinates are in per-vertex
+    // frames, and galerkin*I2 couples neighbouring frames without transport (measured on the unit icosphere: the Bochner
+    // spectrum 1, 5 with lumped; 1.83, 9.1 and not converging with galerkin — bindings/node/test/test_vertex_frames.mjs).
+    {
+        const OperatorVariant* cl = operatorById("leviCivitaConnectionLaplacian");
+        CHECK(cl && cl->natural_mass == "massLumped*I2", "registry says massLumped*I2 for leviCivitaConnectionLaplacian");
+        const OperatorVariant* tc = operatorById("trivialConnectionLaplacian");
+        CHECK(tc && tc->natural_mass == "massLumped*I2", "registry says massLumped*I2 for trivialConnectionLaplacian");
+    }
+
     // Dirac: registry says natural_mass == "massGalerkin*I4"
     {
         EigenOperatorSpec spec;
