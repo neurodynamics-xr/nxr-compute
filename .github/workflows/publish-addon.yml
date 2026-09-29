@@ -135,6 +135,9 @@ jobs:
           # the vertex frames ARE the connection Laplacian's gauge, and its natural mass is lumped ⊗ I₂
           echo "── test: bindings/node/test/test_vertex_frames.mjs ──"
           npx electron bindings/node/test/test_vertex_frames.mjs
+          # createContext's intrinsicDelaunay option: the connection Laplacian PSD, the frames still its gauge
+          echo "── test: bindings/node/test/test_intrinsic_delaunay.mjs ──"
+          npx electron bindings/node/test/test_intrinsic_delaunay.mjs
 
       - name: Upload addon artifact
         uses: actions/upload-artifact@v4

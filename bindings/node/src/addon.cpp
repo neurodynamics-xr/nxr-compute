@@ -271,8 +271,17 @@ Napi::Value CreateContext(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
 
     if (info.Length() < 2 || !info[0].IsTypedArray() || !info[1].IsTypedArray()) {
-        Napi::TypeError::New(env, "createContext(vertices: Float64Array, faces: Int32Array)").ThrowAsJavaScriptException();
+        Napi::TypeError::New(env, "createContext(vertices: Float64Array, faces: Int32Array, options?: { intrinsicDelaunay?: boolean })").ThrowAsJavaScriptException();
         return env.Null();
+    }
+    /* options.intrinsicDelaunay (parity with MEX 'create' opts): build the signpost intrinsic triangulation and flip it to
+       Delaunay, so the INTRINSIC operators (cotan, mass, the vertex connection Laplacian) assemble on non-negative cotan
+       weights — the connection Laplacian is PSD only then. Extrinsic quantities (normals, vertexFrames) stay on the embedded
+       geometry, and the intrinsic vertex gauge coincides with it (connection_laplacian.cpp). */
+    bool intrinsicDelaunay = false;
+    if (info.Length() > 2 && info[2].IsObject()) {
+        Napi::Object o = info[2].As<Napi::Object>();
+        if (o.Has("intrinsicDelaunay")) intrinsicDelaunay = o.Get("intrinsicDelaunay").ToBoolean().Value();
     }
 
     auto verticesArr = info[0].As<Napi::Float64Array>();
@@ -284,7 +293,8 @@ Napi::Value CreateContext(const Napi::CallbackInfo& info) {
     auto holder = new ContextHolder();
     holder->manifold = std::make_shared<Manifold>(
         verticesArr.Data(), nV,
-        facesArr.Data(), nF
+        facesArr.Data(), nF,
+        intrinsicDelaunay
     );
     holder->factors = std::make_shared<CholeskyCache>();
 
