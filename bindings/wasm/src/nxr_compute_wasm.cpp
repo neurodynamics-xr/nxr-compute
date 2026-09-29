@@ -379,7 +379,7 @@ public:
     //         subtype?: 'cotan'|'graph',           // when operator === 'laplacian'
     //         tau?: number,                        // dirac / diracFace blend ∈ [0,1]
     //         mass?: 'lumped'|'galerkin',          // vertex-domain mass (default galerkin)
-    //         k: number, sigma?: number (= -1e-8),
+    //         k: number, sigma?: number (absent = the shift ladder, kShiftLadder),
     //         normalize?: boolean (= true),
     //         multiplets?: boolean (= false),      // Dirac: exact 4-fold ℍ-reconstruction
     //         dense?: boolean (= false) }          // exact small-mesh verification
@@ -417,7 +417,7 @@ public:
                 throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput, "eigs: k is required.");
 
             const int    k          = opts["k"].as<int>();
-            const double sigma      = opts["sigma"].isUndefined()      ? -1e-8 : opts["sigma"].as<double>();
+            const double sigma      = opts["sigma"].isUndefined()      ? nxr::manifold::solve::kShiftLadder : opts["sigma"].as<double>();
             const bool   normalize  = opts["normalize"].isUndefined()  ? true  : opts["normalize"].as<bool>();
             const bool   multiplets = opts["multiplets"].isUndefined() ? false : opts["multiplets"].as<bool>();
             const bool   dense      = opts["dense"].isUndefined()      ? false : opts["dense"].as<bool>();
@@ -1005,8 +1005,8 @@ std::string getVersion() {
  *   K_vals          Float64Array (or array of numbers), length = K_nnz
  *   M_rows, M_cols, M_vals  same shape as K
  *   n               common matrix size for K and M (square)
- *   k, sigma        eigensolve params (sigma defaults to -1e-8 if
- *                   the caller passes 0; explicit value preferred).
+ *   k, sigma        eigensolve params (sigma: an explicit shift; NaN = the
+ *                   scale-aware shift ladder, kShiftLadder).
  *   cancelAddr, progressAddr, progressLen  same as ContextWrapper.solve
  *
  * Returns: { eigenvectors, eigenvalues, k, nConverged } in vMajor

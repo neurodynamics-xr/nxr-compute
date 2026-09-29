@@ -65,7 +65,7 @@ Eigen::SparseMatrix<double> naturalVertexMass(Manifold& m, const char* id,
 
 EigenProblem eigenProblemFor(Manifold& m, const EigenOperatorSpec& spec) {
     EigenProblem p;
-    p.sigma = -1e-8;
+    p.sigma = kShiftLadder;   // no fixed shift on the null space — the ladder (compute.h)
     switch (spec.op) {
         case EigenOperator::LaplacianCotan: {
             p.K = m.operators().laplacian().cotan();
