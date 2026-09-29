@@ -223,6 +223,11 @@ function makeManifoldContext(rawCtx) {
     /** Per-face tangent frames { e1, e2, normals }, each [nF×3] row-major
      *  Float64Array. Parity with WASM `manifold.frames()`. */
     frame() { return addon.frames(rawCtx) },
+    /** Per-VERTEX tangent frames { e1, e2, normals }, each [nV×3] row-major
+     *  Float64Array — the gauge of the vertex connection Laplacian (a
+     *  connection coordinate a+ib at vertex i is a·e1_i + b·e2_i). Parity
+     *  with WASM `manifold.vertexFrames()` and MEX 'vertexFrames'. */
+    vertexFrame() { return addon.vertexFrames(rawCtx) },
   }
 
   // ── uv ────────────────────────────────────────────────────────

@@ -132,6 +132,9 @@ jobs:
             echo "── smoke: _smoke-addon-$s.mjs ──"
             npx electron "scripts/_smoke-addon-$s.mjs"
           done
+          # the vertex frames ARE the connection Laplacian's gauge, and its natural mass is lumped ⊗ I₂
+          echo "── test: bindings/node/test/test_vertex_frames.mjs ──"
+          npx electron bindings/node/test/test_vertex_frames.mjs
 
       - name: Upload addon artifact
         uses: actions/upload-artifact@v4
