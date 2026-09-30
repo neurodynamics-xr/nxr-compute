@@ -1060,6 +1060,27 @@ Eigen::MatrixXd tracePath(
     int vEnd
 );
 
+/** A geodesic path WITH ITS PLACE ON THE MESH: every point of the
+ *  polyline as a weighted combination of at most three input vertices
+ *  (a vertex: one weight of 1; an edge crossing: two, (1−t, t); a face
+ *  point: its barycentrics), so a consumer can put a delta — or any
+ *  vertex quantity — at a point BETWEEN vertices by those weights.
+ *  Row i of `vertices`/`weights` is point i of `positions`; unused
+ *  slots repeat the first vertex with weight 0. */
+struct GeodesicPath {
+    Eigen::MatrixXd positions;  // [N, 3] world-space points
+    Eigen::MatrixXi vertices;   // [N, 3] input-mesh vertex indices
+    Eigen::MatrixXd weights;    // [N, 3] their weights (rows sum to 1)
+    double length = 0.0;        // the path's length, mesh units
+};
+
+/** `tracePath`, answering where on the mesh each point lies. */
+GeodesicPath tracePathSurface(
+    Manifold& m,
+    int vStart,
+    int vEnd
+);
+
 // ── Locus primitives (D11) ───────────────────────────────────
 //
 // `query::*` returns the geometric locus itself (the "where"); the

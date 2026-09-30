@@ -34,13 +34,14 @@ target_link_libraries(nxr_compute_wasm PRIVATE nxr_compute)
 # EXPORT_NAME=createNxrComputeModule  Name of the factory
 # EXPORT_ES6                   Emit ES module (`export default`)
 # ALLOW_MEMORY_GROWTH          Linear memory grows on demand (no fixed cap)
-# INITIAL_MEMORY=512MB         Sized to fit solveEigenmodes(k=1000) on a
-#                              dense mesh without triggering wasmMemory
-#                              .grow(). Each grow() re-binds every HEAP
-#                              view — host code that cached a HEAPF64
-#                              reference would read stale memory after
-#                              a grow. Virtual reservation only; OS
-#                              lazy-commits physical pages on touch.
+# INITIAL_MEMORY=64MB          Enough for a cortex mesh context and its
+#                              geodesic paths without a grow. A large
+#                              eigensolve grows the heap (ALLOW_MEMORY_GROWTH);
+#                              each grow() re-binds the HEAP views, which the
+#                              bindings never cache (results are .slice()d
+#                              copies; getValue/setValue re-read the view).
+#                              512 MB was reserved up front before 2026-09-29
+#                              and can fail to allocate in a low-memory tab.
 # MAXIMUM_MEMORY=2GB           Browser-side cap
 # ENVIRONMENT=web,node,worker  Run in any of these
 # NO_EXIT_RUNTIME=1            Keep the runtime alive after main() (so the
@@ -73,7 +74,7 @@ target_link_options(nxr_compute_wasm PRIVATE
     "-sEXPORT_NAME=createNxrComputeModule"
     "-sEXPORT_ES6=1"
     "-sALLOW_MEMORY_GROWTH=1"
-    "-sINITIAL_MEMORY=536870912"
+    "-sINITIAL_MEMORY=67108864"
     "-sMAXIMUM_MEMORY=2147483648"
     "-sSTACK_SIZE=8388608"
     "-sENVIRONMENT=web,node,worker"

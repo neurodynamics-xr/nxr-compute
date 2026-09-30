@@ -1306,6 +1306,30 @@ Napi::Value VectorHeatExtendScalar(const Napi::CallbackInfo& info) {
     });
 }
 
+// The flip-out geodesic (Sharp & Crane 2020) between two vertices, with
+// each point's place on the mesh — parity with the WASM `tracePath`:
+// { positions [N×3], nPoints, vertices Int32 [N×3], weights [N×3], length }.
+Napi::Value TracePath(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);
+    if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        int a = info[1].As<Napi::Number>().Int32Value();
+        int b = info[2].As<Napi::Number>().Int32Value();
+        nxr::manifold::query::GeodesicPath path = nxr::manifold::query::tracePathSurface(*holder->manifold, a, b);
+        auto obj = Napi::Object::New(env);
+        obj.Set("positions", matrixToFloat64Array(env, path.positions));
+        obj.Set("nPoints",   Napi::Number::New(env, static_cast<double>(path.positions.rows())));
+        auto verts = Napi::Int32Array::New(env, path.vertices.rows() * 3);
+        for (int i = 0; i < path.vertices.rows(); i++)
+            for (int k = 0; k < 3; k++) verts[i * 3 + k] = path.vertices(i, k);
+        obj.Set("vertices",  verts);
+        obj.Set("weights",   matrixToFloat64Array(env, path.weights));
+        obj.Set("length",    Napi::Number::New(env, path.length));
+        return obj;
+    });
+}
+
 Napi::Value VectorHeatLogMap(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
@@ -1560,6 +1584,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("solve", Napi::Function::New(env, SolveEigenmodes));
     exports.Set("poisson", Napi::Function::New(env, SolvePoisson));
     exports.Set("heat", Napi::Function::New(env, ComputeGeodesicDistance));
+    exports.Set("tracePath", Napi::Function::New(env, TracePath));
     exports.Set("hodge", Napi::Function::New(env, HodgeDecompose));
     exports.Set("curvatures", Napi::Function::New(env, ComputeCurvatures));
     exports.Set("normals", Napi::Function::New(env, ComputeVertexNormals));

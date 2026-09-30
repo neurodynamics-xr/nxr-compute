@@ -193,7 +193,9 @@ function makeManifoldContext(rawCtx) {
   // ── query ─────────────────────────────────────────────────────
   const query = {
     vertex(v) { return { vertexIndex: v } },
-    line(v1, v2)  { return stubWarn('query.line') },
+    /** The flip-out geodesic from v1 to v2 — { positions, nPoints, vertices, weights, length }; each point's
+     *  vertices/weights [N×3] place it on the mesh (a vertex, an edge crossing, a face point). Parity with WASM tracePath. */
+    line(v1, v2)  { return addon.tracePath(rawCtx, v1, v2) },
     circle(v, r)  { return stubWarn('query.circle') },
     region(v, r)  { return stubWarn('query.region') },
     isoline(field, level) {

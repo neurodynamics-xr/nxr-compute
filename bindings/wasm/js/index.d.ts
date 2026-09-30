@@ -311,7 +311,9 @@ export interface Manifold {
   // Solvers
   poisson(sourceVerts: Int32Array | number[], sourceValues: Float64Array | number[]): Float64Array
   heat(sourceVerts: Int32Array | number[]): Float64Array
-  tracePath(vStart: number, vEnd: number): PolylineResult
+  /** The flip-out geodesic, with each point's place on the mesh: `vertices`/`weights` are [nPoints × 3], row-major —
+   *  a vertex (one weight 1), an edge crossing (1−t, t) or a face point (barycentrics); `length` in mesh units. */
+  tracePath(vStart: number, vEnd: number): PolylineResult & { vertices: Int32Array; weights: Float64Array; length: number }
   hodge(omega: Float64Array): HodgeResult
 
   // Geometric
