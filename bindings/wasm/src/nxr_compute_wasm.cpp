@@ -584,10 +584,17 @@ public:
     }
 
     val tracePath(int vStart, int vEnd) {
-        Eigen::MatrixXd path = nxr::manifold::query::tracePath(*ctx_, vStart, vEnd);
+        nxr::manifold::query::GeodesicPath path = nxr::manifold::query::tracePathSurface(*ctx_, vStart, vEnd);
         val out = val::object();
-        out.set("positions", eigenMatrixToVal(path));
-        out.set("nPoints",   static_cast<int>(path.rows()));
+        out.set("positions", eigenMatrixToVal(path.positions));
+        out.set("nPoints",   static_cast<int>(path.positions.rows()));
+        // where each point lies on the mesh: up to three vertices and their weights
+        std::vector<int> verts(path.vertices.rows() * 3);
+        for (int i = 0; i < path.vertices.rows(); i++)
+            for (int k = 0; k < 3; k++) verts[i * 3 + k] = path.vertices(i, k);
+        out.set("vertices",  val(emscripten::typed_memory_view(verts.size(), verts.data())).call<val>("slice"));
+        out.set("weights",   eigenMatrixToVal(path.weights));
+        out.set("length",    path.length);
         return out;
     }
 

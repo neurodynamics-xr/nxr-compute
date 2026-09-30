@@ -4,7 +4,6 @@
 #include "geometrycentral/surface/vertex_position_geometry.h"
 #include "geometrycentral/surface/flip_geodesics.h"
 
-#include <iostream>
 #include <stdexcept>
 
 namespace nxr::manifold::query {
@@ -21,7 +20,7 @@ using namespace geometrycentral::surface;
 //    a geodesic).
 // 3. getPathPolyline3D() expands the intrinsic edge sequence into
 //    a 3D polyline lying on the original mesh.
-Eigen::MatrixXd tracePath(Manifold& m, int vStart, int vEnd) {
+GeodesicPath tracePathSurface(Manifold& m, int vStart, int vEnd) {
     auto& mesh = m.mesh();
     auto& geom = m.geometry();
 
@@ -31,11 +30,15 @@ Eigen::MatrixXd tracePath(Manifold& m, int vStart, int vEnd) {
             "tracePath: vertex index out of range (nV=" + std::to_string(nV) + ")");
     }
 
+    GeodesicPath out;
     if (vStart == vEnd) {
         // Degenerate: zero-length path is the single point itself.
-        Eigen::MatrixXd out(1, 3);
         Vector3 p = geom.inputVertexPositions[mesh.vertex(vStart)];
-        out(0, 0) = p.x; out(0, 1) = p.y; out(0, 2) = p.z;
+        out.positions.resize(1, 3);
+        out.positions << p.x, p.y, p.z;
+        out.vertices.setConstant(1, 3, vStart);
+        out.weights.setZero(1, 3);
+        out.weights(0, 0) = 1.0;
         return out;
     }
 
@@ -56,29 +59,60 @@ Eigen::MatrixXd tracePath(Manifold& m, int vStart, int vEnd) {
             "vStart and vEnd may not be in the same connected component");
     }
 
-    // FlipEdgeNetwork carries an intrinsic-mesh path; getPathPolyline3D()
-    // needs the embedded VertexPositionGeometry to lift it back to 3D.
     network->posGeom = &geom;
-
     network->iterativeShorten();
 
-    auto polylines = network->getPathPolyline3D();
+    // The intrinsic path traced back onto the INPUT mesh: each point a
+    // vertex, an edge crossing or (rarely) a face point.
+    auto polylines = network->getPathPolyline();
     if (polylines.empty() || polylines[0].empty()) {
         throw Error(ErrorCode::InternalError,
             "tracePath: flip-out produced an empty path");
     }
     const auto& path = polylines[0];
-
-    Eigen::MatrixXd out(path.size(), 3);
-    for (std::size_t i = 0; i < path.size(); i++) {
-        out(static_cast<int>(i), 0) = path[i].x;
-        out(static_cast<int>(i), 1) = path[i].y;
-        out(static_cast<int>(i), 2) = path[i].z;
+    const int n = static_cast<int>(path.size());
+    out.positions.resize(n, 3);
+    out.vertices.resize(n, 3);
+    out.weights.setZero(n, 3);
+    for (int i = 0; i < n; i++) {
+        const SurfacePoint& sp = path[i];
+        Vector3 p = sp.interpolate(geom.inputVertexPositions);
+        out.positions(i, 0) = p.x; out.positions(i, 1) = p.y; out.positions(i, 2) = p.z;
+        switch (sp.type) {
+            case SurfacePointType::Vertex: {
+                int v = static_cast<int>(sp.vertex.getIndex());
+                out.vertices.row(i) << v, v, v;
+                out.weights(i, 0) = 1.0;
+                break;
+            }
+            case SurfacePointType::Edge: {
+                int a = static_cast<int>(sp.edge.halfedge().tailVertex().getIndex());
+                int b = static_cast<int>(sp.edge.halfedge().tipVertex().getIndex());
+                out.vertices.row(i) << a, b, a;
+                out.weights(i, 0) = 1.0 - sp.tEdge;
+                out.weights(i, 1) = sp.tEdge;
+                break;
+            }
+            case SurfacePointType::Face: {
+                Halfedge he = sp.face.halfedge();
+                // faceCoords follow the face's halfedge order
+                int a = static_cast<int>(he.vertex().getIndex());
+                int b = static_cast<int>(he.next().vertex().getIndex());
+                int c = static_cast<int>(he.next().next().vertex().getIndex());
+                out.vertices.row(i) << a, b, c;
+                out.weights(i, 0) = sp.faceCoords.x;
+                out.weights(i, 1) = sp.faceCoords.y;
+                out.weights(i, 2) = sp.faceCoords.z;
+                break;
+            }
+        }
     }
-
-    std::cout << "[geodesic_path] " << path.size()
-              << " points, length=" << network->length() << std::endl;
+    out.length = network->length();
     return out;
+}
+
+Eigen::MatrixXd tracePath(Manifold& m, int vStart, int vEnd) {
+    return tracePathSurface(m, vStart, vEnd).positions;
 }
 
 } // namespace nxr::manifold::query
