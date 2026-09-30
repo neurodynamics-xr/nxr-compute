@@ -1,6 +1,6 @@
 # Eigensolve K cap
 
-`solveEigenmodes` throws `EigensolveInvalidK` when `k > 1000`.
+In the WASM build, `solveEigenmodes` throws `EigensolveInvalidK` when `k > 1000`.
 
 ## Why
 
@@ -34,19 +34,14 @@ fsaverage5 (10 242 V):
 The k=5000 cell ran for 6.4 minutes, grew the WASM heap to 1976 MB
 (near the 2 GB cap), then errored mid-iteration.
 
-## Where the cap doesn't apply
+## Where the cap applies — the WASM build only (2026-09-29)
 
-The C++ `solveEigenmodes` function itself enforces the cap regardless
-of binding. Native consumers (the N-API addon, the MEX bindings, the
-CLI) inherit the same ceiling even though they have memory headroom.
-This is a deliberate conservatism: most cortical-flow workflows fit
-inside k=200, and exposing a higher ceiling on native bindings while
-WASM consumers fail mid-solve would create a confusing per-binding
-contract.
-
-If a future use case needs higher k on native bindings, the right move
-is to expose `kMaxK` as a per-call parameter or split the validation
-into a binding-aware helper. Both are straightforward.
+The check is compiled under `__EMSCRIPTEN__`. Native consumers (the
+N-API addon, the MEX bindings, the CLI) take any `k < n`: they have the
+memory headroom, and cortical-flow's Dirac basis asks for 1600 modes
+plus a 4-fold guard (1632) — a native solve. Until 2026-09-29 the cap
+applied to every build despite this document's intent, and the desktop
+app failed at K = 1600 the same way the browser would.
 
 ## Lifting the cap
 
