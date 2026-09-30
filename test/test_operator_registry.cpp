@@ -141,6 +141,73 @@ static void test_cross_link_identities() {
     }
 }
 
+// ── intrinsicDirac on a pure vector field: curl, divergence, normal-component gradient ──
+// The identity recorded in the intrinsicDirac entry's notes:
+//     Re(D X) = -curl X . n_f     Im(D X) . n_f = -div X     Im(D X)_tan = +grad(X . n_f)
+// Algebraic, so it holds on ANY mesh to rounding: the edge vector opposite vertex i is the
+// hat gradient turned by 90 degrees, and e_i X_i = -e_i.X_i + e_i x X_i splits into the two
+// pairings. n_f is the face's own normal from its winding: reversing the winding negates D
+// AND n_f, so the identity is the same for either orientation (checked below). The same
+// signs hold for nxr-cortical-flow-matlab's operators.dirac_intrinsic (tDiracParts).
+// Returns max |residual| / max |part| over faces, for (V, F) as given.
+static double intrinsicDiracPartsResidual(const std::vector<double>& V, const std::vector<int32_t>& F) {
+    const int nV = static_cast<int>(V.size() / 3), nF = static_cast<int>(F.size() / 3);
+    Manifold m(V.data(), nV, F.data(), nF);
+    const Eigen::SparseMatrix<double>& Dint = m.operators().diracIntrinsicD();   // [4F x 4V]
+    Eigen::VectorXd X(3 * nV), Q = Eigen::VectorXd::Zero(4 * nV);
+    for (int v = 0; v < nV; ++v)
+        for (int c = 0; c < 3; ++c) {
+            const double x = std::sin(1.3 * (v + 1) * (c + 2)) + 0.5 * std::cos(0.7 * v + c);
+            X(3 * v + c) = x;  Q(4 * v + 1 + c) = x;                                 // w = 0
+        }
+    const Eigen::VectorXd Y = Dint * Q;
+    double worst = 0.0, scale = 0.0;
+    for (int f = 0; f < nF; ++f) {
+        Eigen::Vector3d p[3], x[3];
+        for (int k = 0; k < 3; ++k) {
+            const int v = F[3 * f + k];
+            p[k] = Eigen::Vector3d(V[3 * v], V[3 * v + 1], V[3 * v + 2]);
+            x[k] = X.segment<3>(3 * v);
+        }
+        Eigen::Vector3d n = (p[1] - p[0]).cross(p[2] - p[0]);
+        const double dblA = n.norm();  n /= dblA;
+        const Eigen::Vector3d g[3] = { n.cross(p[2] - p[1]) / dblA,                // grad phi_i
+                                       n.cross(p[0] - p[2]) / dblA,
+                                       n.cross(p[1] - p[0]) / dblA };
+        double curl = 0.0, div = 0.0;  Eigen::Vector3d gradN = Eigen::Vector3d::Zero();
+        for (int k = 0; k < 3; ++k) {
+            curl  += g[k].cross(x[k]).dot(n);
+            div   += g[k].dot(x[k]);
+            gradN += g[k] * x[k].dot(n);
+        }
+        const double w = Y(4 * f);
+        const Eigen::Vector3d im(Y(4 * f + 1), Y(4 * f + 2), Y(4 * f + 3));
+        const double imN = im.dot(n);
+        const Eigen::Vector3d imT = im - imN * n;
+        worst = std::max({worst, std::abs(w + curl), std::abs(imN + div), (imT - gradN).cwiseAbs().maxCoeff()});
+        scale = std::max({scale, std::abs(curl), std::abs(div), gradN.cwiseAbs().maxCoeff()});
+    }
+    return worst / scale;
+}
+
+static void test_intrinsic_dirac_parts() {
+    std::cout << "\n── intrinsicDirac parts: Re = -curl.n, Im.n = -div, Im_tan = +grad(X.n) ──\n";
+    std::vector<double>  V;
+    std::vector<int32_t> F;
+    makeIcosphere(V, F);
+    for (size_t i = 0; i < V.size(); i += 3) {                                   // not a sphere
+        const double s = 1.0 + 0.2 * std::sin(3.0 * V[i]) * std::cos(2.0 * V[i + 1]);
+        V[i] *= s;  V[i + 1] *= s;  V[i + 2] *= s;
+    }
+    std::vector<int32_t> Fflip(F);
+    for (size_t i = 0; i < Fflip.size(); i += 3) std::swap(Fflip[i + 1], Fflip[i + 2]);
+    const double r  = intrinsicDiracPartsResidual(V, F);
+    const double rf = intrinsicDiracPartsResidual(V, Fflip);
+    std::cout << "  [5] parts identity, relative residual: " << r << " (flipped orientation " << rf << ")\n";
+    CHECK(r < 1e-12,  "intrinsicDirac: Re = -curl.n, Im.n = -div, Im_tan = +grad(X.n_f)");
+    CHECK(rf < 1e-12, "intrinsicDirac parts identity holds for either face orientation");
+}
+
 static void test_scalar_skeleton() {
     const OperatorVariant* lb = operatorById("laplaceBeltrami");
     CHECK(lb != nullptr, "laplaceBeltrami present");
@@ -278,6 +345,7 @@ int main() {
     test_completeness();
     test_query_and_guard();
     test_cross_link_identities();
+    test_intrinsic_dirac_parts();
     test_eigenproblem_uses_registry_mass();
     std::cout << (g_failures ? "REGISTRY TESTS FAILED\n" : "ALL REGISTRY TESTS PASSED\n");
     return g_failures ? 1 : 0;

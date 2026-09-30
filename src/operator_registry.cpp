@@ -61,7 +61,13 @@ const std::vector<OperatorVariant>& operatorRegistry() {
             // ── immersion (quaternion, 4-comp) ──
             { "intrinsicDirac", "Intrinsic Dirac (1st-order)", Bundle::immersion, Holonomy::intrinsic_curved,
               Order::first, Role::dirac, FieldType::quaternion, Domain::face, Singular::none, Gauge::na, Coupling::na,
-              squaresTo("laplaceBeltrami", Relation::principal_part), "", false, "", Status::built, OperatorId::DiracIntrinsicD, "face<-vertex; scalar part of square == cotanL" },
+              squaresTo("laplaceBeltrami", Relation::principal_part), "", false, "", Status::built, OperatorId::DiracIntrinsicD,
+              "face<-vertex; scalar part of square == cotanL. On a pure-vector field X (w=0), per face f with normal n_f, EXACTLY: "
+              "Re(D X) = -curl X . n_f; Im(D X) . n_f = -div X; Im(D X) tangential = +grad(X . n_f), n_f from the face's own "
+              "winding (reversing the winding negates D and n_f together, so the identity is orientation-free). With n_f frozen per face the "
+              "third part also carries the shape operator acting on X (a tangent field on the unit sphere has third-part energy "
+              "-> integral |X|^2). The parts are pointwise: on a mesh with rough normals (cortex, ~30 deg between neighbours) curl "
+              "and div leak into each other at mesh scale, so read them at a spatial scale, not per face." },
             { "extrinsicDirac", "Extrinsic Dirac (1st-order, Gauss map)", Bundle::immersion, Holonomy::extrinsic_curved,
               Order::first, Role::dirac, FieldType::quaternion, Domain::face, Singular::none, Gauge::na, Coupling::na,
               squaresTo("relativeDirac", Relation::exact), "", false, "", Status::built, OperatorId::DiracD, "face<-vertex; squares to relativeDirac@tau=1 (E)" },
