@@ -666,6 +666,11 @@ public:
         obj.Set("k",            Napi::Number::New(env, result_.k));
         obj.Set("nConverged",   Napi::Number::New(env, result_.nConverged));
         obj.Set("blockSize",    Napi::Number::New(env, blockSize_));
+        if (result_.kind.size() > 0) {   // Hodge–Dirac: 0 exact · 1 harmonic · 2 coexact, per mode
+            auto kind = Napi::Int32Array::New(env, result_.kind.size());
+            for (Eigen::Index i = 0; i < result_.kind.size(); ++i) kind[static_cast<size_t>(i)] = result_.kind(i);
+            obj.Set("kind", kind);
+        }
         deferred.Resolve(obj);
     }
 
@@ -827,9 +832,21 @@ Napi::Value Eigs(const Napi::CallbackInfo& info) {
             spec.op = solve_ns::EigenOperator::Dirac; blockSize = 4;
         } else if (op == "diracFace") {
             spec.op = solve_ns::EigenOperator::DiracFace; blockSize = 4;
+        } else if (op == "hodgeDirac") {
+            spec.op = solve_ns::EigenOperator::HodgeDirac;   // N = V+E+F; default sigma = k lowest +mu by the exact/coexact split
+        } else if (op == "spinExtrinsic") {
+            spec.op = solve_ns::EigenOperator::SpinExtrinsic; blockSize = 4;
+        } else if (op == "spinIntrinsicHY") {
+            spec.op = solve_ns::EigenOperator::SpinIntrinsicHY; blockSize = 4;
+        } else if (op == "spinIntrinsicYe") {
+            spec.op = solve_ns::EigenOperator::SpinIntrinsicYe; blockSize = 4;
         } else {
-            return fail("INVALID_INPUT", "eigs: operator must be laplacian|cotan|graph|dirac|diracFace.", "");
+            return fail("INVALID_INPUT", "eigs: operator must be laplacian|cotan|graph|dirac|diracFace|hodgeDirac|spinExtrinsic|spinIntrinsicHY|spinIntrinsicYe.", "");
         }
+        if (opts.Has("graphMass")) spec.graphDegreeMass = opts.Get("graphMass").As<Napi::String>().Utf8Value() == "degree";
+        if (opts.Has("star1Floor")) spec.star1Floor = opts.Get("star1Floor").As<Napi::Number>().DoubleValue();
+        if (opts.Has("mollify"))    spec.mollify    = opts.Get("mollify").As<Napi::Number>().DoubleValue();
+        if (opts.Has("bothSigns"))  spec.bothSigns  = opts.Get("bothSigns").As<Napi::Boolean>().Value();
 
         if (opts.Has("tau"))  spec.tau  = opts.Get("tau").As<Napi::Number>().DoubleValue();
         if (opts.Has("mass")) spec.mass = parseMassMatrixVariant(opts.Get("mass").As<Napi::String>().Utf8Value());

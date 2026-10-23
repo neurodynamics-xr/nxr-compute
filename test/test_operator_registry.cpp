@@ -189,7 +189,7 @@ static void test_query_and_guard() {
         for (auto* v : firstImmersion) std::cerr << v->id << " ";
         std::cerr << "\n";
     }
-    CHECK(firstImmersion.size() == 4, "4 first-order immersion ops");
+    CHECK(firstImmersion.size() == 7, "7 first-order immersion ops (4 Crane/face + 3 spin)");
 
     // LJC-trap guard: immersion op rejected where ambient required.
     bool threw = false;
@@ -210,6 +210,7 @@ static void test_completeness() {
         OperatorId::MassGalerkin, OperatorId::Gradient3D, OperatorId::Dirac, OperatorId::DiracFace,
         OperatorId::DiracD, OperatorId::DiracFaceD, OperatorId::DiracIntrinsicD,
         OperatorId::DiracFaceIntrinsicD, OperatorId::GradFace, OperatorId::LapFace,
+        OperatorId::HodgeDirac, OperatorId::SpinDirac,
     };
     for (OperatorId op : all) {
         auto ids = variantIdsFor(op);

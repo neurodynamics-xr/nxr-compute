@@ -75,6 +75,8 @@ add_library(nxr_compute STATIC
   src/dirac_operator.cpp
   src/face_gradient.cpp
   src/eigenproblem.cpp
+  src/hodge_dirac.cpp
+  src/spin_dirac.cpp
   src/operator_registry.cpp
   src/field_registry.cpp
 )
@@ -245,6 +247,22 @@ if(NOT EMSCRIPTEN AND NXR_COMPUTE_BUILD_TESTS)
     add_executable(test_operator_eigensolve test/test_operator_eigensolve.cpp)
     target_link_libraries(test_operator_eigensolve PRIVATE nxr_compute)
     add_test(NAME test_operator_eigensolve COMMAND test_operator_eigensolve)
+
+    add_executable(test_hodge_dirac test/test_hodge_dirac.cpp)
+    target_link_libraries(test_hodge_dirac PRIVATE nxr_compute)
+    add_test(NAME test_hodge_dirac COMMAND test_hodge_dirac)
+
+    add_executable(test_spin_dirac test/test_spin_dirac.cpp)
+    target_link_libraries(test_spin_dirac PRIVATE nxr_compute)
+    add_test(NAME test_spin_dirac COMMAND test_spin_dirac)
+
+    add_executable(test_graph_eigen test/test_graph_eigen.cpp)
+    target_link_libraries(test_graph_eigen PRIVATE nxr_compute)
+    add_test(NAME test_graph_eigen COMMAND test_graph_eigen)
+
+    add_executable(test_cf_parity test/test_cf_parity.cpp)
+    target_link_libraries(test_cf_parity PRIVATE nxr_compute)
+    add_test(NAME test_cf_parity COMMAND test_cf_parity)
 
     add_executable(test_face_gradient test/test_face_gradient.cpp)
     target_link_libraries(test_face_gradient PRIVATE nxr_compute)

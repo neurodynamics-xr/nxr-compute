@@ -266,9 +266,9 @@ double estimateLmax(const Eigen::SparseMatrix<double>& A,
 
 // Last-resort smallest-magnitude solve via Cholesky mode (no A factorization).
 // Mirrors eigen()'s sort-ascending + optional M-normalize extraction.
-EigenResult eigenCholeskySmallest(const Eigen::SparseMatrix<double>& A,
-                                  const Eigen::SparseMatrix<double>& B,
-                                  int k, bool normalize) {
+EigenResult eigenCholesky(const Eigen::SparseMatrix<double>& A,
+                          const Eigen::SparseMatrix<double>& B,
+                          int k, bool normalize, Spectra::SortRule rule) {
     int n = static_cast<int>(A.rows());
     int ncv = std::min(std::max(2 * k + 1, 20), n);
     Spectra::SparseSymMatProd<double> opA(A);
@@ -278,7 +278,7 @@ EigenResult eigenCholeskySmallest(const Eigen::SparseMatrix<double>& A,
         Spectra::SparseCholesky<double>,
         Spectra::GEigsMode::Cholesky> solver(opA, opB, k, ncv);
     solver.init();
-    int nconv = solver.compute(Spectra::SortRule::SmallestMagn, 1000, 1e-10);
+    int nconv = solver.compute(rule, 1000, 1e-10);
     if (solver.info() != Spectra::CompInfo::Successful &&
         solver.info() != Spectra::CompInfo::NotConverging)
         throw Error(ErrorCode::EigensolveNotConverged,
@@ -306,6 +306,11 @@ EigenResult eigenCholeskySmallest(const Eigen::SparseMatrix<double>& A,
 
 } // namespace
 
+EigenResult eigenLargestMagn(const Eigen::SparseMatrix<double>& A, const Eigen::SparseMatrix<double>& B,
+                             int k, bool normalize) {
+    return eigenCholesky(A, B, k, normalize, Spectra::SortRule::LargestMagn);
+}
+
 EigenResult eigenSmallest(
     const Eigen::SparseMatrix<double>& A_in,
     const Eigen::SparseMatrix<double>& B_in,
@@ -327,7 +332,88 @@ EigenResult eigenSmallest(
             }
         }
     }
-    return eigenCholeskySmallest(A, B, k, normalize);
+    return eigenCholesky(A, B, k, normalize, Spectra::SortRule::SmallestMagn);
+}
+
+} // namespace nxr::manifold::solve
+namespace nxr::manifold::solve {
+
+namespace {
+// The eigenpairs of a window that Lanczos converged: sorted by distance from sigma, the prefix whose relative residual
+// ‖Ax − λBx‖ / (‖Bx‖ · max|λ|) is below 1e-8. Returns the indices and the radius they cover. The farthest pairs of a
+// shift-invert window are the least converged (Spectra reports NotConverging as success), so they are not trusted.
+std::vector<int> convergedPrefix(const Eigen::SparseMatrix<double>& A, const Eigen::SparseMatrix<double>& B,
+                                 const EigenResult& w, double sigma, double& radius) {
+    std::vector<int> idx(w.k);
+    std::iota(idx.begin(), idx.end(), 0);
+    std::sort(idx.begin(), idx.end(), [&](int a, int b) { return std::abs(w.eigenvalues(a) - sigma) < std::abs(w.eigenvalues(b) - sigma); });
+    std::vector<int> good;
+    radius = 0;
+    const double scale = std::max(1e-300, w.eigenvalues.cwiseAbs().maxCoeff());   // the window's spectral scale (λ ≈ 0 must not blow the ratio up)
+    for (int c : idx) {
+        const Eigen::VectorXd x = w.eigenvectors.col(c);
+        const Eigen::VectorXd ax = A * x, bx = B * x;
+        const double lam = w.eigenvalues(c);
+        const double res = (ax - lam * bx).norm() / (bx.norm() * scale + 1e-300);
+        if (res > 1e-8) break;
+        good.push_back(c);
+        radius = std::abs(lam - sigma);
+    }
+    return good;
+}
+} // namespace
+
+EigenResult eigenSliced(const Eigen::SparseMatrix<double>& A, const Eigen::SparseMatrix<double>& B,
+                        int count, int slice, bool normalize,
+                        const CancellationToken& cancel, const ProgressObserver& progress) {
+    const int n = static_cast<int>(A.rows());
+    if (count < 1 || count > n - 1)
+        throw Error(ErrorCode::EigensolveInvalidK, "eigenSliced: count must be in [1, N-1]");
+    slice = std::max(2, std::min(slice, n - 1));
+    EigenResult first = eigenSmallest(A, B, std::min(count, slice), normalize, cancel, progress);
+    if (count <= slice) return first;
+
+    std::vector<double> lam;
+    std::vector<Eigen::VectorXd> vec;
+    double U = 0;
+    {   // the ladder window covers [0, U]: keep its converged prefix by value (it is the lowest end, so sigma = 0)
+        double r;
+        for (int c : convergedPrefix(A, B, first, 0.0, r)) { lam.push_back(first.eigenvalues(c)); vec.push_back(first.eigenvectors.col(c)); }
+        U = r;
+    }
+    for (int it = 0; it < 10000 && static_cast<int>(lam.size()) < count; ++it) {
+        double sigma = U;
+        EigenResult w;
+        for (int attempt = 0;; ++attempt) {      // a shift exactly on an eigenvalue makes K − σM singular: nudge it
+            try {
+                w = eigen(A, B, std::min(slice, n - 1), sigma, normalize, false, cancel, progress);
+                break;
+            } catch (const Error& e) {
+                if (e.code() != ErrorCode::EigensolveNotConverged || attempt >= 3) throw;
+                sigma = U + 1e-6 * (1 + std::abs(U)) * std::pow(10.0, attempt);
+            } catch (const std::runtime_error&) {        // Spectra's TridiagEigen failure: the same singular-shift symptom
+                if (attempt >= 3) throw;
+                sigma = U + 1e-6 * (1 + std::abs(U)) * std::pow(10.0, attempt);
+            }
+        }
+        double r;
+        const std::vector<int> good = convergedPrefix(A, B, w, sigma, r);
+        const double Unew = sigma + 0.98 * r;    // all eigenvalues in (σ−r, σ+r) are found; 2 % margin for a split multiplet
+        for (int c : good)
+            if (w.eigenvalues(c) > U && w.eigenvalues(c) <= Unew) { lam.push_back(w.eigenvalues(c)); vec.push_back(w.eigenvectors.col(c)); }
+        if (!(Unew > U)) throw Error(ErrorCode::EigensolveNotConverged, "eigenSliced: window did not advance");
+        U = Unew;
+    }
+    const int k = std::min(count, static_cast<int>(lam.size()));
+    std::vector<int> ord(lam.size());
+    std::iota(ord.begin(), ord.end(), 0);
+    std::sort(ord.begin(), ord.end(), [&](int a, int b) { return lam[a] < lam[b]; });
+    EigenResult out;
+    out.eigenvalues.resize(k);
+    out.eigenvectors.resize(n, k);
+    for (int c = 0; c < k; ++c) { out.eigenvalues(c) = lam[ord[c]]; out.eigenvectors.col(c) = vec[ord[c]]; }
+    out.k = k; out.nConverged = k;
+    return out;
 }
 
 } // namespace nxr::manifold::solve

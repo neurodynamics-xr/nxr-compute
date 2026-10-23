@@ -78,7 +78,13 @@ EigenProblem eigenProblemFor(Manifold& m, const EigenOperatorSpec& spec) {
             p.K = m.operators().laplacian().graph();
             const int n = m.nV();
             p.M.resize(n, n);
-            p.M.setIdentity();              // standard eigenproblem; registry natural_mass == "identity" (metric-free)
+            if (spec.graphDegreeMass) {     // random-walk form L φ = λ D φ; registry "graphLaplacianDegreeMass"
+                Eigen::VectorXd deg(n);
+                for (int i = 0; i < n; ++i) deg(i) = p.K.coeff(i, i);   // L = D − A: the diagonal is the degree
+                p.M = deg.asDiagonal();
+            } else {
+                p.M.setIdentity();          // standard eigenproblem; registry natural_mass == "identity" (metric-free)
+            }
             p.blockSize = 1;
             break;
         }
@@ -108,6 +114,19 @@ EigenProblem eigenProblemFor(Manifold& m, const EigenOperatorSpec& spec) {
             p.blockSize = 4;
             break;
         }
+        case EigenOperator::HodgeDirac: {
+            const auto h = ops::hodgedirac::assemble(m, spec.star1Floor, spec.mollify);
+            p.K = h.K;
+            p.M = ops::hodgedirac::massMatrix(h);
+            p.blockSize = 1;
+            break;
+        }
+        case EigenOperator::SpinExtrinsic:
+        case EigenOperator::SpinIntrinsicHY:
+        case EigenOperator::SpinIntrinsicYe:
+            throw Error(ErrorCode::InvalidInput,
+                "eigenProblemFor: the spin Diracs are solved on vertex spinors by a quotient, not as a (K, M) pencil",
+                "use eigenOperator(), or ops::spin::assemble for the 4F×4F face operator");
     }
     return p;
 }
@@ -141,6 +160,7 @@ Eigen::MatrixXd rightQuat(const Eigen::MatrixXd& U, char unit) {
 // Close each eigenvalue cluster under right-ℍ and return an M-orthonormal basis of
 // the true (multiple-of-4) eigenspaces — recovers complete multiplets even when
 // Spectra under-converged a degenerate cluster.
+} // namespace
 EigenResult reconstructDiracMultiplets(const EigenResult& r,
                                        const Eigen::SparseMatrix<double>& M) {
     const int rows = static_cast<int>(r.eigenvectors.rows());
@@ -198,6 +218,7 @@ EigenResult reconstructDiracMultiplets(const EigenResult& r,
     return out;
 }
 
+namespace {
 // Exact dense generalized eigensolve (small meshes / verification). Returns the
 // lowest k pairs; GeneralizedSelfAdjointEigenSolver yields M-orthonormal vectors.
 EigenResult denseEigen(const EigenProblem& p, int k) {
@@ -233,6 +254,26 @@ EigenResult eigenOperator(Manifold& m, const EigenOperatorSpec& spec, int k,
                           double sigma, bool normalize, bool reconstructMultiplets,
                           bool dense, const CancellationToken& cancel,
                           const ProgressObserver& progress) {
+    using ops::spin::Kind;
+    if (spec.op == EigenOperator::SpinExtrinsic || spec.op == EigenOperator::SpinIntrinsicHY ||
+        spec.op == EigenOperator::SpinIntrinsicYe) {
+        if (dense) throw Error(ErrorCode::InvalidInput, "eigenOperator: dense is not defined for the spin quotient");
+        return eigenSpin(m, spec.op == EigenOperator::SpinExtrinsic ? Kind::Extrinsic
+                         : spec.op == EigenOperator::SpinIntrinsicHY ? Kind::IntrinsicHY : Kind::IntrinsicYe,
+                         k, cancel, progress);
+    }
+    if (spec.op == EigenOperator::HodgeDirac) {
+        const auto h = ops::hodgedirac::assemble(m, spec.star1Floor, spec.mollify);
+        if (std::isnan(sigma) && !dense)   // default: the k lowest +μ by the exact/coexact split (+ mirror)
+            return hodgeDiracModes(h, k, spec.bothSigns, 400, cancel, progress);
+        EigenProblem hp;
+        hp.K = h.K; hp.M = ops::hodgedirac::massMatrix(h); hp.blockSize = 1; hp.sigma = sigma;
+        EigenResult r = dense ? denseEigen(hp, k)
+                              : eigen(hp.K, hp.M, k, sigma, normalize, /*removeDC=*/false, cancel, progress);
+        r.kind = classifyHodgeModes(h, r.eigenvectors, r.eigenvalues);
+        return r;
+    }
+
     EigenProblem p = eigenProblemFor(m, spec);
 
     if (dense)

@@ -78,6 +78,27 @@ const std::vector<OperatorVariant>& operatorRegistry() {
               Order::second, Role::dirac, FieldType::quaternion, Domain::face, Singular::none, Gauge::na, Coupling::na,
               squareOf("extrinsicFaceDirac", Relation::exact), "diag(faceArea)*I4", true, "intrinsic=0;extrinsic=1;squared=0.5x2", Status::built, OperatorId::DiracFace, "closed-mesh v1" },
 
+            // ── eigen-solved Diracs on forms / face spinors, and the degree-mass graph Laplacian ──
+            { "graphLaplacianDegreeMass", "Graph Laplacian, degree mass (L = D - A, L phi = lambda D phi)", Bundle::scalar, Holonomy::combinatorial,
+              Order::second, Role::laplacian, FieldType::real, Domain::vertex, Singular::none, Gauge::na, Coupling::na,
+              {}, "degree", false, "", Status::built, OperatorId::LaplacianGraph, "unweighted topological Laplacian; eigs graphDegreeMass=true; same K as graphLaplacian, mass diag(degree)" },
+            { "hodgeDirac", "Hodge-Dirac d+delta (0/1/2-forms, intrinsic Delaunay)", Bundle::scalar, Holonomy::intrinsic_curved,
+              Order::first, Role::dirac, FieldType::real, Domain::vertex, Singular::none, Gauge::na, Coupling::na,
+              {}, "diag(hodge0,hodge1,hodge2)", false, "", Status::built, OperatorId::HodgeDirac,
+              "input/output field = the 0-form (vertex) block; the eigenvector spans V+E+F: pencil (K,M) on the intrinsic Delaunay mesh (rows: vertices, edges, faces; edges/faces are the intrinsic mesh's); "
+              "star1 floored (default 1e-6), mollified (default 1e-6). Spectrum +-mu; eigs default = k lowest +mu by exact/coexact split with kind per mode; "
+              "explicit sigma = indefinite shift-invert; port of cortical-flow hodgeDirac.ts" },
+            { "spinExtrinsicDirac", "Extrinsic Dirac of spin transformations D_f (Hoffmann-Ye), face spinors", Bundle::immersion, Holonomy::extrinsic_curved,
+              Order::first, Role::dirac, FieldType::quaternion, Domain::face, Singular::none, Gauge::na, Coupling::na,
+              {}, "diag(faceArea)*I4", false, "", Status::built, OperatorId::SpinDirac,
+              "4F x 4F, 1/2 sum E_ij - H_i; closed mesh. eigs: Ye et al. quotient on VERTEX spinors (A^T D M^-1 D A psi = mu A^T D A psi), plain vertexToFace; port of cortical-flow spinDirac.ts" },
+            { "spinIntrinsicHYDirac", "Intrinsic Dirac, Hoffmann-Ye (D_f + H), face spinors", Bundle::immersion, Holonomy::intrinsic_curved,
+              Order::first, Role::dirac, FieldType::quaternion, Domain::face, Singular::none, Gauge::na, Coupling::na,
+              {}, "diag(faceArea)*I4", false, "", Status::built, OperatorId::SpinDirac, "4F x 4F, 1/2 sum E_ij; quotient solve with the covariant vertexToFace" },
+            { "spinIntrinsicYeDirac", "Intrinsic Dirac, Ye et al. (cos(theta/2) E_ij), face spinors", Bundle::immersion, Holonomy::intrinsic_curved,
+              Order::first, Role::dirac, FieldType::quaternion, Domain::face, Singular::none, Gauge::na, Coupling::na,
+              {}, "diag(faceArea)*I4", false, "", Status::built, OperatorId::SpinDirac, "4F x 4F, 1/2 sum cos(theta/2) E_ij (edge lengths only); quotient solve with the covariant vertexToFace" },
+
             // ── metrics & exterior calculus ──
             { "massLumped", "Lumped (barycentric) mass", Bundle::scalar, Holonomy::flat, Order::zeroth, Role::mass,
               FieldType::real, Domain::vertex, Singular::none, Gauge::na, Coupling::na, {}, "", false, "", Status::built, OperatorId::MassLumped, "holonomy n/a (metric)" },
@@ -120,6 +141,11 @@ const std::vector<OperatorVariant>& operatorRegistry() {
             { "relativeFaceDirac",              "immersionFace",     "immersionFace" },
             { "massLumped",                     "scalarVertex",      "scalarVertex" },
             { "massGalerkin",                   "scalarVertex",      "scalarVertex" },
+            { "graphLaplacianDegreeMass",       "scalarVertex",      "scalarVertex" },
+            { "hodgeDirac",                     "scalarVertex",       "scalarVertex" },
+            { "spinExtrinsicDirac",             "immersionFace",     "immersionFace" },
+            { "spinIntrinsicHYDirac",           "immersionFace",     "immersionFace" },
+            { "spinIntrinsicYeDirac",           "immersionFace",     "immersionFace" },
             { "d0",                             "scalarVertex",      "oneFormEdge" },
             { "d1",                             "oneFormEdge",       "twoFormFace" },
             { "hodge0",                         "scalarVertex",      "scalarVertex" },
@@ -165,7 +191,9 @@ void requireBundle(std::string_view id, Bundle required) {
 std::vector<std::string> variantIdsFor(OperatorId op) {
     switch (op) {
         case OperatorId::LaplacianCotan:      return {"laplaceBeltrami"};
-        case OperatorId::LaplacianGraph:      return {"graphLaplacian"};
+        case OperatorId::LaplacianGraph:      return {"graphLaplacian", "graphLaplacianDegreeMass"};
+        case OperatorId::HodgeDirac:          return {"hodgeDirac"};
+        case OperatorId::SpinDirac:           return {"spinExtrinsicDirac", "spinIntrinsicHYDirac", "spinIntrinsicYeDirac"};
         case OperatorId::LaplacianConnection: return {"leviCivitaConnectionLaplacian", "trivialConnectionLaplacian"};
         case OperatorId::LaplacianCovariant:  return {"flatCovariantLaplacian", "productCovariantLaplacian"};
         case OperatorId::Dec:                 return {"d0", "d1", "hodge0", "hodge1", "hodge2", "hodge1inv"};

@@ -752,3 +752,12 @@ should live in `test/fixtures/` once the harness exists. As of
 2026-04-27 there is **no** MATLAB-oracle test harness; this is the
 single biggest gap in numerical confidence and the next step in the
 correctness program.
+
+
+## Eigenmode solvers added 2026-10-23 (Hodge–Dirac, spin Diracs, graph Laplacian)
+
+`ops::hodgedirac::assemble`, `solve::hodgeDiracModes` / `eigenSliced` / `classifyHodgeModes`, `ops::spin::{assemble,vertexToFace}` and
+`solve::eigenSpin`, `EigenOperator::{HodgeDirac,SpinExtrinsic,SpinIntrinsicHY,SpinIntrinsicYe}`, `EigenOperatorSpec::graphDegreeMass`; registry ids
+`hodgeDirac`, `spin*Dirac`, `graphLaplacianDegreeMass`; `eigs({operator: 'hodgeDirac'|'spinExtrinsic'|'spinIntrinsicHY'|'spinIntrinsicYe'})` in the
+Node and WASM bindings. nxr-cortical-flow is the reference where implementations differ; parity: `test/test_cf_parity.cpp`
+(`NXR_CF_FIXTURES`, `NXR_CF_CORTEX=1`). Map, parity table and limits: `docs/eigenmode-solvers.md`.
