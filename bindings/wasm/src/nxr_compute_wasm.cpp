@@ -378,6 +378,7 @@ public:
     // opts: { operator: 'laplacian'|'cotan'|'graph'|'dirac'|'diracFace',
     //         subtype?: 'cotan'|'graph',           // when operator === 'laplacian'
     //         tau?: number,                        // dirac / diracFace blend ∈ [0,1]
+    //         graphMass?: 'identity'|'degree', star1Floor?, mollify?, bothSigns?   // graph / hodgeDirac (operator: hodgeDirac|spinExtrinsic|spinIntrinsicHY|spinIntrinsicYe)
     //         mass?: 'lumped'|'galerkin',          // vertex-domain mass (default galerkin)
     //         k: number, sigma?: number (absent = the shift ladder, kShiftLadder),
     //         normalize?: boolean (= true),
@@ -405,10 +406,22 @@ public:
                 spec.op = nxr::manifold::solve::EigenOperator::Dirac; blockSize = 4;
             } else if (op == "diracFace") {
                 spec.op = nxr::manifold::solve::EigenOperator::DiracFace; blockSize = 4;
+            } else if (op == "hodgeDirac") {
+                spec.op = nxr::manifold::solve::EigenOperator::HodgeDirac;
+            } else if (op == "spinExtrinsic") {
+                spec.op = nxr::manifold::solve::EigenOperator::SpinExtrinsic; blockSize = 4;
+            } else if (op == "spinIntrinsicHY") {
+                spec.op = nxr::manifold::solve::EigenOperator::SpinIntrinsicHY; blockSize = 4;
+            } else if (op == "spinIntrinsicYe") {
+                spec.op = nxr::manifold::solve::EigenOperator::SpinIntrinsicYe; blockSize = 4;
             } else {
                 throw nxr::core::Error(nxr::core::ErrorCode::InvalidInput,
-                    "eigs: operator must be laplacian|cotan|graph|dirac|diracFace.");
+                    "eigs: operator must be laplacian|cotan|graph|dirac|diracFace|hodgeDirac|spinExtrinsic|spinIntrinsicHY|spinIntrinsicYe.");
             }
+            if (!opts["graphMass"].isUndefined()) spec.graphDegreeMass = opts["graphMass"].as<std::string>() == "degree";
+            if (!opts["star1Floor"].isUndefined()) spec.star1Floor = opts["star1Floor"].as<double>();
+            if (!opts["mollify"].isUndefined())    spec.mollify    = opts["mollify"].as<double>();
+            if (!opts["bothSigns"].isUndefined())  spec.bothSigns  = opts["bothSigns"].as<bool>();
 
             if (!opts["tau"].isUndefined())  spec.tau  = opts["tau"].as<double>();
             if (!opts["mass"].isUndefined())
@@ -938,6 +951,10 @@ private:
         o.set("eigenvalues",  eigenVectorToVal(r.eigenvalues));
         o.set("k",            r.k);
         o.set("nConverged",   r.nConverged);
+        if (r.kind.size() > 0) {   // Hodge–Dirac: 0 exact · 1 harmonic · 2 coexact, per mode
+            std::vector<int> kd(r.kind.data(), r.kind.data() + r.kind.size());
+            o.set("kind", emscripten::val::array(kd));
+        }
         return o;
     }
 

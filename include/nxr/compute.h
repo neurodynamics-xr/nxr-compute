@@ -85,7 +85,7 @@ enum class OperatorId {
     LaplacianCotan, LaplacianGraph, LaplacianConnection, LaplacianCovariant,
     Dec, MassLumped, MassGalerkin, Gradient3D, Dirac, DiracFace,
     DiracD, DiracFaceD, DiracIntrinsicD, DiracFaceIntrinsicD, GradFace, LapFace,
-    ConnectionGradient, ExtrinsicWeitzenbock
+    ConnectionGradient, ExtrinsicWeitzenbock, HodgeDirac, SpinDirac
 };
 
 // ── Compute Context ──────────────────────────────────────────
@@ -482,6 +482,49 @@ Eigen::SparseMatrix<double> matrixFaceIntrinsic(Manifold& m);
 Eigen::SparseMatrix<double> extrinsicBlockFace(Manifold& m);
 }  // namespace dirac
 
+// ── Hodge–Dirac d + δ on 0-, 1- and 2-forms of the INTRINSIC Delaunay triangulation ──
+// Port of nxr-cortical-flow hodgeDirac.ts (the reference where implementations differ). The pencil (K, M),
+// N = V + E + F, rows ordered 0-forms [0,V) · 1-forms [V,V+E) · 2-forms [V+E,N):
+//     K = [0 d0ᵀ⋆1 0; ⋆1 d0 0 d1ᵀ⋆2; 0 ⋆2 d1 0],   M = diag(⋆0, ⋆1, ⋆2).
+// ⋆0 mixed-Voronoi lumped mass (obtuse corner: A/2 and A/4), ⋆1 = ½(cot α + cot β), ⋆2 = 1/area. M⁻¹K = d + δ is
+// M-self-adjoint with spectrum ±μ; D² is block-diagonal in the Hodge Laplacians. The triangulation is built from the
+// input's edge lengths: mollify (Sharp & Crane 2020, relative factor `mollify`, 0 = off), then flipToDelaunay.
+// Vertex indices are the input's; edges and faces are the intrinsic mesh's (edge orientation = its halfedge).
+// ⋆1 is floored at `star1Floor` (Rheome PR #94) so that M > 0 on near-cocircular edges.
+namespace hodgedirac {
+struct HodgeDirac {
+    Eigen::SparseMatrix<double> K;      // [N×N] symmetric
+    Eigen::SparseMatrix<double> d0, d1; // [E×V], [F×E]
+    Eigen::VectorXd star0, star1, star2;// diagonal Hodge stars (star1 after the floor)
+    Eigen::VectorXd M;                  // [star0; star1; star2]
+    int nV = 0, nE = 0, nF = 0;
+    int star1Clamped = 0;               // edges whose cotan weight was raised to the floor
+    double mollifyEps = 0.0;            // length added to every edge by mollify (0 = none needed)
+};
+HodgeDirac assemble(Manifold& m, double star1Floor = 1e-6, double mollify = 1e-6);
+Eigen::SparseMatrix<double> massMatrix(const HodgeDirac& h);   // diag(M)
+}  // namespace hodgedirac
+
+// ── Spin Diracs on quaternion spinors per FACE (Hoffmann & Ye 2018; Ye et al. 2018) ──
+// Port of cortical-flow spinDirac.ts / Rheome operators.spin_dirac. Closed, oriented meshes. Hyperedge of face i across
+// the halfedge e to face j: E_ij = |e| tan(θ/2) + e. 4F×4F symmetric, interleaved [w,x,y,z] at 4f+c:
+//   Extrinsic   D_f = ½ Σ_j E_ij − H_i      (spin transformations; kills the constants)
+//   IntrinsicHY D   = ½ Σ_j E_ij            (= D_f + H)
+//   IntrinsicYe D   = ½ Σ_j cos(θ/2) E_ij   (edge lengths only)
+// The eigenproblem is D φ = μ (area ⊗ I₄) φ, solved on VERTEX spinors through vertexToFace (see solve::eigenSpin).
+namespace spin {
+enum class Kind { Extrinsic, IntrinsicHY, IntrinsicYe };
+struct SpinDirac {
+    Eigen::SparseMatrix<double> D;   // [4F×4F]
+    Eigen::VectorXd H;               // [F] integrated mean curvature per face
+    Eigen::VectorXd area;            // [F]
+};
+SpinDirac assemble(Manifold& m, Kind kind);
+// A (4F×4V): (Aψ)_f = Σ_{v∈f} p_fv ψ_v. covariant: p_fv = unit quaternion turning the area-weighted vertex normal onto the face's
+// (Ye et al. adj_vf_cov; for the intrinsic operators); else 1 (adj_vf; for the extrinsic).
+Eigen::SparseMatrix<double> vertexToFace(Manifold& m, bool covariant);
+}  // namespace spin
+
 // Face-native (Poincaré-dual) scalar calculus, the dual of the vertex FEM
 // gradient + cotan Laplacian. DOFs live on FACES (dual vertices).
 namespace facegrad {
@@ -756,6 +799,7 @@ struct EigenResult {
     Eigen::VectorXd eigenvalues;   // [k] sorted ascending
     int k;
     int nConverged;
+    Eigen::VectorXi kind;          // Hodge–Dirac only: per mode 0 exact · 1 harmonic · 2 coexact (empty otherwise)
 };
 
 /**
@@ -866,7 +910,11 @@ enum class EigenOperator {
     LaplacianCotan,   // (cotanL, mass)
     LaplacianGraph,   // (graphL, I)           — standard eigenproblem
     Dirac,            // (dirac(τ) 4V, M_galerkin ⊗ I₄)   — vertex-interleaved 4v+c
-    DiracFace         // (diracFace(τ) 4F, diag(faceArea) ⊗ I₄)
+    DiracFace,        // (diracFace(τ) 4F, diag(faceArea) ⊗ I₄)
+    HodgeDirac,       // (d+δ on 0/1/2-forms of the intrinsic Delaunay mesh, diag(⋆0,⋆1,⋆2)), blockSize 1, N = V+E+F
+    SpinExtrinsic,    // spin Diracs on face spinors, solved on vertex spinors (4V) by Ye et al.'s quotient
+    SpinIntrinsicHY,
+    SpinIntrinsicYe
     // Covariant (3N) deferred: it is component-major (c·N+v, mass = kron(I₃, M),
     // a different expansion than the Dirac's interleaved kron(M, I₄)) and its
     // ambient spectrum is just the triply-degenerate Laplace–Beltrami spectrum.
@@ -876,6 +924,10 @@ struct EigenOperatorSpec {
     EigenOperator op;
     double tau = 0.0;                                       // Dirac / DiracFace blend ∈ [0,1]
     ops::MassMatrixVariant mass = ops::MassMatrixVariant::Galerkin;  // vertex-domain mass choice
+    bool graphDegreeMass = false;   // LaplacianGraph: mass = diag(degree) (L φ = λ D φ) instead of identity
+    double star1Floor = 1e-6;       // HodgeDirac: floor of ⋆1 (Rheome PR #94)
+    double mollify    = 1e-6;       // HodgeDirac: relative mollification factor, 0 = off
+    bool bothSigns    = false;      // HodgeDirac, default shift: also return the −μ mirror of every +μ mode
 };
 
 struct EigenProblem {
@@ -910,6 +962,42 @@ EigenResult eigenOperator(
     const CancellationToken& cancel    = {},
     const ProgressObserver& progress   = {}
 );
+
+// Spectrum slicing: the `count` lowest eigenvalues of a symmetric pencil (A SPSD, B SPD) in windows of `slice`
+// shift-invert solves, so thousands of modes need only a (slice)-column Krylov basis. The first window is the ladder
+// solve (eigenSmallest); each next window is centred at the top of the covered range and keeps the eigenvalues above it.
+// Throws EigensolveInvalidK when count ≥ N.
+// eigenLargestMagn: the k largest-|λ| generalized eigenpairs (Cholesky mode, B SPD, A symmetric) — the inverse-spectrum solve of the spin quotient.
+EigenResult eigenLargestMagn(const Eigen::SparseMatrix<double>& A, const Eigen::SparseMatrix<double>& B, int k, bool normalize = true);
+EigenResult eigenSliced(const Eigen::SparseMatrix<double>& A, const Eigen::SparseMatrix<double>& B,
+                        int count, int slice = 400, bool normalize = true,
+                        const CancellationToken& cancel = {}, const ProgressObserver& progress = {});
+
+// Hodge–Dirac mode kinds from M-orthonormal pencil eigenvectors X (columns): 0 exact (0-form block dominates),
+// 2 coexact (2-form block dominates), 1 harmonic (|μ| ≤ tol·max|μ|).
+Eigen::VectorXi classifyHodgeModes(const ops::hodgedirac::HodgeDirac& h, const Eigen::MatrixXd& X,
+                                   const Eigen::VectorXd& mu, double tol = 1e-8);
+
+// The `count` lowest POSITIVE-μ Hodge–Dirac eigenpairs by the exact/coexact split (no indefinite solve):
+//   exact    (ψ, dψ/μ, 0)/√2     from Δ0 ψ = λ ψ  (d0ᵀ⋆1 d0, mass ⋆0),                  μ = √λ
+//   coexact  (0, δχ/μ, χ)/√2     from Δ2 χ = λ χ  (⋆2d1 ⋆1⁻¹ (⋆2d1)ᵀ, mass ⋆2),         μ = √λ
+// merged by μ; the constant modes (μ = 0) are dropped, harmonic 1-forms are NOT produced (use the pencil solve for them).
+// bothSigns appends the −μ mirror (1-form block negated). Result: eigenvalues μ ascending (signed if bothSigns: the
+// positive ones first, then their negatives), eigenvectors [N×k] M-orthonormal, kind per column. Thousands of modes
+// through eigenSliced.
+EigenResult hodgeDiracModes(const ops::hodgedirac::HodgeDirac& h, int count, bool bothSigns = false,
+                            int slice = 400, const CancellationToken& cancel = {},
+                            const ProgressObserver& progress = {});
+
+// Close each eigenvalue cluster of a 4-interleaved quaternion eigenbasis under right-ℍ multiplication and return an
+// M-orthonormal basis of the true (multiple-of-4) eigenspaces; recovers multiplets Lanczos under-counts. M is the inner product.
+EigenResult reconstructDiracMultiplets(const EigenResult& r, const Eigen::SparseMatrix<double>& M);
+
+// The k spin-Dirac eigenpairs nearest 0 as Ye et al. (dirac_eigen.m): on vertex spinors ψ, AᵀDM⁻¹DAψ = μ AᵀDAψ,
+// solved as AᵀDAψ = ν (AᵀDM⁻¹DA + ε AᵀMA) ψ for the k largest |ν|, μ = 1/ν. M = area ⊗ I₄. Returns μ ascending (signed),
+// ψ [4V×k] normalised to ψᵀ AᵀMA ψ = 1. A = covariant vertexToFace for the intrinsic kinds, plain for the extrinsic.
+EigenResult eigenSpin(Manifold& m, ops::spin::Kind kind, int k,
+                      const CancellationToken& cancel = {}, const ProgressObserver& progress = {});
 
 
 // ── Poisson Solver ───────────────────────────────────────────
