@@ -194,6 +194,13 @@ require(pathLen > 2.0 && pathLen < Math.PI,
   `discrete antipode path in (chord=2.0, sphere-arc=π), got ${pathLen}`)
 console.log(`  tracePath ✓ (antipode path length ${pathLen.toFixed(4)})`)
 
+// ── Test 6b: the exact (MMP) distance the path's length bounds ─
+const exact03 = ctx.exactDistance(0, 3)
+require(exact03 > 2.0 && exact03 <= path0.length + 1e-12,
+  `exact antipode distance in (chord=2.0, flip-out length ${path0.length}], got ${exact03}`)
+require(ctx.exactDistance(0, 0) === 0, 'exact distance to itself 0')
+console.log(`  exactDistance ✓ (antipodes ${exact03.toFixed(4)} <= flip-out ${path0.length.toFixed(4)})`)
+
 // ── Test 7: heat diffusion (spectral generator) ───────────────
 const ts = Float64Array.from({ length: 5 }, (_, i) => i * 0.1)
 const heat = ctx.heatDiffusion(

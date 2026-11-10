@@ -4,6 +4,7 @@
  *
  *   1. frames    — per-face orthonormal (e1, e2, n)
  *   2. tracePath            — geodesic path via flip-out
+ *      exactDistance        — the exact (MMP) distance its length bounds
  *   3. bff — BFF parametrization
  *
  * Face frames + geodesic path: tested on the icosahedron fixture
@@ -191,6 +192,20 @@ int main() try {
         REQUIRE((v3 - expected3).norm() < 1e-9, "path ends at vEnd");
         std::cout << "  [2b] path endpoints land on the fixture vertices ✓"
                   << std::endl;
+
+        // The exact (MMP) distance: an edge's length between adjacent
+        // vertices; never more than the flip-out path between antipodes
+        // (locally shortest, so its length bounds the shortest from above).
+        Eigen::Vector3d v1(V[3], V[4], V[5]);
+        double dAdj = exactDistance(m, 0, 1);
+        REQUIRE(std::abs(dAdj - (v1 - expected0).norm()) < 1e-12, "adjacent: the edge's length");
+        REQUIRE(exactDistance(m, 0, 0) == 0.0, "a vertex to itself: 0");
+        double dAnti = exactDistance(m, 0, 3);
+        REQUIRE(std::abs(exactDistance(m, 3, 0) - dAnti) < 1e-12, "symmetric");
+        REQUIRE(dAnti > 2.0 && dAnti <= pathLength + 1e-12,
+            "exact antipode distance in (chord, flip-out length]");
+        std::cout << "  [2c] exactDistance ✓ (antipodes " << dAnti
+                  << " <= flip-out " << pathLength << ")" << std::endl;
     }
 
     // ── 3. BFF parametrization on a flat grid ────────────────
