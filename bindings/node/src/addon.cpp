@@ -1347,6 +1347,19 @@ Napi::Value TracePath(const Napi::CallbackInfo& info) {
     });
 }
 
+// The exact (MMP) geodesic distance between two vertices, mesh units —
+// parity with the WASM `exactDistance`.
+Napi::Value ExactDistance(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto holder = getContext(info);
+    if (!holder) return env.Null();
+    return nxrSyncCall(env, [&]() -> Napi::Value {
+        int a = info[1].As<Napi::Number>().Int32Value();
+        int b = info[2].As<Napi::Number>().Int32Value();
+        return Napi::Number::New(env, nxr::manifold::query::exactDistance(*holder->manifold, a, b));
+    });
+}
+
 Napi::Value VectorHeatLogMap(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     auto holder = getContext(info);
@@ -1602,6 +1615,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("poisson", Napi::Function::New(env, SolvePoisson));
     exports.Set("heat", Napi::Function::New(env, ComputeGeodesicDistance));
     exports.Set("tracePath", Napi::Function::New(env, TracePath));
+    exports.Set("exactDistance", Napi::Function::New(env, ExactDistance));
     exports.Set("hodge", Napi::Function::New(env, HodgeDecompose));
     exports.Set("curvatures", Napi::Function::New(env, ComputeCurvatures));
     exports.Set("normals", Napi::Function::New(env, ComputeVertexNormals));

@@ -1169,6 +1169,18 @@ GeodesicPath tracePathSurface(
     int vEnd
 );
 
+/** The EXACT polyhedral geodesic distance between two vertices: the
+ *  length of the shortest path over the faces (MMP, geometry-central's
+ *  GeodesicAlgorithmExact), mesh units. The flip-out path of
+ *  `tracePathSurface` is only locally shortest (shortest in the
+ *  homotopy class of its Dijkstra start), so its `length` is >= this;
+ *  the heat method (`solve::heat`) approximates it. */
+double exactDistance(
+    Manifold& m,
+    int vStart,
+    int vEnd
+);
+
 // ── Locus primitives (D11) ───────────────────────────────────
 //
 // `query::*` returns the geometric locus itself (the "where"); the

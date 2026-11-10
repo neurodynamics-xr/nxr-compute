@@ -611,6 +611,11 @@ public:
         return out;
     }
 
+    // the exact (MMP) geodesic distance between two vertices, mesh units
+    double exactDistance(int vStart, int vEnd) {
+        return nxr::manifold::query::exactDistance(*ctx_, vStart, vEnd);
+    }
+
     val hodge(val omegaArr) {
         ensureDec();
         Eigen::VectorXd omega = valToEigenVector(omegaArr);
@@ -1225,6 +1230,7 @@ EMSCRIPTEN_BINDINGS(nxr_compute_wasm) {
         .function("poisson",           &ContextWrapper::poisson)
         .function("heat",&ContextWrapper::heat)
         .function("tracePath",              &ContextWrapper::tracePath)
+        .function("exactDistance",          &ContextWrapper::exactDistance)
         .function("hodge",         &ContextWrapper::hodge)
         // Geometric
         .function("curvatures",      &ContextWrapper::curvatures)

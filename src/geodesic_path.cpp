@@ -3,8 +3,11 @@
 #include "geometrycentral/surface/manifold_surface_mesh.h"
 #include "geometrycentral/surface/vertex_position_geometry.h"
 #include "geometrycentral/surface/flip_geodesics.h"
+#include "geometrycentral/surface/exact_geodesics.h"
 
+#include <cmath>
 #include <stdexcept>
+#include <vector>
 
 namespace nxr::manifold::query {
 
@@ -113,6 +116,32 @@ GeodesicPath tracePathSurface(Manifold& m, int vStart, int vEnd) {
 
 Eigen::MatrixXd tracePath(Manifold& m, int vStart, int vEnd) {
     return tracePathSurface(m, vStart, vEnd).positions;
+}
+
+// The exact polyhedral geodesic distance between two vertices: the
+// length of the SHORTEST path over the faces (Mitchell-Mount-Papadimitriou,
+// geometry-central's GeodesicAlgorithmExact, Kirsanov's implementation),
+// propagated from vStart only until vEnd is covered. The flip-out path
+// (tracePathSurface) is locally shortest, so its length is >= this.
+double exactDistance(Manifold& m, int vStart, int vEnd) {
+    auto& mesh = m.mesh();
+    auto& geom = m.geometry();
+    int nV = m.nV();
+    if (vStart < 0 || vStart >= nV || vEnd < 0 || vEnd >= nV) {
+        throw Error(ErrorCode::InvalidInput,
+            "exactDistance: vertex index out of range (nV=" + std::to_string(nV) + ")");
+    }
+    if (vStart == vEnd) return 0.0;
+    GeodesicAlgorithmExact mmp(mesh, geom);
+    Vertex a = mesh.vertex(vStart), b = mesh.vertex(vEnd);
+    mmp.propagate(a, GEODESIC_INF, std::vector<Vertex>{b});
+    double d = mmp.getDistance(b);
+    if (!std::isfinite(d) || d >= GEODESIC_INF) {
+        throw Error(ErrorCode::InvalidInput,
+            "exactDistance: vEnd is not reachable from vStart",
+            "vStart and vEnd may not be in the same connected component");
+    }
+    return d;
 }
 
 } // namespace nxr::manifold::query
