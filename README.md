@@ -327,10 +327,9 @@ Release. See `.github/workflows/publish-mex.yml`.
 
 ## License
 
-TBD — to be set before declaring 1.0. The library bundles
+BSD-3-Clause, Copyright (c) 2026, the Neurodynamics-XR contributors: see [LICENSE](LICENSE). The library bundles
 geometry-central ([MIT](https://github.com/nmwsharp/geometry-central/blob/master/LICENSE))
-and pulls Spectra ([MPL-2.0](https://github.com/yixuan/spectra/blob/master/LICENSE)),
-so the final choice will compose cleanly with those.
+and pulls Spectra ([MPL-2.0](https://github.com/yixuan/spectra/blob/master/LICENSE)) and Eigen (MPL-2.0), which keep their own licences.
 
 ## Citing
 
